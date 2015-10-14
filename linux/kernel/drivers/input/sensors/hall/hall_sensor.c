@@ -18,13 +18,13 @@
 static struct workqueue_struct *hall_sensor_wq;
 static struct kobject *hall_sensor_kobj;
 static struct platform_device *pdev;
+struct wake_lock Wake_Lock;
 static struct hall_sensor_str {
  	int irq;
 	int status;
 	int gpio;
 	int enable; 
 	spinlock_t mHallSensorLock;
-	struct wake_lock wake_lock;
 	struct input_dev *lid_indev;
  	struct delayed_work hall_sensor_work;
 	
@@ -154,7 +154,7 @@ static void lid_report_function(struct work_struct *dat)
 	msleep(50);
         if(!hall_sensor_dev->enable){
                 pr_info("[%s] disable hall sensor becasue user!\n", DRIVER_NAME);
-		wake_unlock(&hall_sensor_dev->wake_lock);
+		wake_unlock(&Wake_Lock);
 		return;
         }
 
@@ -167,7 +167,7 @@ static void lid_report_function(struct work_struct *dat)
 
         input_report_switch(hall_sensor_dev->lid_indev, SW_LID, !hall_sensor_dev->status);
         input_sync(hall_sensor_dev->lid_indev);
-	wake_unlock(&hall_sensor_dev->wake_lock);
+	wake_unlock(&Wake_Lock);
         pr_info("[%s] SW_LID report value = %d\n", DRIVER_NAME,!hall_sensor_dev->status);
 
 }
@@ -176,7 +176,7 @@ static irqreturn_t hall_sensor_interrupt_handler(int irq, void *dev_id)
 {
 	pr_info("[%s] hall_sensor_interrupt = %d\n", DRIVER_NAME,hall_sensor_dev->irq);
 	queue_delayed_work(hall_sensor_wq, &hall_sensor_dev->hall_sensor_work, 0);
-	wake_lock(&hall_sensor_dev->wake_lock);
+	wake_lock(&Wake_Lock);
 	return IRQ_HANDLED;
 }
 
@@ -209,7 +209,9 @@ err_gpio_request_irq_fail:
 static int lid_suspend_noirq(struct device *dev){
 	return 0;
 }
-
+static int lid_resume_noirq(struct device *dev){
+	return 0;
+}
 static int lid_suspend_prepare(struct device *dev){
 	return 0;
 }
@@ -227,6 +229,7 @@ static const struct dev_pm_ops lid_dev_pm_ops = {
 	.prepare	 = lid_suspend_prepare,
 	.suspend_noirq	 = lid_suspend_noirq,
 	.complete	 = lid_resume_complete,
+	.resume_noirq	 = lid_resume_noirq,
 };
 
 static const struct platform_device_id lid_id_table[] = {
@@ -260,6 +263,7 @@ static int __init hall_sensor_init(void)
 		return ret;
 
 	//set file node
+	printk("Start create hall sensor kobject");
 	hall_sensor_kobj = kobject_create_and_add("hall_sensor_kobject", kernel_kobj);
 	if (!hall_sensor_kobj){
 		pr_info("[%s] hall_sensor_kobject fails for hall sensor\n", DRIVER_NAME);
@@ -280,7 +284,7 @@ static int __init hall_sensor_init(void)
 		goto fail_for_hall_sensor;
 	}
 	spin_lock_init(&hall_sensor_dev->mHallSensorLock);
-	wake_lock_init(&hall_sensor_dev->wake_lock, WAKE_LOCK_SUSPEND, "lid_suspend_blocker");
+	wake_lock_init(&Wake_Lock, WAKE_LOCK_SUSPEND, "lid_suspend_blocker");
 	hall_sensor_dev->enable = 1;
 
 #ifndef CONFIG_TX201LA
@@ -349,7 +353,7 @@ static void __exit hall_sensor_exit(void)
 	kobject_put(hall_sensor_kobj);
 	platform_driver_unregister(&lid_platform_driver);
 	platform_device_unregister(pdev);
-	wake_lock_destroy(&hall_sensor_dev->wake_lock);
+	wake_lock_destroy(&Wake_Lock);
 }
 
 

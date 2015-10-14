@@ -55,6 +55,16 @@ hweq_t a450cg_drc_param[] = {
 		{0x001f, 0x4006, 0x1f00, 0x001f, 0x402b},
 		0x0000,
 	},	
+	{/*Recording normal mode*/
+		{0xb3,   0xb4,   0xb5,   0xb6,   0xb7},
+		{0x07df, 0xc20c, 0x1f00, 0x0000, 0x4104},
+		0x0000,
+	},	
+	{/*Recording headset mode*/
+		{0xb3,   0xb4,   0xb5,   0xb6,   0xb7},
+		{0x029f, 0xc20c, 0x1f00, 0x0000, 0x4104},
+		0x0000,
+	},	
 };
 
 
@@ -124,7 +134,7 @@ int rt5647_update_eqmode(
 int rt5647_update_drc_mode(struct snd_soc_codec *codec, int index)
 {
 	int i;
-	if (index >= 2) {
+	if (index >= 4) {
 		pr_err("%s : wrong index %d\n", index);
 		return 0;
 	} else {

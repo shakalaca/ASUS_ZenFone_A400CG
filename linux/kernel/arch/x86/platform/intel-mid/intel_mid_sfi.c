@@ -30,6 +30,7 @@
 #include <linux/mmc/core.h>
 #include <linux/mmc/card.h>
 #include <linux/blkdev.h>
+
 #include <linux/HWVersion.h>
 
 #include <asm/setup.h>
@@ -52,7 +53,6 @@
 #include <linux/power/smb345-me372cg-charger.h>
 #endif
 
-
 #define	SFI_SIG_OEM0	"OEM0"
 #define MAX_IPCDEVS	24
 #define MAX_SCU_SPI	24
@@ -68,9 +68,16 @@ static int spi_next_dev;
 static int i2c_next_dev;
 static int i2c_bus[MAX_SCU_I2C];
 static int gpio_num_entry;
+static unsigned int watchdog_irq_num = 0xff;
 static u32 sfi_mtimer_usage[SFI_MTMR_MAX_NUM];
 int sfi_mrtc_num;
 int sfi_mtimer_num;
+
+static int PROJECT_ID;
+static int HARDWARE_ID;
+static int PCB_ID;
+static int TP_ID;
+static int RC_VERSION;
 
 struct sfi_rtc_table_entry sfi_mrtc_array[SFI_MRTC_MAX];
 EXPORT_SYMBOL_GPL(sfi_mrtc_array);
@@ -78,6 +85,11 @@ EXPORT_SYMBOL_GPL(sfi_mrtc_array);
 struct blocking_notifier_head intel_scu_notifier =
 			BLOCKING_NOTIFIER_INIT(intel_scu_notifier);
 EXPORT_SYMBOL_GPL(intel_scu_notifier);
+
+unsigned int sfi_get_watchdog_irq(void)
+{
+	return watchdog_irq_num;
+}
 
 /* parse all the mtimer info to a static mtimer array */
 int __init sfi_parse_mtmr(struct sfi_table_header *table)
@@ -429,6 +441,16 @@ static void __init sfi_handle_i2c_dev(struct sfi_device_table_entry *pentry,
 		i2c_register_board_info(pentry->host_num, &i2c_info, 1);
 }
 
+static void sfi_handle_hsu_dev(struct sfi_device_table_entry *pentry,
+					struct devs_id *dev)
+{
+	pr_info("HSU bus = %d, name = %16.16s port = %d\n",
+		pentry->host_num,
+		pentry->name,
+		pentry->addr);
+	dev->get_platform_data(pentry);
+}
+
 static void sfi_handle_hsi_dev(struct sfi_device_table_entry *pentry,
 					struct devs_id *dev)
 {
@@ -509,7 +531,6 @@ static int __init sfi_parse_devs(struct sfi_table_header *table)
 
 	for (i = 0; i < num; i++, pentry++) {
 		int irq = pentry->irq;
-
 		if (irq != (u8)0xff) { /* native RTE case */
 			/* these SPI2 devices are not exposed to system as PCI
 			 * devices, but they have separate RTE entry in IOAPIC
@@ -521,7 +542,7 @@ static int __init sfi_parse_devs(struct sfi_table_header *table)
 				irq_attr.ioapic_pin = irq;
 				irq_attr.trigger = 1;
 				if (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_TANGIER
-						|| intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
+					|| intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
 					if (!strncmp(pentry->name,
 							"r69001-ts-i2c", 13))
 						/* active low */
@@ -536,15 +557,10 @@ static int __init sfi_parse_devs(struct sfi_table_header *table)
 					else
 						/* active high */
 						irq_attr.polarity = 0;
-				} else if (intel_mid_identify_cpu() ==
-					INTEL_MID_CPU_CHIP_CARBONCANYON) {
+					/* catch watchdog interrupt number */
 					if (!strncmp(pentry->name,
-							"vhsi_edlp_modem", 15))
-						/* active high */
-						irq_attr.polarity = 0;
-					else
-						/* active low */
-						irq_attr.polarity = 1;
+							"watchdog", 8))
+						watchdog_irq_num = (unsigned int) irq;
 				} else {
 					/* PNW and CLV go with active low */
 					irq_attr.polarity = 1;
@@ -585,6 +601,8 @@ static int __init sfi_parse_devs(struct sfi_table_header *table)
 				sfi_handle_hsi_dev(pentry, dev);
 				break;
 			case SFI_DEV_TYPE_UART:
+				sfi_handle_hsu_dev(pentry, dev);
+				break;
 			default:
 				break;
 			}
@@ -655,12 +673,6 @@ static int __init sfi_parse_oemb(struct sfi_table_header *table)
 	return 0;
 }
 
-static int PROJECT_ID;
-static int HARDWARE_ID;
-static int PCB_ID;
-static int TP_ID;
-static int RC_VERSION;
-
 //Will add hardware_stage for UTS ++
 static char *hardware_stage;
 module_param(hardware_stage, charp, S_IRUGO | S_IWUSR);
@@ -669,20 +681,25 @@ MODULE_PARM_DESC(hardware_stage, "HW_STAGE judgement");
 
 static int __init sfi_parse_oemr(struct sfi_table_header *table)
 {
-	struct sfi_table_simple *sb;
-	struct sfi_oemr_table_entry *pentry;
+        struct sfi_table_simple *sb;
+        struct sfi_oemr_table_entry *pentry;
 
-	sb = (struct sfi_table_simple *)table;
-	pentry = (struct sfi_oemr_table_entry *)sb->pentry;
-	HARDWARE_ID = pentry->hardware_id;
-	PROJECT_ID = pentry->project_id;
-	TP_ID = pentry->touch_id;
-	RC_VERSION = pentry-> RC_VERSION;
-	pr_info("Hardware ID = %x, Project ID = %x, TP ID = %d, RC version = %d\n", HARDWARE_ID, PROJECT_ID, TP_ID, RC_VERSION);
-	hardware_stage = kmalloc(sizeof(char*)*16, GFP_KERNEL);
-	strcpy(hardware_stage, "undefined");
-	
-	if (PROJECT_ID == PROJ_ID_ME302C)
+        sb = (struct sfi_table_simple *)table;
+        pentry = (struct sfi_oemr_table_entry *)sb->pentry;
+        HARDWARE_ID = pentry->hardware_id;
+        PROJECT_ID = pentry->project_id;
+        // Jui add for judging FE171CG and ME171C ++                                                                                                   
+        if(PROJECT_ID == PROJ_ID_FE171CG){
+                if(pentry->touch_id) PROJECT_ID = PROJ_ID_ME171C; // If high, wifi sku, re-assign PROJECT_ID.
+        }
+        // Jui --
+        TP_ID = pentry->touch_id;
+        RC_VERSION = pentry-> RC_VERSION;
+        pr_info("Hardware ID = %x, Project ID = %x, TP ID = %d, RC version = %d\n", HARDWARE_ID, PROJECT_ID, TP_ID, RC_VERSION);
+        hardware_stage = kmalloc(sizeof(char*)*16, GFP_KERNEL);
+        strcpy(hardware_stage, "undefined");
+
+        if (PROJECT_ID == PROJ_ID_ME302C)
     {
         switch (HARDWARE_ID)
         {
@@ -938,21 +955,21 @@ static int __init sfi_parse_oemr(struct sfi_table_header *table)
     else if (PROJECT_ID == PROJ_ID_A450CG)
     {
         switch (HARDWARE_ID)
-    	{
+        {
             case HW_ID_SR1:
-    	        pr_info("Hardware VERSION = SR1\n");
+                pr_info("Hardware VERSION = SR1\n");
                 strcpy(hardware_stage, "SR1");
-    	        break;
+                break;
             case HW_ID_SR2:
-    	        pr_info("Hardware VERSION = SR2\n");
+                pr_info("Hardware VERSION = SR2\n");
                 strcpy(hardware_stage, "SR2");
-    	        break;
+                break;
             case HW_ID_ER:
-    	        pr_info("Hardware VERSION = ER\n");
+                pr_info("Hardware VERSION = ER\n");
                 strcpy(hardware_stage, "ER");
-    	        break;
+                break;
             case HW_ID_PR:
-    	        pr_info("Hardware VERSION = PR\n");
+                pr_info("Hardware VERSION = PR\n");
                 strcpy(hardware_stage, "PR");
                 break;
             default:
@@ -966,25 +983,25 @@ static int __init sfi_parse_oemr(struct sfi_table_header *table)
     else if (PROJECT_ID == PROJ_ID_TX201LAF)
     {
         switch (HARDWARE_ID)
-    	{
+        {
             case HW_ID_SR1:
-    	        pr_info("Hardware VERSION = EVB\n");
+                pr_info("Hardware VERSION = EVB\n");
                 strcpy(hardware_stage, "EVB");
-    	        break;
+                break;
             case HW_ID_SR2:
-    	        pr_info("Hardware VERSION = SR\n");
+                pr_info("Hardware VERSION = SR\n");
                 strcpy(hardware_stage, "SR");
-    	        break;
+                break;
             case HW_ID_ER:
-    	        pr_info("Hardware VERSION = ER\n");
+                pr_info("Hardware VERSION = ER\n");
                 strcpy(hardware_stage, "ER");
-    	        break;
+                break;
             case HW_ID_PR:
-    	        pr_info("Hardware VERSION = PR\n");
+                pr_info("Hardware VERSION = PR\n");
                 strcpy(hardware_stage, "PR");
                 break;
             case HW_ID_MP:
-    	        pr_info("Hardware VERSION = MP\n");
+                pr_info("Hardware VERSION = MP\n");
                 strcpy(hardware_stage, "MP");
                 break;
             default:
@@ -995,117 +1012,116 @@ static int __init sfi_parse_oemr(struct sfi_table_header *table)
         //TX201LAF lcd_id is Panel ID, touch_id is Touch ID, Camera_1_2M is MainCamera ID, Camera_3M is SubCamera ID
         PCB_ID = pentry->hardware_id | pentry->project_id << 3 | pentry->lcd_id << 9 | pentry->touch_id << 10 | pentry->Camera_1_2M << 13 | pentry->Camera_3M << 14;
     }
+    else if (PROJECT_ID == PROJ_ID_ME171C)
+    {
+        switch (HARDWARE_ID)
+        {
+            case 3:
+                pr_info("Hardware VERSION = ER\n");
+                break;
+            case HW_ID_SR2:
+                pr_info("Hardware VERSION = PR1\n");
+                break;
+            case HW_ID_ER:
+                pr_info("Hardware VERSION = PR2\n");
+                break;
+            case HW_ID_ER2:
+                pr_info("Hardware VERSION = MP\n");
+                break;
+            default:
+                pr_info("Hardware VERSION is not defined\n");
+                break;
+        }
+        //ME171C lcd_id is Main Camera ID. touch_id high for ME171C.
+        PCB_ID = pentry->hardware_id | pentry->project_id << 3 | pentry->lcd_id << 9 | pentry->touch_id << 10;
+    }
     return 0;
 }
 
-//Chipang add for detect build_vsersion and factory_mode ++
+
+/*Chipang add for detect build_vsersion and factory_mode ++*/
 /*
  *build_vsersion mean TARGET_BUILD_VARIANT
  *user:3
  *userdebug:2
  *eng:1
  */
-int build_version =0;
-int factory_mode = 0;
+int build_version;
+EXPORT_SYMBOL(build_version);
+int factory_mode;
+EXPORT_SYMBOL(factory_mode);
 static int __init check_build_version(char *p)
 {
-        if(p){
-                if(!strncmp(p,"3",1))
-                        build_version = 3;
-                else if(!strncmp(p,"2",1))
-                        build_version = 2;
-                else
-                {
-                        build_version = 1;
-                        factory_mode = 2;
-                }
-                printk("%s:build_version %d\n",__func__,build_version);
-                printk("%s:factory_mode %d\n",__func__,factory_mode);
-        }
-        return 0;
+	if (p) {
+		if (!strncmp(p, "3", 1))
+			build_version = 3;
+		else if (!strncmp(p, "2", 1))
+			build_version = 2;
+		else {
+			build_version = 1;
+			factory_mode = 2;
+		}
+		printk(KERN_INFO "%s:build_version %d\n", __func__, build_version);
+		printk(KERN_INFO "%s:factory_mode %d\n", __func__, factory_mode);
+	}
+	return 0;
 }
-early_param("build_version",check_build_version);
-EXPORT_SYMBOL(build_version);
-EXPORT_SYMBOL(factory_mode);
-//Chipang add for detect build_vsersion and factory_mode --
+early_param("build_version", check_build_version);
+/*Chipang add for detect build_vsersion and factory_mode --*/
 int project_id;
 module_param(project_id, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(PROJ_VERSION,
-                 "PROJ_ID judgement");
+MODULE_PARM_DESC(PROJ_VERSION, "PROJ_ID judgement");
 
 int Read_PROJ_ID(void)
 {
-        printk("PROJECT_ID = 0x%x \n",PROJECT_ID);
-        project_id = PROJECT_ID;
-        return PROJECT_ID;
+	printk(KERN_INFO "PROJECT_ID = 0x%x \n", PROJECT_ID);
+	project_id = PROJECT_ID;
+	return PROJECT_ID;
 }
 EXPORT_SYMBOL(Read_PROJ_ID);
 
 int hardware_id;
 module_param(hardware_id, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(HW_VERSION,
-                 "HW_ID judgement");
+MODULE_PARM_DESC(HW_VERSION, "HW_ID judgement");
 
 int Read_HW_ID(void)
 {
-        printk("HARDWARE_ID = 0x%x \n",HARDWARE_ID);
-        hardware_id = HARDWARE_ID;
-        return HARDWARE_ID;
+	printk(KERN_INFO "HARDWARE_ID = 0x%x \n", HARDWARE_ID);
+	hardware_id = HARDWARE_ID;
+	return HARDWARE_ID;
 }
 EXPORT_SYMBOL(Read_HW_ID);
 
 static int rc_version;
 module_param(rc_version, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(RC,
-                 "RC_VERSION judgement");
+MODULE_PARM_DESC(RC, "RC_VERSION judgement");
 
 int Read_RC_VERSION(void)
 {
-        printk("RC_VERSION = 0x%x \n",RC_VERSION);
-        rc_version = RC_VERSION;
-        return RC_VERSION;
+	printk(KERN_INFO "RC_VERSION = 0x%x \n", RC_VERSION);
+	rc_version = RC_VERSION;
+	return RC_VERSION;
 }
 EXPORT_SYMBOL(Read_RC_VERSION);
-#ifdef CONFIG_TX201LA_BATTERY_EC
-static struct platform_device asus_battery_ec_device = {
-        .name              = "asus_battery_ec",
-        .id                = 0,
-};
-#endif
 
-#ifdef CONFIG_SND_CTP_MACHINE_RT5640
-static const struct i2c_board_info rt5640_board_info = {
-        I2C_BOARD_INFO("rt5640", 0x1c),
-};
-#endif
+int pcb_id;
+module_param(pcb_id, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(PCB_VERSION, "PCB_ID judgement");
 
-#ifdef CONFIG_SND_CTP_MACHINE_RT5647
-static const struct i2c_board_info rt5647_board_info = {
-        I2C_BOARD_INFO("rt5647", 0x1b),
-};
-#endif
+int Read_PCB_ID(void)
+{
+	printk(KERN_INFO "PCB_ID = 0x%x \n", PCB_ID);
+	pcb_id = PCB_ID;
+	return PCB_ID;
+}
+EXPORT_SYMBOL(Read_PCB_ID);
 
-#ifdef CONFIG_SND_CTP_MACHINE_RT5648
-static const struct i2c_board_info rt5648_board_info = {
-        I2C_BOARD_INFO("rt5648", 0x1a),
-};
-#endif
-
-//add by leo for Goodix touch ++
-#ifdef CONFIG_TOUCHSCREEN_GOODIX_GT927
-static const struct i2c_board_info gt927_board_info = {
-        I2C_BOARD_INFO("gt927", 0x5d),
-};
-#endif
-//add by leo for Goodix touch --
-
-//add by leo for Himax touch D48 ++
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_P72G
-static const struct i2c_board_info hx8528p_board_info = {
-        I2C_BOARD_INFO("hx8528_p72g", 0x49),
-};
-#endif
-//add by leo for Himax touch D48 --
+int Read_TP_ID(void)
+{
+	printk(KERN_INFO "TP_ID = 0x%x \n", TP_ID);
+	return TP_ID;
+}
+EXPORT_SYMBOL(Read_TP_ID);
 
 //add by leo for Himax touch D48 ++
 #ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG
@@ -1115,39 +1131,31 @@ static const struct i2c_board_info hx8528_board_info = {
 #endif
 //add by leo for Himax touch D48 --
 
-#ifdef CONFIG_EEPROM_PADSTATION
-static const struct i2c_board_info microp_board_info = {
-    I2C_BOARD_INFO("microp",0x15),
-};
-#endif
-
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_FE380CG
+//add by josh for Himax touch D48 ++
+#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL
 static const struct i2c_board_info hx8528_board_info = {
         I2C_BOARD_INFO("hx8528", 0x48),
+};
+#endif
+//add by josh for Himax touch D48 --
 
+#ifdef CONFIG_SND_SOC_RT5671
+static const struct i2c_board_info rt5671_board_info = {
+	I2C_BOARD_INFO("rt5671", 0x1c),
 };
 #endif
 
-int pcb_id;
-module_param(pcb_id, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(PCB_VERSION,
-                 "PCB_ID judgement");
+#ifdef CONFIG_SND_SOC_RT5640
+static const struct i2c_board_info rt5640_board_info = {
+        I2C_BOARD_INFO("rt5640", 0x1c),
+};
+#endif
 
-int Read_PCB_ID(void)
-{
-        printk("PCB_ID = 0x%x \n",PCB_ID);
-        pcb_id = PCB_ID;
-        return PCB_ID;
-}
-EXPORT_SYMBOL(Read_PCB_ID);
-
-int Read_TP_ID(void)
-{
-        printk("TP_ID = 0x%x \n",TP_ID);
-        return TP_ID;
-}
-EXPORT_SYMBOL(Read_TP_ID);
-
+#ifdef CONFIG_SND_SOC_RT5647
+static const struct i2c_board_info rt5647_board_info = {
+        I2C_BOARD_INFO("rt5647", 0x1b),
+};
+#endif
 /*
  * Parsing OEM0 table.
  */
@@ -1170,7 +1178,7 @@ static const struct i2c_board_info ug31xx_board_info = {
 	I2C_BOARD_INFO("ug31xx-gauge", 0x70),
 };
 #endif
-#if defined(CONFIG_A400CG) && defined(CONFIG_ME372CG_BATTERY_SMB345)
+#if (defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)) && defined(CONFIG_ME372CG_BATTERY_SMB345)
 static struct smb345_charger_platform_data smb345_pdata = {
     .battery_info	= {
         .name			= "UP110005",
@@ -1193,7 +1201,9 @@ static struct smb345_charger_platform_data smb345_pdata = {
     .charge_current_compensation	= 900000,
     .use_mains			= true,
     .gp_sdio_2_clk		= 62 + 96,
+#if !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
     .pcb_id11			= 73 + 96,
+#endif
     .irq_gpio			= -1,
     .inok_gpio			= 44,
     .mains_current_limit	= 1200,
@@ -1248,44 +1258,7 @@ static struct platform_device asus_ec_power_device = {
 
 static int __init intel_mid_platform_init(void)
 {
-#ifdef CONFIG_SND_CTP_MACHINE_RT5640
-	printk("%s Set Realtek I2C slave address to 0x1C! \n",__func__);
-        i2c_register_board_info(1, &rt5640_board_info, 1);
-#endif
-
-#ifdef CONFIG_SND_CTP_MACHINE_RT5647
-        printk("%s Set Realtek I2C slave address to 0x1B! \n",__func__);
-        i2c_register_board_info(1, &rt5647_board_info, 1);
-#endif
-
-#ifdef CONFIG_SND_CTP_MACHINE_RT5648
-        printk("%s Set Realtek I2C slave address to 0x1A! \n",__func__);
-        i2c_register_board_info(1, &rt5648_board_info, 1);
-#endif
-
-//add by leo for Himax touch D48 ++
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_P72G
-        printk("////////////////////   set Himax toich I2C slave address to 0x49 !!!\n");
-        i2c_register_board_info(0, &hx8528p_board_info, 1);
-#endif
-//add by leo for Himax touch D48 --
-
-//add by leo for Himax touch D48 ++
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG
-        printk("@@ set TOUCHSCREEN I2C slave address to 0x48 !!!\n");
-        i2c_register_board_info(0, &hx8528_board_info, 1);
-#endif
-//add by leo for Himax touch D48 --
-
-#ifdef CONFIG_EEPROM_PADSTATION
-        i2c_register_board_info(0, &microp_board_info, 1);
-#endif
-
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_FE380CG
-        printk("@@ set TOUCHSCREEN I2C slave address to 0x48 !!!\n");
-        i2c_register_board_info(0, &hx8528_board_info, 1);
-#endif
-#if defined(CONFIG_A400CG) && defined(CONFIG_ME372CG_BATTERY_SMB345)
+#if (defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)) && defined(CONFIG_ME372CG_BATTERY_SMB345)
     i2c_register_board_info(2, &smb346_board_info, 1);
 #endif
 #if defined(CONFIG_A450CG) && defined(CONFIG_ME372CG_BATTERY_SMB345)
@@ -1296,12 +1269,26 @@ static int __init intel_mid_platform_init(void)
 	sfi_table_parse(SFI_SIG_OEMB, NULL, NULL, sfi_parse_oemb);
 	sfi_table_parse(SFI_SIG_GPIO, NULL, NULL, sfi_parse_gpio);
 	sfi_table_parse(SFI_SIG_OEM0, NULL, NULL, sfi_parse_oem0);
-	sfi_table_parse(SFI_SIG_OEMR, NULL, NULL, sfi_parse_oemr);
-        Read_HW_ID();
-        Read_PROJ_ID();
-        Read_PCB_ID();
-        Read_RC_VERSION();
 	sfi_table_parse(SFI_SIG_DEVS, NULL, NULL, sfi_parse_devs);
+	sfi_table_parse(SFI_SIG_OEMR, NULL, NULL, sfi_parse_oemr);
+	Read_HW_ID();
+	Read_PROJ_ID();
+	Read_PCB_ID();
+	Read_RC_VERSION();
+
+//add by leo for Himax touch D48 ++
+#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG
+        printk("@@ set TOUCHSCREEN I2C slave address to 0x48 !!!\n");
+        i2c_register_board_info(0, &hx8528_board_info, 1);
+#endif
+//add by leo for Himax touch D48 --
+
+//add by josh for Himax touch D48 ++
+#ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL
+        printk("@@ set TOUCHSCREEN I2C slave address to 0x48 !!!\n");
+        i2c_register_board_info(0, &hx8528_board_info, 1);
+#endif
+//add by josh for Himax touch D48 --
 
 /* chris1_chang@asus.com */
 #ifdef CONFIG_UPI_BATTERY
@@ -1310,9 +1297,15 @@ static int __init intel_mid_platform_init(void)
 #ifdef CONFIG_EC_POWER
     platform_device_register(&asus_ec_power_device);
 #endif
-#ifdef CONFIG_TX201LA_BATTERY_EC
-    printk("add asus_battery_ec device ++\n");
-    platform_device_register(&asus_battery_ec_device);
+
+#ifdef CONFIG_SND_SOC_RT5640
+	pr_info("%s Set Realtek I2C slave address to 0x1C!\n", __func__);
+	i2c_register_board_info(1, &rt5640_board_info, 1);
+#endif
+
+#ifdef CONFIG_SND_SOC_RT5647
+	pr_info("%s Set Realtek I2C slave address to 0x1B!\n", __func__);
+	i2c_register_board_info(1, &rt5647_board_info, 1);
 #endif
 
 	return 0;

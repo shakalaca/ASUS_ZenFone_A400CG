@@ -42,6 +42,7 @@ static struct regulator_consumer_supply redhookbay_vprog1_consumer[] = {
 	REGULATOR_SUPPLY("vprog1", "4-0036"), //ASUS_BSP++ ar0543_raw
 	REGULATOR_SUPPLY("vprog1", "4-003C"), //ASUS_BSP++
 	REGULATOR_SUPPLY("vprog1", "4-0021"), //ASUS_BSP+++
+	REGULATOR_SUPPLY("vprog1", "4-0010"), //ASUS_BSP+++ ov5670
 	REGULATOR_SUPPLY("vprog1", "4-001A"), //ASUS_BSP+++
 	/*
 	 * Begin Scaleht / VV board consumers
@@ -72,7 +73,6 @@ static struct regulator_init_data redhookbay_vprog1_data = {
 			| REGULATOR_CHANGE_MODE | REGULATOR_CHANGE_VOLTAGE,
 		.valid_modes_mask	= REGULATOR_MODE_NORMAL
 			| REGULATOR_MODE_STANDBY | REGULATOR_MODE_FAST,
-		//.force_boot_off = 1, //ASUS_BSP++, add for turn off power at booting
 	},
 	.num_consumer_supplies	= ARRAY_SIZE(redhookbay_vprog1_consumer),
 	.consumer_supplies	= redhookbay_vprog1_consumer,
@@ -224,7 +224,8 @@ static struct regulator_consumer_supply vprog2_consumer[] = {
 	REGULATOR_SUPPLY("vprog2", "4-0036"), //ASUS_BSP+++
 	REGULATOR_SUPPLY("vprog2", "4-003C"), //ASUS_BSP+++
 	REGULATOR_SUPPLY("vprog2", "4-001A"), //ASUS_BSP+++
-	REGULATOR_SUPPLY("vprog2", "4-0021"), //ASUS_BSP+++
+	REGULATOR_SUPPLY("vprog2", "4-0021"), //ASUS_BSP+++ ov5670
+	REGULATOR_SUPPLY("vprog2", "4-0010"), //ASUS_BSP+++
 };
 
 static struct regulator_init_data vprog2_data = {
@@ -235,7 +236,6 @@ static struct regulator_init_data vprog2_data = {
 			| REGULATOR_CHANGE_MODE | REGULATOR_CHANGE_VOLTAGE,
 		.valid_modes_mask	= REGULATOR_MODE_NORMAL
 			| REGULATOR_MODE_STANDBY | REGULATOR_MODE_FAST,
-		//.force_boot_off = 1, //ASUS_BSP++, add for turn off power at booting
 	},
 	.num_consumer_supplies		= ARRAY_SIZE(vprog2_consumer),
 	.consumer_supplies		= vprog2_consumer,
@@ -261,6 +261,7 @@ static struct regulator_consumer_supply vemmc1_consumer[] = {
 	REGULATOR_SUPPLY("vemmc1", "4-003C"),
 	REGULATOR_SUPPLY("vemmc1", "4-0036"), //ASUS_BSP++ ar0543_raw
 	REGULATOR_SUPPLY("vemmc1", "4-001A"),
+	REGULATOR_SUPPLY("vemmc1", "4-0010"), //ASUS_BSP++ ov5670
 };
 
 static struct regulator_init_data vemmc1_data = {

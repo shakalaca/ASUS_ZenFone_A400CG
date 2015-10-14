@@ -469,29 +469,24 @@ static void __init mm_init(void)
 	vmalloc_init();
 }
 
-//Joe add for detect OS entry mode ++
 unsigned int entry_mode;
+
 EXPORT_SYMBOL(entry_mode);
 //entry_mode = 1; MOS
 //entry_mode = 2; recovery
 //entry_mode = 3; POS
 //entry_mode = 4; COS
-//entry_mode = 5; MiniOS
-//Joe add for detect OS entry mode --
+//entry_mode = 5; MiniOS 
 
 asmlinkage void __init start_kernel(void)
 {
 	char * command_line;
 	extern const struct kernel_param __start___param[], __stop___param[];
-
-//Joe add for detect OS entry mode ++
         char *loc_main;
         char *loc_fato;
         char *loc_fastboot;
         char *loc_charger;
         char *loc_minios;
-//Joe add for detect OS entry mode --
-
 	/*
 	 * Need to run as early as possible, to initialize the
 	 * lockdep hash:
@@ -528,9 +523,7 @@ asmlinkage void __init start_kernel(void)
 	build_all_zonelists(NULL, NULL);
 	page_alloc_init();
 
-	pr_notice("Kernel command line: %s\n", boot_command_line);
-
-//Joe add for detect OS entry mode ++
+        pr_notice("Kernel command line: %s\n", boot_command_line);
         entry_mode = 1;
         loc_main = strstr(boot_command_line,"androidboot.mode=main");
         if(loc_main != NULL)
@@ -563,7 +556,6 @@ asmlinkage void __init start_kernel(void)
                 printk(KERN_NOTICE "string match androidboot.mode=factory\n");
         }
         printk(KERN_NOTICE "OS Entry_mode = %d\n",entry_mode);
-//Joe add for detect OS entry mode --
 
 	parse_early_param();
 	parse_args("Booting kernel", static_command_line, __start___param,

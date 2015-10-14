@@ -33,68 +33,6 @@
 
 #define DRIVER_NAME "msic_power_btn"
 
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-#include <linux/microp_notify.h>
-static struct input_dev *virtual_power_btn;
-static int virtual_power_btn_notify(struct notifier_block *this, unsigned long event, void *ptr){
-        if(event==P01_PWR_KEY_PRESSED){
-		pr_info("[%s] power button pressed\n", DRIVER_NAME);
-                input_event(virtual_power_btn, EV_KEY, KEY_POWER, 1);
-                input_sync(virtual_power_btn);
-        }
-        else if (event==P01_PWR_KEY_RELEASED){
-		pr_info("[%s] power button released\n", DRIVER_NAME);
-                input_event(virtual_power_btn, EV_KEY, KEY_POWER, 0);
-                input_sync(virtual_power_btn);
-        }
-	return 0;
-}
-static struct notifier_block virtual_power_btn_notifier = {
-        .notifier_call = virtual_power_btn_notify,
-        .priority = GPIOKEY_MP_NOTIFY,
-};
-static int Add_virtual_power_btn()
-{
-	int ret;
-	
-	virtual_power_btn = input_allocate_device();
-	if (unlikely(!virtual_power_btn)) {
-		pr_info("[%s]input_allocate_device error!\n",DRIVER_NAME);
-		return -ENOMEM;
-	}
-
-	virtual_power_btn->name = "virtual_power_btn";
-	virtual_power_btn->phys = "/dev/input/virtual_power_btn";
-	virtual_power_btn->dev.parent = NULL;
-	input_set_capability(virtual_power_btn, EV_KEY, KEY_POWER);
-
-	ret = input_register_device(virtual_power_btn);
-	if (ret) {
-		pr_info("[%s]unable to register input dev, error %d\n",DRIVER_NAME,ret);
-		goto fail_at_reg_input_dev;
-	}
-	ret = register_microp_notifier(&virtual_power_btn_notifier);
-        if (ret) {
-                pr_info("[%s]unable to register microp notifier, error %d\n",DRIVER_NAME,ret);
-                goto fail_at_reg_notifier;
-        }
-	pr_info("[%s] Probe finish!!",DRIVER_NAME);
-
-	return 0;
-fail_at_reg_notifier:
-	input_unregister_device(virtual_power_btn);
-fail_at_reg_input_dev:
-	input_free_device(virtual_power_btn);
-	return ret;
-}
-
-static void Remove_virtual_power_btn()
-{
-	input_unregister_device(virtual_power_btn);
-	input_free_device(virtual_power_btn);
-	unregister_microp_notifier(&virtual_power_btn);
-}
-#endif
 struct mid_pb_priv {
 	struct input_dev *input;
 	int irq;
@@ -110,10 +48,6 @@ static inline int pb_clear_bits(u16 addr, u8 mask)
 	return intel_scu_ipc_update_register(addr, 0, mask);
 }
 
-#ifdef CONFIG_HID_ASUS_PAD_EC
-extern int ite_powerbtn_notify(void);
-#endif
-
 static irqreturn_t mid_pb_isr(int irq, void *dev_id)
 {
 	struct mid_pb_priv *priv = dev_id;
@@ -121,29 +55,25 @@ static irqreturn_t mid_pb_isr(int irq, void *dev_id)
 
 	pbstat = readb(priv->pb_stat);
 	dev_dbg(&priv->input->dev, "pbstat: 0x%x\n", pbstat);
-
+	
 	if (likely(!!probe_end))
 	{
 		input_event(priv->input, EV_KEY, KEY_POWER, !(pbstat & priv->pb_level));
 		input_sync(priv->input);
-		if (pbstat & priv->pb_level)
-			pr_info("[%s] power button released\n", priv->input->name);
-		else
-		{
-#ifdef CONFIG_HID_ASUS_PAD_EC
-                        ite_powerbtn_notify();
-#endif
-			pr_info("[%s] power button pressed\n", priv->input->name);
-		}
+	        if (pbstat & priv->pb_level)
+        	        pr_info("[%s] power button released\n", priv->input->name);
+	        else
+                	pr_info("[%s] power button pressed\n", priv->input->name);
+
 	}
 	else
 	{
-		if (pbstat & priv->pb_level)
-			btn_pressed=0;  
-		else
-			btn_pressed=1;
-	}
+	        if (pbstat & priv->pb_level)
+	             	btn_pressed=0;  
+        	else
+                	btn_pressed=1;
 
+	}
 	return IRQ_WAKE_THREAD;
 }
 
@@ -164,7 +94,6 @@ static int mid_pb_probe(struct platform_device *pdev)
 	int irq;
 	int ret;
 	struct intel_msic_power_btn_platform_data *pdata;
-
 	probe_end = 0;
 	if (pdev == NULL)
 		return -ENODEV;
@@ -182,11 +111,11 @@ static int mid_pb_probe(struct platform_device *pdev)
 		return -EINVAL;
 
 	priv = kzalloc(sizeof(struct mid_pb_priv), GFP_KERNEL);
-	if (unlikely(!priv))
+	if (!priv)
 		return -ENOMEM;
 
 	input = input_allocate_device();
-	if (unlikely(!input)) {
+	if (!input) {
 		kfree(priv);
 		return -ENOMEM;
 	}
@@ -241,8 +170,8 @@ static int mid_pb_probe(struct platform_device *pdev)
 	 */
 	pb_clear_bits(priv->irq_lvl1_mask, MSIC_PWRBTNM);
 	if(btn_pressed)
-		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");  
-	probe_end = 1;
+		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");	
+	probe_end = 1; 
 	return 0;
 
 out_unregister_input:
@@ -254,6 +183,9 @@ fail:
 	platform_set_drvdata(pdev, NULL);
 	input_free_device(input);
 	kfree(priv);
+	if(btn_pressed)
+		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");
+	probe_end = 1;
 	return ret;
 }
 
@@ -346,20 +278,11 @@ static struct rpmsg_driver mid_pb_rpmsg_driver = {
 
 static int __init mid_pb_rpmsg_init(void)
 {
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-	int ret=Add_virtual_power_btn();
-	if(ret){
-		printk("[%s]PF400CG virtual power key probe fail!",DRIVER_NAME);
-	}
-#endif
 	return register_rpmsg_driver(&mid_pb_rpmsg_driver);
 }
 
 static void __exit mid_pb_rpmsg_exit(void)
 {
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-        Remove_virtual_power_btn();
-#endif
 	return unregister_rpmsg_driver(&mid_pb_rpmsg_driver);
 }
 

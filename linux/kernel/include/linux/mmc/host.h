@@ -71,7 +71,7 @@ struct mmc_ios {
 
 	unsigned char	signal_voltage;		/* signalling voltage (1.8V or 3.3V) */
 
-#define MMC_SIGNAL_VOLTAGE_330	0
+#define MMC_SIGNAL_VOLTAGE_330	3
 #define MMC_SIGNAL_VOLTAGE_180	1
 #define MMC_SIGNAL_VOLTAGE_120	2
 
@@ -343,6 +343,8 @@ struct mmc_host {
 				MMC_CAP2_HS400_1_2V_DDR)
 #define MMC_CAP2_BROKEN_MAX_CLK (1 << 24)   /* indicated the maximum clock may not stable enough */
 #define MMC_CAP2_DEFERRED_RESUME (1 << 25)  /* indicate whether the card resume process is deferable */
+	int			tpru;		/* Supply power up time (ms) */
+	int			tramp;		/* Supply ramp up time (ms) */
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
 
 #ifdef CONFIG_MMC_CLKGATE

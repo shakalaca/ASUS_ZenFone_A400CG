@@ -12,10 +12,15 @@ void *hx8528_platform_data(void *info)
 {
 	static struct himax_i2c_platform_data himax_pdata;
 
-	himax_pdata.abs_x_max			= 800; 
+	himax_pdata.abs_x_max			= 800;
 	himax_pdata.abs_y_max			= 1200;
-	himax_pdata.rst_gpio			= get_gpio_by_name("Touch_RST_N");
-	himax_pdata.intr_gpio			= get_gpio_by_name("TP_INT_N");
 
+#if defined(CONFIG_PF450CL)
+	himax_pdata.rst_gpio                    = get_gpio_by_name("TOUCH_RST_N");
+	himax_pdata.intr_gpio                   = get_gpio_by_name("TOUCH_INT_N");
+#else
+	himax_pdata.rst_gpio                    = get_gpio_by_name("Touch_RST_N");
+	himax_pdata.intr_gpio                   = get_gpio_by_name("TP_INT_N");
+#endif
 	return &himax_pdata;
 }

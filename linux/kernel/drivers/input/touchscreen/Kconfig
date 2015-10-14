@@ -888,29 +888,9 @@ config TOUCHSCREEN_TPS6507X
 	  To compile this driver as a module, choose M here: the
 	  module will be called tps6507x_ts.
 
-config TOUCHSCREEN_GOODIX_GT927
-	tristate "GOODIX GT927 touchscreen"
-	depends on I2C
-
-config TOUCHSCREEN_HIMAX_HX8528_A12
-	bool "Himax HX8528 touchscreen"
-       depends on I2C
-
-config TOUCHSCREEN_HIMAX_HX8528_P72G
-	bool "Himax HX8528 touchscreen"
-       depends on I2C
-	   
-config TOUCHSCREEN_HIMAX_HX8528
-        bool "Himax HX8528 touchscreen"
-        depends on I2C
-			
 config TOUCHSCREEN_HIMAX_HX8528_ME372CL
-        bool "Himax HX8528 touchscreen"
-        depends on I2C
-
-config TOUCHSCREEN_HIMAX_HX8528_FE380CG
-        bool "Himax HX8528 touchscreen"
-        depends on I2C
+	bool "Himax HX8528 touchscreen"
+	depends on I2C
 
 config TOUCHSCREEN_HIMAX_HX8528_A400
         bool "Himax HX8528-D48 touchscreen"
@@ -920,14 +900,13 @@ config TOUCHSCREEN_HIMAX_HX8528_A450CG
         bool "Himax HX8528-D48 touchscreen"
         depends on I2C
 
-config TOUCHSCREEN_ELAN_EKTH3374
-	tristate "ELAN EKTH3374AY touchscreen"
-	depends on I2C
-
-# Jui-Chuan add for Atmel mxt1664s driver ++
-config TOUCHSCREEN_ATMEL_MXT1664S
-        tristate "ATMEL mXT1664S touchscreen"
+config TOUCHSCREEN_HIMAX_HX8528
+        bool "Himax HX8528 touchscreen"
         depends on I2C
-# Jui-Chuan add for Atmel mxt1664s driver --
+
+config TOUCHSCREEN_GOODIX_GT927
+        bool "GOODIX GT927 touchscreen"
+        depends on I2C
+
 
 endif

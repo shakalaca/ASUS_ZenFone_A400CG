@@ -7,6 +7,11 @@ menuconfig POWER_SUPPLY
 	  (if selected below).
 
 if POWER_SUPPLY
+config RAW_CC_THROTTLE
+	bool "Raw Charge Current Throttle"
+	help
+	  Say Y here to enable raw charge current throttling. This feature will
+	  expose n states where n is defined as (max_current_mA/100_mA)
 
 config POWER_SUPPLY_DEBUG
 	bool "Power supply debug"
@@ -193,17 +198,6 @@ config BATTERY_MAX17040
 	  in handheld and portable equipment. The MAX17040 is configured
 	  to operate with a single lithium cell
 
-config BATTERY_MAX17042
-	tristate "Maxim MAX17042/17047/17050/8997/8966 Fuel Gauge"
-	depends on I2C
-	help
-	  MAX17042 is fuel-gauge systems for lithium-ion (Li+) batteries
-	  in handheld and portable equipment. The MAX17042 is configured
-	  to operate with a single lithium cell. MAX8997 and MAX8966 are
-	  multi-function devices that include fuel gauages that are compatible
-	  with MAX17042. This driver also supports max17047/50 chips which are
-	  improved version of max17042.
-
 config BATTERY_Z2
 	tristate "Z2 battery driver"
 	depends on I2C && MACH_ZIPIT2
@@ -367,11 +361,29 @@ config BYT_EC_BATTERY
 	help
 	  Say Y here to enable support for Baytrail EC battery driver.
 
+config DC_XPWR_BATTERY
+	bool "Dollar Cove(Xpower) PMIC Fuel Gauge driver"
+	help
+	  Say Y here to enable support for Dollar Cove(Xpower) PMIC Fuel Gauge.
+
+config DC_XPWR_CHARGER
+	bool "Dollar Cove(Xpower) PMIC Charger driver"
+	help
+	  Say Y here to enable support for Dollar Cove(Xpower) PMIC Charger.
+
+config INTEL_FUEL_GAUGE
+	bool "Intel Fuel Gauge driver"
+	help
+	  Say Y here to enable support for Intel SW Fuel Gauge driver.
+
+config INTEL_FG_UIFACE
+	bool "Intel Fuel Gauge User Interface"
+	help
+	  Say Y here to enable support for Intel SW Fuel gauge Algo User Interface.
+
 # chris ((( battery driver
 source "drivers/power/battery/Kconfig"
 # )))
-source "drivers/power/TX201LA_BATTERY/Kconfig"
-
 source "drivers/power/reset/Kconfig"
 
 endif # POWER_SUPPLY

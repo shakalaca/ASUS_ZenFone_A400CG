@@ -32,8 +32,10 @@
 #include <linux/intel_mid_pm.h>
 #include <linux/switch.h>
 #include <asm/intel_scu_ipc.h>
+#include <asm/intel_scu_pmic.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/intel-mid.h>
+#include <asm/msr.h>
 
 /* Medfield & Cloverview firmware update.
  * The flow and communication between IA and SCU has changed for
@@ -105,7 +107,7 @@
 
 static struct kobject *scu_fw_update_kobj;
 static struct rpmsg_instance *fw_update_instance;
-struct switch_dev iafw_sdev;
+struct switch_dev iafw_sdev;                                                                                                                           
 static ssize_t iafw_version_show(struct switch_dev *sdev, char *buf);
 
 /* Modified IA-SCU mailbox for medfield firmware update. */
@@ -169,8 +171,10 @@ struct fw_update_info {
 
 /* Used to store firmware version. */
 #define FW_VERSION_SIZE		16
-#define FW_VERSION_MAX_SIZE	32
+#define FW_VERSION_MAX_SIZE	36
 static u8 fw_version_raw_data[FW_VERSION_MAX_SIZE] = { 0 };
+
+static u8 pmic_nvm_version;
 
 static struct fw_update_info fui;
 
@@ -477,6 +481,7 @@ static int intel_scu_ipc_medfw_upgrade(void)
 	}
 
 	rpmsg_global_lock();
+
 	mfld_fw_upd.wscu = 0;
 	mfld_fw_upd.wia = 0;
 	memset(mfld_fw_upd.mb_status, 0, sizeof(char) * 8);
@@ -550,6 +555,7 @@ static int intel_scu_ipc_medfw_upgrade(void)
 	ret_val = rpmsg_send_simple_command(fw_update_instance,
 					    IPCMSG_FW_UPDATE,
 					    IPC_CMD_FW_UPDATE_GO);
+
 	if (ret_val) {
 		dev_err(fui.dev, "IPC_CMD_FW_UPDATE_GO failed\n");
 		goto term;
@@ -634,6 +640,7 @@ unmap_sram:
 	iounmap(mfld_fw_upd.sram);
 out_unlock:
 	rpmsg_global_unlock();
+
 	return ret_val;
 }
 
@@ -886,6 +893,10 @@ static ssize_t fw_version_show(struct kobject *kobj,
 #define INTE_SCU_IPC_CHAABI_FW_REVISION_EXT_MAJ_REG    6
 #define INTE_SCU_IPC_MIA_FW_REVISION_EXT_MIN_REG       8
 #define INTE_SCU_IPC_MIA_FW_REVISION_EXT_MAJ_REG       10
+#define INTE_PUNIT_FW_REVISION_EXT_MIN_REG             12
+#define INTE_PUNIT_FW_REVISION_EXT_MAJ_REG             14
+#define INTE_UCODE_FW_REVISION_EXT_MIN_REG             16
+#define INTE_UCODE_FW_REVISION_EXT_MAJ_REG             18
 
 #define INTE_SCU_FW_OFFS	0
 #define INTE_SCU_FW_EXT_OFFS	1
@@ -902,6 +913,7 @@ struct scu_ipc_version {
 	char            chaabi[FW_VERSION_SIZE];
 	char            mia[FW_VERSION_SIZE];
 	char            punit[FW_VERSION_SIZE];
+	char            ucode[FW_VERSION_SIZE];
 };
 
 struct scu_ipc_version version;
@@ -942,7 +954,7 @@ static void read_ifwi_version(void)
 	if (ifwi_rev_ext) {
 		memcpy(version.data + FW_VERSION_SIZE,
 			fw_version_raw_data + FW_VERSION_SIZE,
-			FW_VERSION_SIZE);
+			FW_VERSION_MAX_SIZE - FW_VERSION_SIZE);
 
 		format_rev_4_digit(version, INTE_SCU_FW_OFFS, version.scu_bs,
 				INTE_SCU_IPC_SCU_BS_FW_REVISION_EXT_MAJ_REG,
@@ -978,6 +990,16 @@ static void read_ifwi_version(void)
 				INTE_SCU_IPC_MIA_FW_REVISION_EXT_MAJ_REG,
 				INTE_SCU_IPC_MIA_FW_REVISION_EXT_MIN_REG);
 		pr_info("mIA Version: %s\n", version.mia);
+
+		format_rev_4_digit(version, INTE_SCU_FW_EXT_OFFS, version.punit,
+				INTE_PUNIT_FW_REVISION_EXT_MAJ_REG,
+				INTE_PUNIT_FW_REVISION_EXT_MIN_REG);
+		pr_info("PUnit Version: %s\n", version.punit);
+
+		format_rev_4_digit(version, INTE_SCU_FW_EXT_OFFS, version.ucode,
+				INTE_UCODE_FW_REVISION_EXT_MAJ_REG,
+				INTE_UCODE_FW_REVISION_EXT_MIN_REG);
+		pr_info("uCode Version: %s\n", version.ucode);
 	} else {
 		format_rev_2_digit(version, version.ifwi,
 				INTE_SCU_IPC_FW_REVISION_MAJ_REG,
@@ -1012,9 +1034,14 @@ static void read_ifwi_version(void)
 	return;
 }
 
+#define MSR_PUNIT_VERSION_ADDR 0x667
+#define MSR_UCODE_VERSION_ADDR 0x8b
+#define MSR_PMIC_NVM_VERSION_ADDR 0x6E08
+
 static int fw_version_info(void)
 {
 	int ret;
+	u32 low, high;
 
 	memset(fw_version_raw_data, 0, FW_VERSION_MAX_SIZE);
 
@@ -1033,10 +1060,26 @@ static int fw_version_info(void)
 			cur_err("Error getting fw version");
 			return -EINVAL;
 		}
+		/* PUnit version is not availabe in SMIP, we get it with a
+		   machine-specific register read, same for uCode */
+		rdmsr(MSR_PUNIT_VERSION_ADDR, low, high);
+		*(u32 *)(fw_version_raw_data + FW_VERSION_SIZE +
+				INTE_PUNIT_FW_REVISION_EXT_MIN_REG) = low;
+		rdmsr(MSR_UCODE_VERSION_ADDR, low, high);
+		*(u32 *)(fw_version_raw_data + FW_VERSION_SIZE +
+				INTE_UCODE_FW_REVISION_EXT_MIN_REG) = high;
 	}
 
 	read_ifwi_version();
 
+	if (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
+		ret = intel_scu_ipc_ioread8(MSR_PMIC_NVM_VERSION_ADDR, &pmic_nvm_version);
+		if (ret < 0) {
+			cur_err("Error getting PMIC NVM version");
+			return -EINVAL;
+		}
+		pr_info("PMIC NVM Version: %.2X\n", pmic_nvm_version);
+	}
 	return 0;
 }
 
@@ -1053,13 +1096,16 @@ static ssize_t sys_version_show(struct kobject *kobj,
 		if (strcmp(attr->attr.name, "scu_bs_version") == 0)
 			return snprintf(buf, PAGE_SIZE, "%s\n",
 					version.scu_bs);
+		if (strcmp(attr->attr.name, "ucode_version") == 0)
+			return snprintf(buf, PAGE_SIZE, "%s\n",
+					version.ucode);
 	} else {
-		if (strcmp(attr->attr.name, "punit_version") == 0)
-			return snprintf(buf, PAGE_SIZE, "%s\n", version.punit);
 		if (strcmp(attr->attr.name, "supp_ia32fw_version") == 0)
 			return snprintf(buf, PAGE_SIZE, "%s\n", version.supp_ia32fw);
 	}
 
+	if (strcmp(attr->attr.name, "punit_version") == 0)
+		return snprintf(buf, PAGE_SIZE, "%s\n", version.punit);
 	if (strcmp(attr->attr.name, "ifwi_version") == 0)
 		return snprintf(buf, PAGE_SIZE, "%s\n", version.ifwi);
 	if (strcmp(attr->attr.name, "scu_version") == 0)
@@ -1073,10 +1119,16 @@ static ssize_t sys_version_show(struct kobject *kobj,
 	return 0;
 }
 
-static ssize_t iafw_version_show(struct switch_dev *sdev, char *buf)
+static ssize_t pmic_nvm_version_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
 {
-    snprintf(buf, PAGE_SIZE, "%s\n", version.ifwi);    
-	return 16;
+	return snprintf(buf, PAGE_SIZE, "%.2X\n", pmic_nvm_version);
+}
+
+static ssize_t iafw_version_show(struct switch_dev *sdev, char *buf)                                                                                   
+{
+    snprintf(buf, PAGE_SIZE, "%s\n", version.ifwi);
+        return 16;
 }
 
 static ssize_t last_error_show(struct kobject *kobj,
@@ -1123,18 +1175,20 @@ struct bin_attribute bin_attr_##_name =	\
 	struct kobj_attribute _name##_attr = __ATTR(_name, _mode, _show, _store)
 
 static KOBJ_FW_UPDATE_ATTR(cancel_update, S_IWUSR, NULL, cancel_update_store);
-static KOBJ_FW_UPDATE_ATTR(fw_version, S_IRUGO, fw_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(ifwi_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(chaabi_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(mia_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(scu_bs_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(scu_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(punit_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(ia32fw_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(supp_ia32fw_version, S_IRUGO, sys_version_show, NULL);
-static KOBJ_FW_UPDATE_ATTR(valhooks_version, S_IRUGO, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(fw_version, S_IRUSR, fw_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(ifwi_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(chaabi_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(mia_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(scu_bs_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(scu_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(punit_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(ia32fw_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(supp_ia32fw_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(valhooks_version, S_IRUSR, sys_version_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(ucode_version, S_IRUSR, sys_version_show, NULL);
 
-static KOBJ_FW_UPDATE_ATTR(last_error, S_IRUGO, last_error_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(last_error, S_IRUSR, last_error_show, NULL);
+static KOBJ_FW_UPDATE_ATTR(pmic_nvm_version, S_IRUSR, pmic_nvm_version_show, NULL);
 static BIN_ATTR(dnx, S_IWUSR, DNX_MAX_SIZE, NULL, write_dnx);
 static BIN_ATTR(ifwi, S_IWUSR, IFWI_MAX_SIZE, NULL, write_ifwi);
 
@@ -1150,6 +1204,8 @@ static struct attribute *fw_update_attrs[] = {
 	&ia32fw_version_attr.attr,
 	&supp_ia32fw_version_attr.attr,
 	&valhooks_version_attr.attr,
+	&ucode_version_attr.attr,
+	&pmic_nvm_version_attr.attr,
 	&last_error_attr.attr,
 	NULL,
 };
@@ -1248,12 +1304,12 @@ static int fw_update_rpmsg_probe(struct rpmsg_channel *rpdev)
 		dev_err(fui.dev, "cannot get current fw version\n");
 		goto err_sysfs;
 	}
- 
-    iafw_sdev.name = "ia_fw";
+
+    iafw_sdev.name = "ia_fw";                                                                                                                          
     iafw_sdev.print_name = iafw_version_show;
     if(switch_dev_register(&iafw_sdev) < 0){
-		printk("switch_dev_register failed!\n");
-	}
+                printk("switch_dev_register failed!\n");
+        }
 
 	/* If alloc_fota_mem_early flag is set, allocate FOTA_MEM_SIZE
 	 * bytes memory.

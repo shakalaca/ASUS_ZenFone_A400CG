@@ -205,14 +205,15 @@ static int mt9m114_power_ctrl(struct v4l2_subdev *sd, int flag)
 			default:
 				SPI_ENABLE=1;
 		}
-	}	
+	}
+	if (flag){
+		SPI_ret=spi_init_extra_parameter();
 
-	SPI_ret=spi_init_extra_parameter();
-
-	if (SPI_ret==SPI_magic_number) {
-		SPI_ENABLE=1;		
-	} else if (SPI_ret==EEPROM_magic_number) {
-		SPI_ENABLE=0;
+		if (SPI_ret==SPI_magic_number) {
+			SPI_ENABLE=1;
+		} else if (SPI_ret==EEPROM_magic_number) {
+			SPI_ENABLE=0;
+		}
 	}
 
 	//printk("HW ID:%d\n", HW_ID);

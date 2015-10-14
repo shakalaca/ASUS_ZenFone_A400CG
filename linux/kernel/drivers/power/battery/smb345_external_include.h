@@ -30,6 +30,21 @@ typedef enum {
     OTP,
 } charger_jeita_state_t;
 
+/* New Charger JEITA State by Battery Temperature & Battery Voltage
+ * FREEZE: Low Temperature Protection
+ * COLD: Low Temperature Status
+ * ROOM: Room Temperature Status
+ * HOT: High Temperature Status
+ * OVERHEAT: Over Temperature Protection
+ */
+typedef enum {
+    FREEZE = 0,
+    COLD,
+    ROOM,
+    HOT,
+    OVERHEAT
+} charger_jeita_status_t;
+
 typedef enum {
     LOW_TEMPR = 0,
     MIDDLE_TEMPR,
@@ -113,6 +128,12 @@ int smb345_charger_control_jeita(void);
  *
  * return 0 means config completely */
 int smb345_soc_control_float_vol(int bat_temp);
+
+/* To config new charger jeita. Must aquired
+ * the battery temperature/volt from Gauge IC
+ *
+ * return POWER_SUPPLY_STATUS */
+int smb3xx_jeita_control(int bat_tempr, int bat_volt);
 
 #define LG "1"
 #define COSLIGHT "0"

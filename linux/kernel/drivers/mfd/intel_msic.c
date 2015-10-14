@@ -340,13 +340,10 @@ static int intel_msic_init_devices(struct intel_msic *msic)
 		pdata->irq[INTEL_MSIC_BLOCK_OCD] = ret;
 	}
 
-	pr_info("start to add mfd device\n");
 	for (i = 0; i < ARRAY_SIZE(msic_devs); i++) {
-		if (!pdata->irq[i]){
-			pr_info("skip add mfd %d device\n", i);
+		if (!pdata->irq[i])
 			continue;
-		}
-		pr_info("mfd add %s device\n", msic_devs[i].name);
+
 		ret = mfd_add_devices(&pdev->dev, -1, &msic_devs[i], 1, NULL,
 				      pdata->irq[i], NULL);
 		if (ret)
@@ -381,7 +378,6 @@ static int intel_msic_probe(struct platform_device *pdev)
 	u8 id0, id1;
 	int ret;
 
-	pr_info("intel_msic_probe\n");
 	if (!pdata) {
 		dev_err(&pdev->dev, "no platform data passed\n");
 		return -EINVAL;

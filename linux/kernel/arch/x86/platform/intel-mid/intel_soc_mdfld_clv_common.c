@@ -19,6 +19,13 @@
  */
 
 #include "intel_soc_pmu.h"
+#include <linux/kobject.h>
+#include <linux/string.h>
+#include <linux/sysfs.h>
+#include <linux/irqdomain.h>
+
+static unsigned int alarm_wakeup_count;
+static unsigned int hsi_wakeup_count;
 
 static int extended_cstate_mode = MID_S0IX_STATE;
 int set_extended_cstate_mode(const char *val, struct kernel_param *kp)
@@ -297,6 +304,7 @@ bool mid_pmu_is_wake_source(u32 lss_number)
 static void log_wakeup_source(int source)
 {
 	enum sys_state type = mid_pmu_cxt->pmu_current_state;
+	int lss;
 
 	mid_pmu_cxt->num_wakes[source][type]++;
 
@@ -316,10 +324,16 @@ static void log_wakeup_source(int source)
 		break;
 	case PMU_HSI_LSS_03:
 		pr_info("wakeup from HSI.\n");
+		if(hsi_wakeup_count>=60000)	hsi_wakeup_count=hsi_wakeup_count%60000;
+		hsi_wakeup_count++;
 		break;
 	default:
-		pr_info("wakeup from LSS%02d.\n",
-			source - mid_pmu_cxt->pmu1_max_devs);
+		lss = source - mid_pmu_cxt->pmu1_max_devs;
+		pr_info("wakeup from LSS%02d.\n", lss);
+		if(lss == 31){
+			if(alarm_wakeup_count>=60000)	alarm_wakeup_count=alarm_wakeup_count%60000;
+			alarm_wakeup_count++;
+		}
 		break;
 	}
 }
@@ -394,6 +408,67 @@ static int wait_for_nc_pmcmd_complete(int verify_mask, int state_type
 	return 0;
 }
 
+static ssize_t alarm_show(struct kobject *kobj, struct kobj_attribute *attr,
+			char *buf)
+{
+	return sprintf(buf, "%d\n", alarm_wakeup_count);
+}
+
+static ssize_t alarm_store(struct kobject *kobj, struct kobj_attribute *attr,
+			 const char *buf, size_t count)
+{
+	sscanf(buf, "%du", &alarm_wakeup_count);
+	return count;
+}
+
+static struct kobj_attribute alarm_attribute =
+	__ATTR(alarm_count, 0644, alarm_show, alarm_store);
+
+static ssize_t hsi_show(struct kobject *kobj, struct kobj_attribute *attr,
+			char *buf)
+{
+	return sprintf(buf, "%d\n", hsi_wakeup_count);
+}
+
+static ssize_t hsi_store(struct kobject *kobj, struct kobj_attribute *attr,
+			 const char *buf, size_t count)
+{
+	sscanf(buf, "%du", &hsi_wakeup_count);
+	return count;
+}
+
+static struct kobj_attribute hsi_attribute =
+	__ATTR(hsi_count, 0644, hsi_show, hsi_store);
+
+static struct attribute *attrs[] = {
+	&alarm_attribute.attr,
+	&hsi_attribute.attr,
+	NULL,	/* need to NULL terminate the list of attributes */
+};
+
+static struct attribute_group attr_group = {
+	.attrs = attrs,
+};
+
+static struct kobject *wakeup_count_kobj;
+
+static int __init wakeup_count_init(void)
+{
+	int retval;
+printk("nick: alarm hsi wakeup_count_init start");
+	alarm_wakeup_count = 0;
+	hsi_wakeup_count = 0;
+	wakeup_count_kobj = kobject_create_and_add("wakeup_count", kernel_kobj);
+	if (!wakeup_count_kobj)
+		return -ENOMEM;
+
+	retval = sysfs_create_group(wakeup_count_kobj, &attr_group);
+	if (retval)
+		kobject_put(wakeup_count_kobj);
+
+	return retval;
+}
+
 int mdfld_clv_nc_set_power_state(int islands, int state_type,
 					int reg_type, int *change)
 {
@@ -449,3 +524,4 @@ int mdfld_clv_nc_set_power_state(int islands, int state_type,
 unlock:
 	return ret;
 }
+module_init(wakeup_count_init);

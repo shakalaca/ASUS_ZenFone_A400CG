@@ -4,12 +4,12 @@
 #
 #  Battery driver configuration
 #
-menuconfig ME302C_BATTERY
-	bool "ME302C Battery support"
-	help
-	  Say Y here. This option doesn't affect the kernel.
-	  If unsure, say Y.
-
+#menuconfig ME302C_BATTERY
+#	bool "ME302C Battery support"
+#	help
+#	  Say Y here. This option doesn't affect the kernel.
+#	  If unsure, say Y.
+#
 menuconfig ME372CG_BATTERY
 	bool "ME372CG Battery support"
 	help
@@ -28,23 +28,41 @@ menuconfig ME175CG_BATTERY
 	  Say Y here. This option doesn't affect the kernel.
 	  If unsure, say Y.
 
-menuconfig PF400CG_BATTERY
-	bool "PF400CG Battery support"
-	help
-	  Say Y here. This option doesn't affect the kernel.
-	  If unsure, say Y.
-
+#menuconfig PF400CG_BATTERY
+#	bool "PF400CG Battery support"
+#	help
+#	  Say Y here. This option doesn't affect the kernel.
+#	  If unsure, say Y.
+#
 menuconfig A400CG_BATTERY
 	bool "A400CG Battery support"
 	help
 	  Say Y here. This option doesn't affect the kernel.
 	  If unsure, say Y.
 
+#menuconfig ZC400CG_BATTERY
+#	bool "A400CG Battery support"
+#	help
+#	  Say Y here. This option doesn't affect the kernel.
+#	  If unsure, say Y.
+#
 menuconfig A450CG_BATTERY
-        bool "A450CG Battery support"
-        help
-          Say Y here. This option doesn't affect the kernel.
-          If unsure, say Y.
+    bool "A450CG Battery support"
+    help
+      Say Y here. This option doesn't affect the kernel.
+      If unsure, say Y.
+
+menuconfig FE171CG_BATTERY
+    bool "A450CG Battery support"
+    help
+      Say Y here. This option doesn't affect the kernel.
+      If unsure, say Y.
+
+menuconfig ME171C_BATTERY
+    bool "A450CG Battery support"
+    help
+      Say Y here. This option doesn't affect the kernel.
+      If unsure, say Y.
 
 menuconfig ASUS_ENGINEER_MODE
 	bool "ME372xx Battery Engineer Mode"
@@ -58,7 +76,7 @@ menuconfig NEW_PROC_FS
 	  Say N here. This option doesn't affect the kernel.
 	  If unsure, say N.
 
-if ME302C_BATTERY || ME372CG_BATTERY || ME372CL_BATTERY || ME175CG_BATTERY || PF400CG_BATTERY || A400CG_BATTERY || A450CG_BATTERY
+if ME302C_BATTERY || ME372CG_BATTERY || ME372CL_BATTERY || ME175CG_BATTERY || PF400CG_BATTERY || A400CG_BATTERY || A450CG_BATTERY || ZC400CG_BATTERY || FE171CG_BATTERY || ME171C_BATTERY
 
 config ME372CG_BATTERY_SMB345
 	tristate "SMB345 battery charger driver"
@@ -80,17 +98,17 @@ config UPI_BATTERY
 	help
 	  Say Y to enable it
 
-config SN280X_CHARGER
-	bool "charger driver"
-	depends on I2C
-	help
-	  Say Y to enable it
-
-config EC_POWER
-	bool "asus ec power information driver"
-	depends on EEPROM_PADSTATION
-	help
-	  Say Y to enable it
+#config SN280X_CHARGER
+#	bool "charger driver"
+#	depends on I2C
+#	help
+#	  Say Y to enable it
+#
+#config EC_POWER
+#	bool "asus ec power information driver"
+#	depends on EEPROM_PADSTATION
+#	help
+#	  Say Y to enable it
 
 config ME372CG_BATTERY_BQ27520
 	tristate "BQ27520 battery driver"

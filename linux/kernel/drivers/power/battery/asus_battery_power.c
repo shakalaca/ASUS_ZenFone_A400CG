@@ -22,10 +22,12 @@
 #include <linux/HWVersion.h>
 #include <linux/wakelock.h>
 
+#ifdef CONFIG_ME372CG
+#define ASUS_PROJECT_ME372CG_TOUCH
+#endif
 extern int Read_HW_ID(void);
 extern int entry_mode;
 #ifdef ASUS_PROJECT_ME372CG_TOUCH
-extern int entry_mode;
 struct work_struct touch_work;
 #ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528
 extern int power_status(int status);
@@ -53,6 +55,7 @@ struct battery_info_reply batt_info = {
 #endif
 };
 
+#ifdef ASUS_PROJECT_ME372CG_TOUCH
 #ifdef CONFIG_TOUCHSCREEN_HIMAX_HX8528
 void notify_touch(int perc)
 {
@@ -60,6 +63,7 @@ void notify_touch(int perc)
 }
 #else
 void notify_touch(int perc) { return; }
+#endif
 #endif
 
 #ifdef ASUS_PROJECT_ME372CG_TOUCH
@@ -336,6 +340,7 @@ static enum power_supply_property asus_battery_props[] = {
     defined(CONFIG_ME175CG_BATTERY) || \
     defined(CONFIG_ME372CL_BATTERY) || \
     defined(CONFIG_PF400CG_BATTERY) || \
+    defined(CONFIG_ZC400CG_BATTERY) || \
     defined(CONFIG_A400CG_BATTERY) || \
     defined(CONFIG_A450CG_BATTERY)
     POWER_SUPPLY_PROP_BATTERY_ID,
@@ -627,7 +632,7 @@ static int percentage_shift(int percentage)
 {
     int ret;
 
-    ret = ((ret >= 100) ? 100 : percentage);
+    ret = ((percentage >= 100) ? 100 : percentage);
 
     /* start percentage shift:
         battery percentage remapping according

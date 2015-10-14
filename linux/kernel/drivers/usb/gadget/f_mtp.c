@@ -35,6 +35,7 @@
 #include <linux/usb_usual.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/f_mtp.h>
+#include <linux/pm_qos.h>
 
 #define MTP_BULK_TX_BUFFER_SIZE       (16384*4)
 #define MTP_BULK_RX_BUFFER_SIZE       (65536*4)
@@ -46,10 +47,11 @@
 
 /* values for mtp_dev.state */
 #define STATE_OFFLINE               0   /* initial state, disconnected */
-#define STATE_READY                 1   /* ready for userspace calls */
-#define STATE_BUSY                  2   /* processing userspace calls */
-#define STATE_CANCELED              3   /* transaction canceled by host */
-#define STATE_ERROR                 4   /* error from completion routine */
+#define STATE_ONLINE                1   /* connected and configured */
+#define STATE_READY                 2   /* ready for userspace calls */
+#define STATE_BUSY                  3   /* processing userspace calls */
+#define STATE_CANCELED              4   /* transaction canceled by host */
+#define STATE_ERROR                 5   /* error from completion routine */
 
 /* number of tx and rx requests to allocate */
 #define TX_REQ_MAX 4
@@ -84,6 +86,7 @@ struct mtp_dev {
 	struct usb_ep *ep_in;
 	struct usb_ep *ep_out;
 	struct usb_ep *ep_intr;
+	struct pm_qos_request   qos;
 
 	int state;
 
@@ -107,8 +110,10 @@ struct mtp_dev {
 	 * MTP_SEND_FILE_WITH_HEADER ioctls on a work queue
 	 */
 	struct workqueue_struct *wq;
+	struct workqueue_struct *mtp_pmqos_wq;
 	struct work_struct send_file_work;
 	struct work_struct receive_file_work;
+	struct delayed_work mtp_pmqos_work;
 	struct file *xfer_file;
 	loff_t xfer_file_offset;
 	int64_t xfer_file_length;
@@ -550,8 +555,8 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	if (count > MTP_BULK_RX_BUFFER_SIZE)
 		return -EINVAL;
 
-	if (dev->state == STATE_OFFLINE) {
-		DBG(cdev, "mtp_read: state offline, return\n");
+	if (dev->state == STATE_OFFLINE || dev->state == STATE_ONLINE) {
+		DBG(cdev, "mtp_read: state offline or has reconnected, return\n");
 		return -EIO;
 	}
 
@@ -602,7 +607,7 @@ done:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		r = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
@@ -629,7 +634,7 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 		spin_unlock_irq(&dev->lock);
 		return -ECANCELED;
 	}
-	if (dev->state == STATE_OFFLINE) {
+	if (dev->state == STATE_OFFLINE || dev->state == STATE_ONLINE) {
 		spin_unlock_irq(&dev->lock);
 		return -ENODEV;
 	}
@@ -693,7 +698,7 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		r = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
@@ -908,6 +913,16 @@ static void receive_file_work(struct work_struct *data)
 	smp_wmb();
 }
 
+/* Enable/Disable QoS for mtp transfer */
+static void mtp_pmqos_work(struct work_struct *data)
+{
+	struct mtp_dev *dev = container_of(data, struct mtp_dev,
+						mtp_pmqos_work);
+
+	DBG(dev->cdev, "mtp_pmqos_work finish\n");
+	pm_qos_remove_request(&dev->qos);
+}
+
 static int mtp_send_event(struct mtp_dev *dev, struct mtp_event *event)
 {
 	struct usb_request *req = NULL;
@@ -920,6 +935,9 @@ static int mtp_send_event(struct mtp_dev *dev, struct mtp_event *event)
 		return -EINVAL;
 	if (dev->state == STATE_OFFLINE)
 		return -ENODEV;
+
+	if (dev->state == STATE_ONLINE)
+		return -EIO;
 
 	ret = wait_event_interruptible_timeout(dev->intr_wq,
 			(req = mtp_req_get(dev, &dev->intr_idle)),
@@ -948,6 +966,9 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 	if (mtp_lock(&dev->ioctl_excl))
 		return -EBUSY;
 
+	if (!delayed_work_pending(&dev->mtp_pmqos_work))
+		pm_qos_add_request(&dev ->qos,PM_QOS_CPU_DMA_LATENCY,0);
+
 	switch (code) {
 	case MTP_SEND_FILE:
 	case MTP_RECEIVE_FILE:
@@ -967,6 +988,11 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 		if (dev->state == STATE_OFFLINE) {
 			spin_unlock_irq(&dev->lock);
 			ret = -ENODEV;
+			goto out;
+		}
+		if (dev->state == STATE_ONLINE) {
+			spin_unlock_irq(&dev->lock);
+			ret = -EIO;
 			goto out;
 		}
 		dev->state = STATE_BUSY;
@@ -1033,12 +1059,17 @@ fail:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		ret = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 out:
 	mtp_unlock(&dev->ioctl_excl);
 	DBG(dev->cdev, "ioctl returning %d\n", ret);
+
+	if (delayed_work_pending(&dev->mtp_pmqos_work))
+		cancel_delayed_work(&dev->mtp_pmqos_work);
+	queue_delayed_work(dev->mtp_pmqos_wq, &dev->mtp_pmqos_work, 3*HZ);
+
 	return ret;
 }
 
@@ -1418,7 +1449,7 @@ static int mtp_function_set_alt(struct usb_function *f,
 		usb_ep_disable(dev->ep_in);
 		return ret;
 	}
-	dev->state = STATE_READY;
+	dev->state = STATE_ONLINE;
 
 	/* readers may be blocked waiting for us to go online */
 	wake_up(&dev->read_wq);
@@ -1498,6 +1529,7 @@ static int mtp_setup(void)
 	INIT_LIST_HEAD(&dev->intr_idle);
 
 	dev->wq = create_singlethread_workqueue("f_mtp");
+	dev->mtp_pmqos_wq = create_singlethread_workqueue("mtp_pmqos_wq");
 	if (!dev->wq) {
 		ret = -ENOMEM;
 		goto err1;
@@ -1525,6 +1557,7 @@ static int mtp_setup(void)
 
 	INIT_WORK(&dev->send_file_work, send_file_work);
 	INIT_WORK(&dev->receive_file_work, receive_file_work);
+	INIT_DELAYED_WORK(&dev->mtp_pmqos_work, mtp_pmqos_work);
 
 	_mtp_dev = dev;
 

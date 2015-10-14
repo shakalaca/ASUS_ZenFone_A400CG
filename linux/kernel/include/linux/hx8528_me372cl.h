@@ -1,6 +1,6 @@
 
-#define HIMAX_X_MAX 		2240 //picasso 2624	2240  asus 2240 3008 2240
-#define HIMAX_Y_MAX			1408 //picasso 1728	1408	asus 1280 1856 1408
+#define HIMAX_X_MAX 		2240 /*picasso 2624	2240  asus 2240 3008 2240 */
+#define HIMAX_Y_MAX			1408 /*picasso 1728	1408	asus 1280 1856 1408 */
 #define HIMAX_X_MAX_370T	2112
 #define HIMAX_Y_MAX_370T	1280
 #define HIMAX_X_MAX_202T	2944

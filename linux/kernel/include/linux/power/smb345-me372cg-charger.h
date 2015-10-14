@@ -132,10 +132,10 @@ struct smb345_charger_platform_data {
     bool		show_battery;
     int		irq_gpio;
     int		inok_gpio;
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
     int gp_sdio_2_clk;
 #endif
-#ifdef CONFIG_A400CG
+#if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     int pcb_id11;
 #endif
     enum smb347_chg_enable enable_control;

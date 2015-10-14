@@ -53,7 +53,7 @@ static struct ehci_sph_pdata *get_sph_platform_data(struct pci_dev *pdev)
 	case PCI_DEVICE_ID_INTEL_CLV_SPH:
 		if (is_board_ctp_prx()) {
 			/* request SPH CS_N gpio by name */
-			pdata->gpio_cs_n = get_gpio_by_name("USB2_PHY_CS");
+			pdata->gpio_cs_n = get_gpio_by_name("sph_phy_cs_n");
 			if (pdata->gpio_cs_n == -1) {
 				dev_err(&pdev->dev,
 					"%s: No SPH gpio "
@@ -63,7 +63,7 @@ static struct ehci_sph_pdata *get_sph_platform_data(struct pci_dev *pdev)
 
 			/* request SPH RST_N gpio by name */
 			pdata->gpio_reset_n =
-					get_gpio_by_name("USB2_PHY_RST_N");
+					get_gpio_by_name("sph_phy_reset_n");
 			if (pdata->gpio_reset_n == -1) {
 				dev_err(&pdev->dev,
 					"%s: No SPH gpio "

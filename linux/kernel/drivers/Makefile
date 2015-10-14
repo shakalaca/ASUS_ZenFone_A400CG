@@ -23,11 +23,10 @@ obj-$(CONFIG_ME175CG_BATTERY)   += power/battery/
 obj-$(CONFIG_PF400CG_BATTERY)   += power/battery/
 obj-$(CONFIG_A400CG_BATTERY)   += power/battery/
 obj-$(CONFIG_A450CG_BATTERY)   += power/battery/
+obj-$(CONFIG_ZC400CG_BATTERY)   += power/battery/
+obj-$(CONFIG_FE171CG_BATTERY)   += power/battery/
+obj-$(CONFIG_ME171C_BATTERY)   += power/battery/
 # )))
-
-# Joe add for ASUS EC driver ++
-obj-$(CONFIG_INPUT_ASUSEC) += input/asusec/
-# Joe add for ASUS EC driver --
 
 obj-y				+= video/
 obj-y				+= idle/
@@ -112,6 +111,7 @@ obj-$(CONFIG_PPS)		+= pps/
 obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
 obj-$(CONFIG_W1)		+= w1/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
+obj-$(CONFIG_POWERCAP)		+= powercap/
 obj-$(CONFIG_HWMON)		+= hwmon/
 obj-$(CONFIG_THERMAL)		+= thermal/
 obj-$(CONFIG_WATCHDOG)		+= watchdog/
@@ -170,4 +170,4 @@ obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
 obj-$(CONFIG_EXTERNAL_DRIVERS)	+= external_drivers/
-obj-y				+= simcddrv/
+obj-y               += simcddrv/

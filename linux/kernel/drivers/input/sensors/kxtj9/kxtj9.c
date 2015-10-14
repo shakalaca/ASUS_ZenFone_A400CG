@@ -88,6 +88,14 @@ extern int Read_HW_ID(void);
 #define RES_12bit		(1 << 6)
 #define RES_8bit			0xBF
 
+// ODR range 2014.11.14
+#define KXTJ_ODR_RANGE_2G	0
+#define KXTJ_ODR_RANGE_4G	1
+#define KXTJ_ODR_RANGE_8G	2
+#define ODR_RANGE_2G	0xE7
+#define ODR_RANGE_4G	0x08
+#define ODR_RANGE_8G	0x10
+
 /* DATA CONTROL REGISTER BITS */
 #define ODR3_125F		0x0A
 #define ODR6_25F		0x0B
@@ -125,6 +133,8 @@ extern int Read_HW_ID(void);
 #define KXTJ2_CHIP_LOCATION_SR_FE380CG		8	//	X(0 , 1 , 0 );	Y(1 , 0 , 0);	Z(0 , 0 , -1)
 #define KXTJ2_CHIP_LOCATION_SR_TX201LAF		9	//	X(0 , 1 , 0 );	Y(1 , 0 , 0);	Z(0 , 0 , -1)
 #define KXTJ2_CHIP_LOCATION_SR_ZC400CG		10	//	X(-1 , 0 , 0 );	Y(0 , 1 , 0);	Z(0 , 0 , -1)
+#define KXTJ2_CHIP_LOCATION_SR_FE171CG		11	//	X(0 , 1 , 0 );	Y(-1 , 0 , 0);	Z(0 , 0 , 1)
+
 int g_ilocation=-1;
 
 #define WHOAMI_VALUE_FOR_KXTJ9	8
@@ -244,6 +254,7 @@ struct kxtj9_data {
 	int resume_enable;
 	int irq_status;
 	int irq_bypass;
+	int odr_range;
 // counter for reset chip by cheng_kao 2014.07.01 ++
 	int reset_counter;
 // counter for reset chip by cheng_kao 2014.07.01 --
@@ -468,6 +479,30 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 //	reportdata_x = rawdata_x;
 //	reportdata_y = rawdata_y;
 //	reportdata_z = rawdata_z;
+	switch(tj9->odr_range){
+		case KXTJ_ODR_RANGE_2G:
+			if(KXTJ9_DEBUG_MESSAGE) printk("alp.D : KXTJ_ODR_RANGE_2G!!\n");
+		break;
+
+		case KXTJ_ODR_RANGE_4G:
+			if(KXTJ9_DEBUG_MESSAGE) printk("alp.D : KXTJ_ODR_RANGE_4G!!\n");
+			rawdata_x = 2*rawdata_x ;
+			rawdata_y = 2*rawdata_y ;
+			rawdata_z = 2*rawdata_z ;
+		break;
+
+		case KXTJ_ODR_RANGE_8G:
+			if(KXTJ9_DEBUG_MESSAGE) printk("alp.D : KXTJ_ODR_RANGE_8G!!\n");
+			rawdata_x = 4*rawdata_x ;
+			rawdata_y = 4*rawdata_y ;
+			rawdata_z = 4*rawdata_z ;
+		break;
+
+		default :
+			printk("alp.D : Error odr range!!\n");
+		break;
+	}
+
 	
 	// transfromed by chip location
 	switch(g_ilocation){
@@ -611,6 +646,21 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_TX201LAF_SR calibration\n");
 			}
 		break;
+		case KXTJ2_CHIP_LOCATION_SR_FE171CG :
+				if( (tj9->accel_cal_sensitivity[0]==0)||(tj9->accel_cal_sensitivity[1]==0)||(tj9->accel_cal_sensitivity[2]==0) ){
+				reportdata_x = rawdata_y*(1);
+				reportdata_y = rawdata_x*(-1);
+				reportdata_z = rawdata_z*(1);
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_FE171CG_SR default\n");
+			}
+			else{
+				reportdata_x = (1024)*(rawdata_y - tj9->accel_cal_offset[1])/tj9->accel_cal_sensitivity[1];
+				reportdata_y = (-1024)*(rawdata_x - tj9->accel_cal_offset[0])/tj9->accel_cal_sensitivity[0];
+				reportdata_z = (1024)*(rawdata_z - tj9->accel_cal_offset[2])/tj9->accel_cal_sensitivity[2];
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_FE171CG_SR calibration\n");
+			}
+		break;
+		 
 	}
 
 	if(KXTJ9_DEBUG_MESSAGE) printk("report_acceleration data : (%d), (%d), (%d)\n",reportdata_x, reportdata_y, reportdata_z);
@@ -1342,8 +1392,8 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 		if(tj9->accel_cal_sensitivity[2]==0)
 			tj9->accel_cal_sensitivity[2]=1024;
 	}else{
-		// for PF400CG, A400CG, A450CG, ME372CL,ZC400CG
-		if( (g_ilocation == KXTJ2_CHIP_LOCATION_SR_PF400CG) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_A400CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_SR_A450CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_ER_ME372CL) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_ZC400CG) ){
+		// for PF400CG, A400CG, A450CG, ME372CL,ZC400CG, FE171CG
+		if( (g_ilocation == KXTJ2_CHIP_LOCATION_SR_PF400CG) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_A400CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_SR_A450CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_ER_ME372CL) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_ZC400CG) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_FE171CG) ){
 			//for X axis
 			tj9->accel_cal_offset[0]=tj9->accel_cal_data[1];
 			if( (tj9->accel_cal_offset[0]<up_calibration_limit) && (tj9->accel_cal_offset[0]>down_calibration_limit) )
@@ -1376,6 +1426,34 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 //				else
 					tj9->accel_cal_offset[2]=tj9->accel_cal_offset[2]+1024;
 			}
+		}
+		else if(g_ilocation == KXTJ9_CHIP_LOCATION_SR_ME372CG){
+			printk(KERN_INFO "alp.D : Test the ME372CG at L!!\n" );
+			//for X axis
+			tj9->accel_cal_offset[0]=tj9->accel_cal_data[1];
+			if( (tj9->accel_cal_offset[0]<up_calibration_limit) && (tj9->accel_cal_offset[0]>down_calibration_limit) )
+				tj9->accel_cal_offset[0]=tj9->accel_cal_offset[0]-1024;
+			else
+				tj9->accel_cal_offset[0] = 0;
+			//for Y axis
+			tj9->accel_cal_offset[1]=tj9->accel_cal_data[3]; 
+			if( (tj9->accel_cal_offset[1]<up_calibration_limit) && (tj9->accel_cal_offset[1]>down_calibration_limit) )
+				tj9->accel_cal_offset[1]=tj9->accel_cal_offset[1]-1024;
+			else
+				tj9->accel_cal_offset[1] = 0;
+
+			//for Z axis
+			tj9->accel_cal_offset[2]=tj9->accel_cal_data[5];
+			if(tj9->accel_cal_offset[2]==0){
+				tj9->accel_cal_offset[2]=0;
+				printk(KERN_INFO "alp : z-axiz is zero!!\n" );
+			}
+			else if(tj9->accel_cal_offset[2]>0){
+					tj9->accel_cal_offset[2]=tj9->accel_cal_offset[2]-1024;
+			}else{
+					tj9->accel_cal_offset[2]=tj9->accel_cal_offset[2]+1024;
+			}
+
 		}
 		else{
 			printk(KERN_INFO "alp : kxtj2 use the default setting!!\n" );
@@ -1410,13 +1488,36 @@ static ssize_t write_kxtj9_resolution(struct device *dev,
 	int val = simple_strtoul(buf, NULL, 10);
 	switch(val){
 		case 0:
-			printk("alp : 8-bit !!!\n");
+			printk("alp.D : 8-bit !!!\n");
 			tj9->ctrl_reg1 &=RES_8bit;
 			i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
 		break;
 		case 1:
-			printk("alp : 12-bit !!!\n");
+			printk("alp.D : 12-bit !!!\n");
 			tj9->ctrl_reg1 |=RES_12bit;
+			i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
+		break;
+
+		case 2:
+			printk("alp.D : odr 2G !!!\n");
+			tj9->ctrl_reg1 &= ODR_RANGE_2G;	// (0,0);+-2g
+			tj9->odr_range = KXTJ_ODR_RANGE_2G;
+			i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
+		break;
+
+		case 4:
+			printk("alp.D : odr 4G !!!\n");
+			tj9->ctrl_reg1 &= ODR_RANGE_2G;	// (0,0);+-2g
+			tj9->ctrl_reg1 |= ODR_RANGE_4G;	// (0,1);+-4g 
+			tj9->odr_range = KXTJ_ODR_RANGE_4G;
+			i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
+		break;
+
+		case 8:
+			printk("alp.D : odr 8G !!!\n");
+			tj9->ctrl_reg1 &= ODR_RANGE_2G;	// (0,0);+-2g
+			tj9->ctrl_reg1 |= ODR_RANGE_8G;	// (1,0);+-8g 
+			tj9->odr_range = KXTJ_ODR_RANGE_8G;
 			i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
 		break;
 
@@ -1919,20 +2020,24 @@ static int kxtj9_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, tj9);
 
 	// tj9->ctrl_reg1 = tj9->pdata.res_12bit | tj9->pdata.g_range;
-	#ifdef CONFIG_ME372CG
-            tj9->ctrl_reg1 |= RES_8bit;
-	#else
-            tj9->ctrl_reg1 |= RES_12bit;
-	#endif
+//	#ifdef CONFIG_ME372CG
+//		tj9->ctrl_reg1 |= RES_8bit;
+//	#else
+		tj9->ctrl_reg1 |= RES_12bit;
+//	#endif
+
+	// set odr range
+	tj9->ctrl_reg1 |= ODR_RANGE_4G;	// (0,1);+-4g 
+	tj9->odr_range = KXTJ_ODR_RANGE_4G;
+//	tj9->ctrl_reg1 &= ODR_RANGE_2G;	// (0,0);+-2g
+	//(0,0)=+-2g(default) ; (0,1)=+-4g ; (1,0)=+-8g ; (1,1)=4g
 
 	tj9->last_poll_interval = tj9->pdata.init_interval;
-	printk("alp : init reg1=%d \n",tj9->ctrl_reg1);
 	if (tj9->irq) {
 		/* If in irq mode, populate INT_CTRL_REG1 and enable DRDY. */
 		tj9->int_ctrl |= KXTJ9_IEN | KXTJ9_IEA ;//| KXTJ9_IEL;
 
 		tj9->ctrl_reg1 |= DRDYE;
-		tj9->ctrl_reg1 &= 0xe7;
 		err = kxtj9_setup_input_device(tj9);
 		if (err)
 			goto err_pdata_exit;
@@ -1963,7 +2068,7 @@ static int kxtj9_probe(struct i2c_client *client,
 		if (err)
 			goto err_pdata_exit;
 	}
-	printk("alp : final reg1=%d \n",tj9->ctrl_reg1);
+	printk("alp.D : final reg1=%d \n",tj9->ctrl_reg1);
 	atomic_set(&tj9->enabled, 0);
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -2017,6 +2122,10 @@ static int kxtj9_probe(struct i2c_client *client,
 
 #ifdef CONFIG_ZC400CG
 	g_ilocation = KXTJ2_CHIP_LOCATION_SR_ZC400CG;
+#endif
+
+#ifdef CONFIG_FE171CG
+	g_ilocation = KXTJ2_CHIP_LOCATION_SR_FE171CG;
 #endif
 
 // for enable motion detect , added by cheng_kao 2014.02.12 ++

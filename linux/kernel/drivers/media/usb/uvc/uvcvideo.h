@@ -120,7 +120,7 @@
 /* Maximum status buffer size in bytes of interrupt URB. */
 #define UVC_MAX_STATUS_SIZE	16
 
-#define UVC_CTRL_CONTROL_TIMEOUT	5000 //ASUS_BSP changed 300->5000 for calibartion
+#define UVC_CTRL_CONTROL_TIMEOUT	300
 #define UVC_CTRL_STREAMING_TIMEOUT	5000
 
 /* Maximum allowed number of control mappings per device */
@@ -538,8 +538,6 @@ struct uvc_device {
 	__u8 *status;
 	struct input_dev *input;
 	char input_phys[64];
-	
-	struct attribute_group sensor_uvc_attribute; //Add for ATD read camera status+++
 };
 
 enum uvc_handle_state {

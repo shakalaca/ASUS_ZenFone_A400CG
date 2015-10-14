@@ -2646,7 +2646,7 @@ static int __init px3212c_init(void)
 			{
  				printk("[%s] PF400CG-P72G P-sensor function don't work now!!\n",__FUNCTION__);
 				 return 0;
-			}
+			}
 	}
  	ret = i2c_add_driver(&px3212c_i2c_driver);
 	if ( ret != 0 ) {

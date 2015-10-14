@@ -335,6 +335,13 @@ static int evdev_open(struct inode *inode, struct file *file)
 	client->evdev = evdev;
 	evdev_attach_client(evdev, client);
 
+	spin_lock_irq(&client->buffer_lock);
+	wake_lock_init(&client->wake_lock, WAKE_LOCK_SUSPEND, client->name);
+	client->use_wake_lock = true;
+	if (client->packet_head != client->tail)
+		wake_lock(&client->wake_lock);
+	spin_unlock_irq(&client->buffer_lock);
+
 	error = evdev_open_device(evdev);
 	if (error)
 		goto err_free_client;
@@ -377,7 +384,7 @@ static ssize_t evdev_write(struct file *file, const char __user *buffer,
 			goto out;
 		}
 		retval += input_event_size();
-		if(event.type != EV_SW && event.code != SW_LID){
+		if(event.type != EV_SW || event.code != SW_LID){
 		input_inject_event(&evdev->handle,
 				   event.type, event.code, event.value);
 		}

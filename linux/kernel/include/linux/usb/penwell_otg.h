@@ -125,15 +125,9 @@
 #define MSIC_OTGCTRL		0x39c
 #define MSIC_OTGCTRLSET		0x340
 #define MSIC_OTGCTRLCLR		0x341
-#define	IFC_CTRL    0x07
-#define	IFC_CTRL_SET    0x08
-#define	IFC_CTRL_CLR    0x09
-#	define INDICATORPASSTHRU		BIT(6)
-#	define INDICATORCOMPLEMENT		BIT(5)
 #define	ULPI_OTGCTRL		0x0a
 #define	ULPI_OTGCTRLSET		0x0b
 #define	ULPI_OTGCTRLCLR		0x0c
-#	define USEEXTERNALVBUSINDICATOR		BIT(7)
 #	define DRVVBUS_EXTERNAL		BIT(6)
 #	define DRVVBUS			BIT(5)
 #	define DMPULLDOWN		BIT(2)
@@ -399,17 +393,17 @@ enum usb_charger_type {
 };
 
 #ifdef CONFIG_ME302C_BATTERY_SMB347
-	#include "../../../drivers/power/ME302C_BATTERY/smb347_external_include.h"
+	#include "../../../drivers/power/ME302C_BATTERY/smb347_externel_include.h"
 #elif defined(CONFIG_ME372CG_BATTERY_SMB345)
 	#include "../../../drivers/power/battery/smb345_external_include.h"
 #else
 /*USB type*/
 typedef enum {
-    USB_IN,
-    AC_IN,
-    CABLE_OUT,
-    ENABLE_5V,
-    DISABLE_5V,
+	USB_IN,
+	AC_IN,
+	CABLE_OUT,
+	ENABLE_5V,
+	DISABLE_5V,
 };
 #endif
 
@@ -471,11 +465,8 @@ struct penwell_otg {
 
 	unsigned			region;
 	unsigned			cfg_region;
-#ifdef CONFIG_EEPROM_PADSTATION
-	struct delayed_work	work;
-#else
-	struct work_struct	work;
-#endif
+
+	struct work_struct		work;
 	struct work_struct		hnp_poll_work;
 	struct work_struct		psc_notify;
 	struct work_struct		uevent_work;
@@ -520,7 +511,6 @@ struct penwell_otg {
 
 	int				phy_power_state;
 	int				usb0_id_gpio;
-	bool                     otg_state;
 };
 
 static inline

@@ -35,6 +35,7 @@
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/apb_timer.h>
 #include <asm/reboot.h>
+#include <asm/proto.h>
 #include "intel_mid_weak_decls.h"
 #include "intel_soc_pmu.h"
 
@@ -73,6 +74,7 @@ MODULE_PARM_DESC(force_cold_boot,
 		 "Set to Y to force a COLD BOOT instead of a COLD RESET "
 		 "on the next reboot system call.");
 
+
 extern int pcb_id;
 module_param(pcb_id, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(PCB_VERSION,
@@ -87,15 +89,8 @@ extern int hardware_id;
 module_param(hardware_id, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(HW_VERSION,
                  "HW_ID judgement");
+
 u32 nbr_hsi_clients = 2;
-
-void set_force_cold_boot(int cold_reboot)
-{
-    force_cold_boot = cold_reboot;
-    pr_info("%s: force_cold_boot=%d\n",  __func__, force_cold_boot);
-}
-EXPORT_SYMBOL(set_force_cold_boot);
-
 static void intel_mid_power_off(void)
 {
 	pmu_power_off();
@@ -106,10 +101,26 @@ static void intel_mid_reboot(void)
 	if (intel_scu_ipc_fw_update()) {
 		pr_debug("intel_scu_fw_update: IFWI upgrade failed...\n");
 	}
-	if (force_cold_boot)
-		rpmsg_send_generic_simple_command(IPCMSG_COLD_BOOT, 0);
-	else
-		rpmsg_send_generic_simple_command(IPCMSG_COLD_RESET, 0);
+
+	if (reboot_force) {
+		if (force_cold_boot)
+			rpmsg_send_generic_simple_command(IPCMSG_COLD_BOOT, 0);
+		else
+			rpmsg_send_generic_simple_command(IPCMSG_COLD_RESET, 0);
+	} else {
+		/* system_state is SYSTEM_RESTART now,
+		 * polling to wait for SCU not busy.
+		 */
+		while (intel_scu_ipc_check_status())
+			udelay(10);
+
+		if (force_cold_boot)
+			intel_scu_ipc_raw_cmd(IPCMSG_COLD_BOOT,
+				0, NULL, 0, NULL, 0, 0, 0);
+		else
+			intel_scu_ipc_raw_cmd(IPCMSG_COLD_RESET,
+				0, NULL, 0, NULL, 0, 0, 0);
+	}
 }
 
 static unsigned long __init intel_mid_calibrate_tsc(void)
@@ -117,7 +128,7 @@ static unsigned long __init intel_mid_calibrate_tsc(void)
 	return 0;
 }
 
-extern void xen_time_init();
+extern void xen_time_init(void);
 
 #ifdef CONFIG_XEN
 static void __init intel_mid_time_init(void)
@@ -169,9 +180,6 @@ static void __cpuinit intel_mid_arch_setup(void)
 		break;
 	case 0x5A:
 		__intel_mid_cpu_chip = INTEL_MID_CPU_CHIP_ANNIEDALE;
-		break;
-	case 0x5D:
-		__intel_mid_cpu_chip = INTEL_MID_CPU_CHIP_CARBONCANYON;
 		break;
 	case 0x27:
 	default:

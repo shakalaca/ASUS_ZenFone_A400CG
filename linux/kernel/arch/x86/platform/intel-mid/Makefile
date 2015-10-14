@@ -8,11 +8,22 @@ obj-y += spid.o
 
 # SFI specific code
 obj-$(CONFIG_SFI) += intel_mid_sfi.o
-obj-$(CONFIG_ME302C_SPC_PWR_SET)       += me302c_spc_pwr_set.o
-
-ifneq (,$(filter ME175CG PF400CG A400CG FE380CG A450CG,$(ASUS_PROJECT)))
-	KBUILD_CFLAGS += -DFOR_2076
+obj-y += spc_pwr_set.o
+ifeq ($(ASUS_BT_CHIP_NAME), BCM2076)
+    KBUILD_CFLAGS += -DFOR_2076
 endif
+
+ifeq ($(ASUS_BT_CHIP_NAME), BCM4343)
+    KBUILD_CFLAGS += -DFOR_4343
+endif
+
+ifeq ($(ASUS_BT_CHIP_NAME), BCM43341)
+    KBUILD_CFLAGS += -DFOR_43341
+endif
+
+ifneq (,$(filter FE171CG ME171C,$(ASUS_PROJECT)))
+        KBUILD_CFLAGS += -DBT_USE_UART3
+endif			
 
 # platform configuration for board devices
 obj-y += device_libs/
@@ -30,6 +41,9 @@ obj-$(CONFIG_ATOM_SOC_POWER) += intel_soc_pmu.o intel_soc_pm_debug.o intel_soc_d
 obj-$(CONFIG_REMOVEME_INTEL_ATOM_MDFLD_POWER) += intel_soc_mdfld.o intel_soc_mdfld_clv_common.o
 obj-$(CONFIG_REMOVEME_INTEL_ATOM_CLV_POWER) += intel_soc_clv.o intel_soc_mdfld_clv_common.o
 obj-$(CONFIG_REMOVEME_INTEL_ATOM_MRFLD_POWER) += intel_soc_mrfld.o
+
+# pci acpi quirk driver
+obj-$(CONFIG_INTEL_SOC_PMC) += intel_soc_pci_acpi_quirk.o
 
 # Debug features driver
 obj-$(CONFIG_INTEL_DEBUG_FEATURE) += intel_soc_debug.o

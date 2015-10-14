@@ -2112,7 +2112,7 @@ enum {
 #define ME372CL_RT5640_VOL_RSCL_MAX 0x23
 #define RT5640_VOL_RSCL_RANGE 0x1F
 /* Debug String Length */
-#define RT5640_REG_DISP_LEN 10
+#define RT5640_REG_DISP_LEN 23
 
 #define RT5640_NO_JACK		BIT(0)
 #define RT5640_HEADSET_DET	BIT(1)
@@ -2190,6 +2190,10 @@ struct rt5640_priv {
 	int v_code;
 	bool dsp_play_pass;
 	bool dsp_rec_pass;
+
+	unsigned int adb_reg_addr[0x100];
+	unsigned int adb_reg_value[0x100];
+	unsigned char adb_reg_num;
 };
 
 #endif /* __RT5640_H__ */

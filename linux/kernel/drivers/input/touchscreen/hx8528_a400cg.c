@@ -352,8 +352,10 @@ struct himax_chip_data
 
 	int TP_ID; // add by leo for TP_ID
 	int tp_lens_version_checksum;
-	int is_key_down; // add by leo for google ui issue ++
-
+	int back_is_key_down;
+	int home_is_key_down;
+	int menu_is_key_down;
+	
 	spinlock_t touch_spinlock;
 
 #ifdef HX_VIRTUAL_KEY_DELAY
@@ -7378,15 +7380,34 @@ bypass_checksum_failed_packet:
 		hx_point_num= buf[HX_TOUCH_INFO_POINT_CNT] & 0x0f;
 	}   
 
-	// add by leo for google ui issue ++
-	if(himax_chip->is_key_down==1){
-		printk("[Himax] %s: Key UP.\n",__func__);
-		input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
-		input_mt_sync(himax_chip->input_dev);
-		input_sync(himax_chip->input_dev);
-		himax_chip->is_key_down=0;
+	if (tpd_key_old != 0xFF)
+	{
+		//if(himax_chip->back_is_key_down != 0){ // add by leo for google ui issue
+		if( (tpd_key & 0x01) == 1 && himax_chip->back_is_key_down == 1){
+			printk("[Himax] %s: Key UP back.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[0], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->back_is_key_down=0;
+		}
+		//if(himax_chip->home_is_key_down != 0){
+		if( ((tpd_key & 0x02) >> 1) == 1 && himax_chip->home_is_key_down == 1){
+			printk("[Himax] %s: Key UP home.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[1], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->home_is_key_down=0;
+		}
+		if( ((tpd_key & 0x04) >> 2) == 1 && himax_chip->menu_is_key_down == 1){
+		//if(himax_chip->menu_is_key_down != 0){
+			printk("[Himax] %s: Key UP menu.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[2], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->menu_is_key_down=0;
+		}
+		
 	}
-	// add by leo for google ui issue --
 	
 	// Touch Point information
 	if(hx_point_num != 0 && tpd_key == 0xFF)
@@ -7481,31 +7502,35 @@ bypass_checksum_failed_packet:
 		temp_x[1] = 0xFFFF;
 		temp_y[1] = 0xFFFF; 
 	
-		if( tpd_key == 1)
+		//if( tpd_key == 1)
+		if( (tpd_key & 0x01) == 0 && himax_chip->back_is_key_down == 0)			
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[0], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
 			printk("[Himax]: Press KEY_BACK. \r\n");	
+			himax_chip->back_is_key_down = 1;
 		}
 		
-		if( tpd_key == 2)
+		//if( tpd_key == 2)
+		if(((tpd_key & 0x02) >> 1) == 0 && himax_chip->home_is_key_down == 0)			
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[1], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
 			printk("[Himax]: Press KEY_HOME. \r\n");	
+			himax_chip->home_is_key_down = 1;
 		}
 		
-		if( tpd_key == 3)
+		//if( tpd_key == 3)
+		if(((tpd_key & 0x04) >> 2) == 0 && himax_chip->menu_is_key_down == 0)			
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[2], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
 			printk("[Himax]: Press KEY_MENU. \r\n");	
+			himax_chip->menu_is_key_down = 1;
 		}
-
-		himax_chip->is_key_down=1; // add by leo for google ui issue
 	}
 	else if(hx_point_num == 0 && tpd_key == 0xFF)
 	{
@@ -7516,12 +7541,26 @@ bypass_checksum_failed_packet:
 		
 		if (tpd_key_old != 0xFF)
 		{
-			if(himax_chip->is_key_down != 0){ // add by leo for google ui issue
-				printk("[Himax] %s: Key UP 2.\n",__func__);
-				input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
+			if(himax_chip->back_is_key_down != 0){ // add by leo for google ui issue
+				printk("[Himax] %s: Key UP back2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[0], 0);
 				input_mt_sync(himax_chip->input_dev);
 				input_sync(himax_chip->input_dev);
-				himax_chip->is_key_down=0; // add by leo for google ui issue
+				himax_chip->back_is_key_down=0; // add by leo for google ui issue
+			}
+			if(himax_chip->home_is_key_down != 0){
+				printk("[Himax] %s: Key UP home2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[1], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->home_is_key_down=0; // add by leo for google ui issue
+			}
+			if(himax_chip->menu_is_key_down != 0){
+				printk("[Himax] %s: Key UP menu2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[2], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->menu_is_key_down=0; // add by leo for google ui issue
 			}
 		}
 		else
@@ -7648,7 +7687,8 @@ static long himax_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		printk( "[Himax]:%s: CFG_VER_MAJ_buff[11]=%d \n",__func__, CFG_VER_MAJ_buff[11]);
 		printk( "[Himax]:%s: CFG_VER_MIN_buff[11]=%d \n",__func__, CFG_VER_MIN_buff[11]);
 		//if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==13)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==19)) // D050D.00.13
-		if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==9)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==18)) // D0509.00.12
+		//if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==9)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==18)) // D0509.00.12
+		if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==15)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==18)) // D050F.00.12
 		{
 			printk( "[Himax]:%s: fw version ok\n",__func__);
 			ver_check_result = 1;
@@ -7806,7 +7846,10 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	himax_chip->tp_firmware_upgrade_proceed = 0;
 	himax_chip->irq_status = 0;
 	himax_chip->msg_count = 0;
-	himax_chip->is_key_down = 0; // add by leo for google ui issue
+	himax_chip->back_is_key_down = 0;
+	himax_chip->home_is_key_down = 0;
+	himax_chip->menu_is_key_down = 0;
+	
 	i2c_set_clientdata(client, himax_chip);
 	pdata = client->dev.platform_data;
 	if (likely(pdata != NULL)) {

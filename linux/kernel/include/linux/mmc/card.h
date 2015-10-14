@@ -306,6 +306,7 @@ struct mmc_card {
 	unsigned int    nr_parts;
 
 	unsigned int		rpmb_max_req;
+	unsigned int            last_max_dtr;
 #ifdef CONFIG_MMC_SUM_SECTORS_CHANGE
     unsigned int    sectors_changed;        /* numbers of changed sectors
                                              * from uptime. */
@@ -543,4 +544,5 @@ extern void mmc_fixup_device(struct mmc_card *card,
 extern int mmc_rpmb_req_handle(struct device *emmc,
 		struct mmc_ioc_rpmb_req *req);
 
+extern void dis_cache_mmc(struct mmc_card *card, int data);
 #endif /* LINUX_MMC_CARD_H */

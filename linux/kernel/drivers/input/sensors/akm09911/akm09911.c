@@ -295,7 +295,7 @@ static int AKECS_SetMode(
 
 static void AKECS_SetYPR(
 	struct akm_compass_data *akm,
-	int *rbuf)
+	int32_t *rbuf)
 {
 	uint32_t ready;
 	if(AKM_DEBUG_MESSAGE) printk("alp : AKECS_SetYPR +\n");
@@ -304,10 +304,20 @@ static void AKECS_SetYPR(
 		rbuf[1], rbuf[2], rbuf[3], rbuf[4]);
 	dev_vdbg(&akm->input->dev, "  Geo [LSB]   : %6d,%6d,%6d stat=%d",
 		rbuf[5], rbuf[6], rbuf[7], rbuf[8]);
+	dev_vdbg(&akm->input->dev, "  Gyro[LSB]   : %6d,%6d,%6d stat=%d",
+		rbuf[9], rbuf[10], rbuf[11], rbuf[12]);
 	dev_vdbg(&akm->input->dev, "  Orientation : %6d,%6d,%6d",
-		rbuf[9], rbuf[10], rbuf[11]);
-	dev_vdbg(&akm->input->dev, "  Rotation V  : %6d,%6d,%6d,%6d",
-		rbuf[12], rbuf[13], rbuf[14], rbuf[15]);
+		rbuf[13], rbuf[14], rbuf[15]);
+	dev_vdbg(&akm->input->dev, "  Gravity     : %6d,%6d,%6d",
+		rbuf[16], rbuf[17], rbuf[18]);
+	dev_vdbg(&akm->input->dev, "  Linear Acc  : %6d,%6d,%6d",
+		rbuf[19], rbuf[20], rbuf[21]);
+	dev_vdbg(&akm->input->dev, "  Geomagnetic Rov  : %6d,%6d,%6d,%6d,%6d",
+		rbuf[22], rbuf[23], rbuf[24], rbuf[25], rbuf[26]);
+	dev_vdbg(&akm->input->dev, "  Uncalibrated MagV  : %6d,%6d,%6d",
+		rbuf[27], rbuf[28], rbuf[29]);
+	dev_vdbg(&akm->input->dev, "  Bias Magv  : %6d,%6d,%6d",
+		rbuf[30], rbuf[31], rbuf[32]);
 
 	/* No events are reported */
 	if (!rbuf[0]) {
@@ -321,29 +331,59 @@ static void AKECS_SetYPR(
 
 	/* Report acceleration sensor information */
 	if (ready & ACC_DATA_READY) {
-		input_report_abs(akm->input, ABS_X, rbuf[1]);
-		input_report_abs(akm->input, ABS_Y, rbuf[2]);
-		input_report_abs(akm->input, ABS_Z, rbuf[3]);
-		input_report_abs(akm->input, ABS_RX, rbuf[4]);
+		input_report_abs(akm->input, AKM_EVABS_ACC_X, rbuf[1]);
+		input_report_abs(akm->input, AKM_EVABS_ACC_Y, rbuf[2]);
+		input_report_abs(akm->input, AKM_EVABS_ACC_Z, rbuf[3]);
+		input_report_abs(akm->input, AKM_EVABS_ACC_ST, rbuf[4]);
 	}
 	/* Report magnetic vector information */
 	if (ready & MAG_DATA_READY) {
-		input_report_abs(akm->input, ABS_RY, rbuf[5]);
-		input_report_abs(akm->input, ABS_RZ, rbuf[6]);
-		input_report_abs(akm->input, ABS_THROTTLE, rbuf[7]);
-		input_report_abs(akm->input, ABS_RUDDER, rbuf[8]);
+		input_report_abs(akm->input, AKM_EVABS_MAG_X, rbuf[5]);
+		input_report_abs(akm->input, AKM_EVABS_MAG_Y, rbuf[6]);
+		input_report_abs(akm->input, AKM_EVABS_MAG_Z, rbuf[7]);
+		input_report_abs(akm->input, AKM_EVABS_MAG_ST, rbuf[8]);
 	}
 	/* Report fusion sensor information */
 	if (ready & FUSION_DATA_READY) {
+		/* Gyroscope sensor */
+		printk("alp : Gyro(%d)(%d)(%d)(%d)\n",rbuf[9],rbuf[10],rbuf[11],rbuf[12]);
+		input_report_abs(akm->input, AKM_EVABS_GYR_X, rbuf[9]);
+		input_report_abs(akm->input, AKM_EVABS_GYR_Y, rbuf[10]);
+		input_report_abs(akm->input, AKM_EVABS_GYR_Z, rbuf[11]);
+		input_report_abs(akm->input, AKM_EVABS_GYR_ST, rbuf[12]);
 		/* Orientation */
-		input_report_abs(akm->input, ABS_HAT0Y, rbuf[9]);
-		input_report_abs(akm->input, ABS_HAT1X, rbuf[10]);
-		input_report_abs(akm->input, ABS_HAT1Y, rbuf[11]);
-		/* Rotation Vector */
-		input_report_abs(akm->input, ABS_TILT_X, rbuf[12]);
-		input_report_abs(akm->input, ABS_TILT_Y, rbuf[13]);
-		input_report_abs(akm->input, ABS_TOOL_WIDTH, rbuf[14]);
-		input_report_abs(akm->input, ABS_VOLUME, rbuf[15]);
+		printk("alp : Ori(%d)(%d)(%d)\n",rbuf[13],rbuf[14],rbuf[15]);	
+		input_report_abs(akm->input, AKM_EVABS_ORI_Y, rbuf[13]);
+		input_report_abs(akm->input, AKM_EVABS_ORI_P, rbuf[14]);
+		input_report_abs(akm->input, AKM_EVABS_ORI_R, rbuf[15]);
+		/* Gravity */
+		printk("alp : Gravity(%d)(%d)(%d)\n",rbuf[16],rbuf[17],rbuf[18]);
+		input_report_abs(akm->input, AKM_EVABS_GRV_X, rbuf[16]);
+		input_report_abs(akm->input, AKM_EVABS_GRV_Y, rbuf[17]);
+		input_report_abs(akm->input, AKM_EVABS_GRV_Z, rbuf[18]);
+		/* Linear Acceleration */
+		printk("alp : Linear(%d)(%d)(%d)\n",rbuf[19],rbuf[20],rbuf[21]);	
+		input_report_abs(akm->input, AKM_EVABS_LAC_X, rbuf[19]);
+		input_report_abs(akm->input, AKM_EVABS_LAC_Y, rbuf[20]);
+		input_report_abs(akm->input, AKM_EVABS_LAC_Z, rbuf[21]);
+		/* Geomagnetic Rotation Vector */
+		printk("alp : GeoM(%d)(%d)(%d)(%d)(%d)\n",rbuf[22],rbuf[23],rbuf[24],rbuf[25],rbuf[26]);
+		input_report_abs(akm->input, AKM_EVABS_GEORV_X, rbuf[22]);
+		input_report_abs(akm->input, AKM_EVABS_GEORV_Y, rbuf[23]);
+		input_report_abs(akm->input, AKM_EVABS_GEORV_Z, rbuf[24]);
+		input_report_abs(akm->input, AKM_EVABS_GEORV_W, rbuf[25]);
+		input_report_abs(akm->input, AKM_EVABS_GEORV_ST, rbuf[26]);
+	}
+	/* Report uncalibrated magnetic vector information */
+	if (ready & MAGUC_DATA_READY) {
+		/* Magnetic field uncalibrated */
+		input_report_abs(akm->input, AKM_EVABS_MUC_X, rbuf[27]);
+		input_report_abs(akm->input, AKM_EVABS_MUC_Y, rbuf[28]);
+		input_report_abs(akm->input, AKM_EVABS_MUC_Z, rbuf[29]);
+		/* Bias of magnetic field uncalibrated */
+		input_report_abs(akm->input, AKM_EVABS_MUB_X, rbuf[30]);
+		input_report_abs(akm->input, AKM_EVABS_MUB_Y, rbuf[31]);
+		input_report_abs(akm->input, AKM_EVABS_MUB_Z, rbuf[32]);
 	}
 
 	input_sync(akm->input);
@@ -460,7 +500,7 @@ static long
 AKECS_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
-//	struct akm_compass_data *akm = file->private_data;
+	struct akm_compass_data *akm = file->private_data;
 
 	/* NOTE: In this function the size of "char" should be 1-byte. */
 	uint8_t i2c_buf[AKM_RWBUF_SIZE];		/* for READ/WRITE */
@@ -476,31 +516,31 @@ AKECS_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case ECS_IOCTL_READ:
 	case ECS_IOCTL_WRITE:
 		if (argp == NULL) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
 		if (copy_from_user(&i2c_buf, argp, sizeof(i2c_buf))) {
-			dev_err(&s_akm->i2c->dev, "copy_from_user failed.");
+			dev_err(&akm->i2c->dev, "copy_from_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_SET_MODE:
 		if (argp == NULL) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
 		if (copy_from_user(&mode, argp, sizeof(mode))) {
-			dev_err(&s_akm->i2c->dev, "copy_from_user failed.");
+			dev_err(&akm->i2c->dev, "copy_from_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_SET_YPR:
 		if (argp == NULL) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
 		if (copy_from_user(&ypr_buf, argp, sizeof(ypr_buf))) {
-			dev_err(&s_akm->i2c->dev, "copy_from_user failed.");
+			dev_err(&akm->i2c->dev, "copy_from_user failed.");
 			return -EFAULT;
 		}
 	case ECS_IOCTL_GET_INFO:
@@ -513,7 +553,7 @@ AKECS_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case ECS_IOCTL_GET_ACCEL:
 		/* Check buffer pointer for writing a data later. */
 		if (argp == NULL) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
 		break;
@@ -523,95 +563,97 @@ AKECS_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case ECS_IOCTL_READ:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_READ called.");
+		dev_vdbg(&akm->i2c->dev, "IOCTL_READ called.");
 		if ((i2c_buf[0] < 1) || (i2c_buf[0] > (AKM_RWBUF_SIZE-1))) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
-		ret = akm_i2c_rxdata(s_akm->i2c, &i2c_buf[1], i2c_buf[0]);
+		ret = akm_i2c_rxdata(akm->i2c, &i2c_buf[1], i2c_buf[0]);
 		if (ret < 0)
 			return ret;
 		break;
 	case ECS_IOCTL_WRITE:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_WRITE called.");
+		dev_vdbg(&akm->i2c->dev, "IOCTL_WRITE called.");
 		if ((i2c_buf[0] < 2) || (i2c_buf[0] > (AKM_RWBUF_SIZE-1))) {
-			dev_err(&s_akm->i2c->dev, "invalid argument.");
+			dev_err(&akm->i2c->dev, "invalid argument.");
 			return -EINVAL;
 		}
-		ret = akm_i2c_txdata(s_akm->i2c, &i2c_buf[1], i2c_buf[0]);
+		ret = akm_i2c_txdata(akm->i2c, &i2c_buf[1], i2c_buf[0]);
 		if (ret < 0)
 			return ret;
 		break;
 	case ECS_IOCTL_RESET:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_RESET called.");
-		ret = AKECS_Reset(s_akm, s_akm->gpio_rstn);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_RESET called.");
+		ret = AKECS_Reset(akm, akm->gpio_rstn);
 		if (ret < 0)
 			return ret;
 		break;
 	case ECS_IOCTL_SET_MODE:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_SET_MODE called.");
-		ret = AKECS_SetMode(s_akm, mode);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_SET_MODE called.");
+		ret = AKECS_SetMode(akm, mode);
 		if (ret < 0)
 			return ret;
 		break;
 	case ECS_IOCTL_SET_YPR:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_SET_YPR called.");
-		AKECS_SetYPR(s_akm, ypr_buf);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_SET_YPR called.");
+		AKECS_SetYPR(akm, ypr_buf);
 		break;
 	case ECS_IOCTL_GET_DATA:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_DATA called.");
-		if (s_akm->irq)
-			ret = AKECS_GetData(s_akm, dat_buf, AKM_SENSOR_DATA_SIZE);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_DATA called.");
+		if (akm->irq)
+			ret = AKECS_GetData(akm, dat_buf, AKM_SENSOR_DATA_SIZE);
 		else
 			ret = AKECS_GetData_Poll(
-					s_akm, dat_buf, AKM_SENSOR_DATA_SIZE);
+					akm, dat_buf, AKM_SENSOR_DATA_SIZE);
 
 		if (ret < 0)
 			return ret;
 		break;
 	case ECS_IOCTL_GET_OPEN_STATUS:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_OPEN_STATUS called.");
-		ret = AKECS_GetOpenStatus(s_akm);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_OPEN_STATUS called.");
+		ret = AKECS_GetOpenStatus(akm);
 		if (ret < 0) {
-			printk(KERN_ERR "ak8963 : open status stop ret(%d).\n",ret);
+			printk(KERN_ERR "akm09911 : open status stop ret(%d).\n",ret);
 			return ret;
 		}
 		break;
 	case ECS_IOCTL_GET_CLOSE_STATUS:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_CLOSE_STATUS called.");
-		ret = AKECS_GetCloseStatus(s_akm);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_CLOSE_STATUS called.");
+		ret = AKECS_GetCloseStatus(akm);
 		if (ret < 0) {
-			printk(KERN_ERR "ak8963 : close status stop ret(%d).\n",ret);
+			printk(KERN_ERR "akm09911 : close status stop ret(%d).\n",ret);
 			return ret;
 		}
 		break;
 	case ECS_IOCTL_GET_DELAY:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_DELAY called.");
-		mutex_lock(&s_akm->val_mutex);
-		delay[0] = ((s_akm->enable_flag & ACC_DATA_READY) ?
-				s_akm->delay[0] : -1);
-		delay[1] = ((s_akm->enable_flag & MAG_DATA_READY) ?
-				s_akm->delay[1] : -1);
-		delay[2] = ((s_akm->enable_flag & FUSION_DATA_READY) ?
-				s_akm->delay[2] : -1);
-		mutex_unlock(&s_akm->val_mutex);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_DELAY called.");
+		mutex_lock(&akm->val_mutex);
+		delay[ACC_DATA_FLAG] = ((akm->enable_flag & ACC_DATA_READY) ?
+				akm->delay[ACC_DATA_FLAG] : -1);
+		delay[MAG_DATA_FLAG] = ((akm->enable_flag & MAG_DATA_READY) ?
+				akm->delay[MAG_DATA_FLAG] : -1);
+		delay[MAGUC_DATA_FLAG] = ((akm->enable_flag & MAGUC_DATA_READY) ?
+				akm->delay[MAGUC_DATA_FLAG] : -1);
+		delay[FUSION_DATA_FLAG] = ((akm->enable_flag & FUSION_DATA_READY) ?
+				akm->delay[FUSION_DATA_FLAG] : -1);
+		mutex_unlock(&akm->val_mutex);
 		break;
 	case ECS_IOCTL_GET_INFO:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_INFO called.");
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_INFO called.");
 		break;
 	case ECS_IOCTL_GET_CONF:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_CONF called.");
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_CONF called.");
 		break;
 	case ECS_IOCTL_GET_LAYOUT:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_LAYOUT called.");
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_LAYOUT called.");
 		break;
 	case ECS_IOCTL_GET_ACCEL:
-		dev_vdbg(&s_akm->i2c->dev, "IOCTL_GET_ACCEL called.");
-		mutex_lock(&s_akm->accel_mutex);
-		acc_buf[0] = s_akm->accel_data[0];
-		acc_buf[1] = s_akm->accel_data[1];
-		acc_buf[2] = s_akm->accel_data[2];
-		mutex_unlock(&s_akm->accel_mutex);
+		dev_vdbg(&akm->i2c->dev, "IOCTL_GET_ACCEL called.");
+		mutex_lock(&akm->accel_mutex);
+		acc_buf[0] = akm->accel_data[0];
+		acc_buf[1] = akm->accel_data[1];
+		acc_buf[2] = akm->accel_data[2];
+		mutex_unlock(&akm->accel_mutex);
 		break;
 	default:
 		return -ENOTTY;
@@ -621,53 +663,53 @@ AKECS_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case ECS_IOCTL_READ:
 		/* +1  is for the first byte */
 		if (copy_to_user(argp, &i2c_buf, i2c_buf[0]+1)) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_INFO:
-		if (copy_to_user(argp, &s_akm->sense_info,
-					sizeof(s_akm->sense_info))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+		if (copy_to_user(argp, &akm->sense_info,
+					sizeof(akm->sense_info))) {
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_CONF:
-		if (copy_to_user(argp, &s_akm->sense_conf,
-					sizeof(s_akm->sense_conf))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+		if (copy_to_user(argp, &akm->sense_conf,
+					sizeof(akm->sense_conf))) {
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_DATA:
 		if (copy_to_user(argp, &dat_buf, sizeof(dat_buf))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_OPEN_STATUS:
 	case ECS_IOCTL_GET_CLOSE_STATUS:
-		status = atomic_read(&s_akm->active);
+		status = atomic_read(&akm->active);
 		if (copy_to_user(argp, &status, sizeof(status))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_DELAY:
 		if (copy_to_user(argp, &delay, sizeof(delay))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_LAYOUT:
-		if (copy_to_user(argp, &s_akm->layout, sizeof(s_akm->layout))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+		if (copy_to_user(argp, &akm->layout, sizeof(akm->layout))) {
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
 	case ECS_IOCTL_GET_ACCEL:
 		if (copy_to_user(argp, &acc_buf, sizeof(acc_buf))) {
-			dev_err(&s_akm->i2c->dev, "copy_to_user failed.");
+			dev_err(&akm->i2c->dev, "copy_to_user failed.");
 			return -EFAULT;
 		}
 		break;
@@ -872,6 +914,21 @@ static ssize_t akm_enable_mag_store(
 		dev_get_drvdata(dev), buf, count, MAG_DATA_FLAG);
 }
 
+/***** Uncalibrated Magnetic field ***/
+static ssize_t akm_enable_maguc_show(
+	struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return akm_compass_sysfs_enable_show(
+		dev_get_drvdata(dev), buf, MAGUC_DATA_FLAG);
+}
+static ssize_t akm_enable_maguc_store(
+	struct device *dev, struct device_attribute *attr,
+	char const *buf, size_t count)
+{
+	return akm_compass_sysfs_enable_store(
+		dev_get_drvdata(dev), buf, count, MAGUC_DATA_FLAG);
+}
+
 /***** Fusion ***/
 static ssize_t akm_enable_fusion_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
@@ -951,6 +1008,21 @@ static ssize_t akm_delay_mag_store(
 		dev_get_drvdata(dev), buf, count, MAG_DATA_FLAG);
 }
 
+/***** Uncalibrated Magnetic field ***/
+static ssize_t akm_delay_maguc_show(
+	struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return akm_compass_sysfs_delay_show(
+		dev_get_drvdata(dev), buf, MAGUC_DATA_FLAG);
+}
+static ssize_t akm_delay_maguc_store(
+	struct device *dev, struct device_attribute *attr,
+	char const *buf, size_t count)
+{
+	return akm_compass_sysfs_delay_store(
+		dev_get_drvdata(dev), buf, count, MAGUC_DATA_FLAG);
+}
+
 /***** Fusion ***/
 static ssize_t akm_delay_fusion_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
@@ -985,12 +1057,12 @@ static ssize_t akm_bin_accel_write(
 	accel_data = (int16_t *)buf;
 
 	mutex_lock(&akm->accel_mutex);
-	s_akm->accel_data[0] = accel_data[0];
-	s_akm->accel_data[1] = accel_data[1];
-	s_akm->accel_data[2] = accel_data[2];
-	mutex_unlock(&s_akm->accel_mutex);
+	akm->accel_data[0] = accel_data[0];
+	akm->accel_data[1] = accel_data[1];
+	akm->accel_data[2] = accel_data[2];
+	mutex_unlock(&akm->accel_mutex);
 
-	dev_vdbg(&s_akm->i2c->dev, "accel:%d,%d,%d\n",
+	dev_vdbg(&akm->i2c->dev, "accel:%d,%d,%d\n",
 			accel_data[0], accel_data[1], accel_data[2]);
 
 	return size;
@@ -1020,10 +1092,39 @@ static ssize_t akm_sysfs_mode_store(
 	return 1;
 }
 
-static ssize_t akm09911_sysfs_bdata_show(
+static ssize_t akm_buf_print(
+	char *buf, uint8_t *data, size_t num)
+{
+	int sz, i;
+	char *cur;
+	size_t cur_len;
+
+	cur = buf;
+	cur_len = PAGE_SIZE;
+	sz = snprintf(cur, cur_len, "(HEX):");
+	if (sz < 0)
+		return sz;
+	cur += sz;
+	cur_len -= sz;
+	for (i = 0; i < num; i++) {
+		sz = snprintf(cur, cur_len, "%02X,", *data);
+		if (sz < 0)
+			return sz;
+		cur += sz;
+		cur_len -= sz;
+		data++;
+	}
+	sz = snprintf(cur, cur_len, "\n");
+	if (sz < 0)
+		return sz;
+	cur += sz;
+
+	return (ssize_t)(cur - buf);
+}
+
+static ssize_t akm_sysfs_bdata_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
 {
-	/* AK09911 specific function */
 	struct akm_compass_data *akm = dev_get_drvdata(dev);
 	uint8_t rbuf[AKM_SENSOR_DATA_SIZE];
 
@@ -1031,82 +1132,66 @@ static ssize_t akm09911_sysfs_bdata_show(
 	memcpy(&rbuf, akm->sense_data, sizeof(rbuf));
 	mutex_unlock(&akm->sensor_mutex);
 
-	return scnprintf(buf, PAGE_SIZE,
-		"0x%02X,0x%02X,0x%02X,0x%02X,"
-		"0x%02X,0x%02X,0x%02X,0x%02X,0x%02X\n",
-		rbuf[0], rbuf[1], rbuf[2], rbuf[3],
-		rbuf[4], rbuf[5], rbuf[6], rbuf[7], rbuf[8]);
+	return akm_buf_print(buf, rbuf, AKM_SENSOR_DATA_SIZE);
 }
 
-static ssize_t akm09911_sysfs_asa_show(
+static ssize_t akm_sysfs_asa_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
 {
-	/* AK09911 specific function */
 	struct akm_compass_data *akm = dev_get_drvdata(dev);
 	int err;
 	uint8_t asa[3];
 
-	err = AKECS_SetMode(akm, AK09911_MODE_FUSE_ACCESS);
+	err = AKECS_SetMode(akm, AKM_MODE_FUSE_ACCESS);
 	if (err < 0)
 		return err;
 
-	asa[0] = AK09911_FUSE_ASAX;
+	asa[0] = AKM_FUSE_1ST_ADDR;
 	err = akm_i2c_rxdata(akm->i2c, asa, 3);
 	if (err < 0)
 		return err;
 
-	err = AKECS_SetMode(akm, AK09911_MODE_POWERDOWN);
+	err = AKECS_SetMode(akm, AKM_MODE_POWERDOWN);
 	if (err < 0)
 		return err;
 
-	return scnprintf(buf, PAGE_SIZE,
-			"0x%02X,0x%02X,0x%02X\n", asa[0], asa[1], asa[2]);
+	return akm_buf_print(buf, asa, 3);
 }
 
-static ssize_t akm09911_sysfs_regs_show(
+static ssize_t akm_sysfs_regs_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
 {
-	/* AK09911 specific function */
 	/* The total number of registers depends on the device. */
 	struct akm_compass_data *akm = dev_get_drvdata(dev);
 	int err;
-	uint8_t regs[13];
-	int sz;
-	int n;
-	char *cur;
+	uint8_t regs[AKM_REGS_SIZE];
 
 	/* This function does not lock mutex obj */
-	regs[0] = AK09911_REG_WIA1;
-	err = akm_i2c_rxdata(akm->i2c, regs, 13);
+	regs[0] = AKM_REGS_1ST_ADDR;
+	err = akm_i2c_rxdata(akm->i2c, regs, AKM_REGS_SIZE);
 	if (err < 0)
 		return err;
 
-	cur = buf;
-	sz = snprintf(cur, PAGE_SIZE, "(HEX):");
-	cur += sz;
-	for (n = 0; n < 13; n++) {
-		sz = snprintf(cur, 4, "%02X,", regs[n]);
-		cur += sz;
-	}
-
-	return (ssize_t)(cur - buf);
+	return akm_buf_print(buf, regs, AKM_REGS_SIZE);
 }
 #endif
 
 static struct device_attribute akm_compass_attributes[] = {
 	__ATTR(enable_acc, 0660, akm_enable_acc_show, akm_enable_acc_store),
 	__ATTR(enable_mag, 0660, akm_enable_mag_show, akm_enable_mag_store),
+	__ATTR(enable_maguc, 0660, akm_enable_maguc_show, akm_enable_maguc_store),
 	__ATTR(enable_fusion, 0660, akm_enable_fusion_show,
 			akm_enable_fusion_store),
 	__ATTR(delay_acc,  0660, akm_delay_acc_show,  akm_delay_acc_store),
 	__ATTR(delay_mag,  0660, akm_delay_mag_show,  akm_delay_mag_store),
+	__ATTR(delay_maguc,  0660, akm_delay_maguc_show,  akm_delay_maguc_store),
 	__ATTR(delay_fusion, 0660, akm_delay_fusion_show,
 			akm_delay_fusion_store),
 #if AKM_DEBUG_IF
 	__ATTR(mode,  0220, NULL, akm_sysfs_mode_store),
-	__ATTR(bdata, 0440, akm09911_sysfs_bdata_show, NULL),
-	__ATTR(asa,   0440, akm09911_sysfs_asa_show, NULL),
-	__ATTR(regs,  0440, akm09911_sysfs_regs_show, NULL),
+	__ATTR(bdata, 0440, akm_sysfs_bdata_show, NULL),
+	__ATTR(asa,   0440, akm_sysfs_asa_show, NULL),
+	__ATTR(regs,  0440, akm_sysfs_regs_show, NULL),
 #endif
 	__ATTR_NULL,
 };
@@ -1236,41 +1321,80 @@ static int akm_compass_input_init(
 	/* Setup input device */
 	set_bit(EV_ABS, (*input)->evbit);
 	/* Accelerometer (720 x 16G)*/
-	input_set_abs_params(*input, ABS_X,
+	input_set_abs_params(*input, AKM_EVABS_ACC_X,
 			-11520, 11520, 0, 0);
-	input_set_abs_params(*input, ABS_Y,
+	input_set_abs_params(*input, AKM_EVABS_ACC_Y,
 			-11520, 11520, 0, 0);
-	input_set_abs_params(*input, ABS_Z,
+	input_set_abs_params(*input, AKM_EVABS_ACC_Z,
 			-11520, 11520, 0, 0);
-	input_set_abs_params(*input, ABS_RX,
+	input_set_abs_params(*input, AKM_EVABS_ACC_ST,
 			0, 3, 0, 0);
 	/* Magnetic field (limited to 16bit) */
-	input_set_abs_params(*input, ABS_RY,
+	input_set_abs_params(*input, AKM_EVABS_MAG_X,
 			-32768, 32767, 0, 0);
-	input_set_abs_params(*input, ABS_RZ,
+	input_set_abs_params(*input, AKM_EVABS_MAG_Y,
 			-32768, 32767, 0, 0);
-	input_set_abs_params(*input, ABS_THROTTLE,
+	input_set_abs_params(*input, AKM_EVABS_MAG_Z,
 			-32768, 32767, 0, 0);
-	input_set_abs_params(*input, ABS_RUDDER,
+	input_set_abs_params(*input, AKM_EVABS_MAG_ST,
 			0, 3, 0, 0);
-
+	/* Gyroscope (2000 deg/sec in Q6 format) */
+	input_set_abs_params(*input, AKM_EVABS_GYR_X,
+			-128000, 128000, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_GYR_Y,
+			-128000, 128000, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_GYR_Z,
+			-128000, 128000, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_GYR_ST,
+			0, 3, 0, 0);
 	/* Orientation (degree in Q6 format) */
 	/*  yaw[0,360) pitch[-180,180) roll[-90,90) */
-	input_set_abs_params(*input, ABS_HAT0Y,
+	input_set_abs_params(*input, AKM_EVABS_ORI_Y,
 			0, 23040, 0, 0);
-	input_set_abs_params(*input, ABS_HAT1X,
+	input_set_abs_params(*input, AKM_EVABS_ORI_P,
 			-11520, 11520, 0, 0);
-	input_set_abs_params(*input, ABS_HAT1Y,
+	input_set_abs_params(*input, AKM_EVABS_ORI_R,
 			-5760, 5760, 0, 0);
-	/* Rotation Vector [-1,+1] in Q14 format */
-	input_set_abs_params(*input, ABS_TILT_X,
+	/* Gravity (720 x 2G) */
+	input_set_abs_params(*input, AKM_EVABS_GRV_X,
+			-1440, 1440, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_GRV_Y,
+			-1440, 1440, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_GRV_Z,
+			-1440, 1440, 0, 0);
+	/* Linear acceleration (720 x 16G) */
+	input_set_abs_params(*input, AKM_EVABS_LAC_X,
+			-115200, 115200, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_LAC_Y,
+			-115200, 115200, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_LAC_Z,
+			-115200, 115200, 0, 0);
+	/* Geomagnetic Rotation Vector [-1,+1] in Q14 format */
+	input_set_abs_params(*input, AKM_EVABS_GEORV_X,
 			-16384, 16384, 0, 0);
-	input_set_abs_params(*input, ABS_TILT_Y,
+	input_set_abs_params(*input, AKM_EVABS_GEORV_Y,
 			-16384, 16384, 0, 0);
-	input_set_abs_params(*input, ABS_TOOL_WIDTH,
+	input_set_abs_params(*input, AKM_EVABS_GEORV_Z,
 			-16384, 16384, 0, 0);
-	input_set_abs_params(*input, ABS_VOLUME,
+	input_set_abs_params(*input, AKM_EVABS_GEORV_W,
 			-16384, 16384, 0, 0);
+	/* estimated heading accuracy [0, 180] in Q6 format */
+	input_set_abs_params(*input, AKM_EVABS_GEORV_ST,
+			0, 11520, 0, 0);
+	/* Magnetic field uncalibrated  (limited to 20bit) */
+	input_set_abs_params(*input, AKM_EVABS_MUC_X,
+			-524288, 524287, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_MUC_Y,
+			-524288, 524287, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_MUC_Z,
+			-524288, 524287, 0, 0);
+	/* Bias of  Magnetic field uncalibrated  (limited to 20bit) */
+	input_set_abs_params(*input, AKM_EVABS_MUB_X,
+			-524288, 524287, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_MUB_Y,
+			-524288, 524287, 0, 0);
+	input_set_abs_params(*input, AKM_EVABS_MUB_Z,
+			-524288, 524287, 0, 0);
 
 	/* Set name */
 	(*input)->name = AKM_INPUT_DEVICE_NAME;
@@ -1288,22 +1412,22 @@ static int akm_compass_input_init(
 /***** akm functions ************************************************/
 static irqreturn_t akm_compass_irq(int irq, void *handle)
 {
-//	struct akm_compass_data *akm = handle;
+	struct akm_compass_data *akm = handle;
 	uint8_t buffer[AKM_SENSOR_DATA_SIZE];
 	int err;
 
 	memset(buffer, 0, sizeof(buffer));
 	if(AKM_DEBUG_MESSAGE) printk("alp : akm_compass_irq +\n");
 	/***** lock *****/
-	mutex_lock(&s_akm->sensor_mutex);
+	mutex_lock(&akm->sensor_mutex);
 
 	/* Read whole data */
 	buffer[0] = AKM_REG_STATUS;
-	err = akm_i2c_rxdata(s_akm->i2c, buffer, AKM_SENSOR_DATA_SIZE);
+	err = akm_i2c_rxdata(akm->i2c, buffer, AKM_SENSOR_DATA_SIZE);
 	if (err < 0) {
-		dev_err(&s_akm->i2c->dev, "IRQ I2C error.");
-		s_akm->is_busy = 0;
-		mutex_unlock(&s_akm->sensor_mutex);
+		dev_err(&akm->i2c->dev, "IRQ I2C error.");
+		akm->is_busy = 0;
+		mutex_unlock(&akm->sensor_mutex);
 		/***** unlock *****/
 
 		return IRQ_HANDLED;
@@ -1313,38 +1437,38 @@ static irqreturn_t akm_compass_irq(int irq, void *handle)
 		if(AKM_DEBUG_MESSAGE) printk("alp : akm_compass_irq check_bit error\n");
 		goto work_func_none;
 	}
-	memcpy(s_akm->sense_data, buffer, AKM_SENSOR_DATA_SIZE);
-	s_akm->is_busy = 0;
+	memcpy(akm->sense_data, buffer, AKM_SENSOR_DATA_SIZE);
+	akm->is_busy = 0;
 
-	mutex_unlock(&s_akm->sensor_mutex);
+	mutex_unlock(&akm->sensor_mutex);
 	/***** unlock *****/
 
-	atomic_set(&s_akm->drdy, 1);
-	wake_up(&s_akm->drdy_wq);
+	atomic_set(&akm->drdy, 1);
+	wake_up(&akm->drdy_wq);
 	if(AKM_DEBUG_MESSAGE) printk("alp : akm_compass_irq -\n");
-	dev_vdbg(&s_akm->i2c->dev, "IRQ handled.");
+	dev_vdbg(&akm->i2c->dev, "IRQ handled.");
 	return IRQ_HANDLED;
 
 work_func_none:
-	mutex_unlock(&s_akm->sensor_mutex);
+	mutex_unlock(&akm->sensor_mutex);
 	/***** unlock *****/
 
-	dev_vdbg(&s_akm->i2c->dev, "IRQ not handled.");
+	dev_vdbg(&akm->i2c->dev, "IRQ not handled.");
 	return IRQ_NONE;
 }
 
 static int akm_compass_suspend(struct device *dev)
 {
-//	struct akm_compass_data *akm = dev_get_drvdata(dev);
-	dev_dbg(&s_akm->i2c->dev, "suspended\n");
+	struct akm_compass_data *akm = dev_get_drvdata(dev);
+	dev_dbg(&akm->i2c->dev, "suspended\n");
 	printk("alp : akm_compass_suspend !! \n");
 	return 0;
 }
 
 static int akm_compass_resume(struct device *dev)
 {
-//	struct akm_compass_data *akm = dev_get_drvdata(dev);
-	dev_dbg(&s_akm->i2c->dev, "resumed\n");
+	struct akm_compass_data *akm = dev_get_drvdata(dev);
+	dev_dbg(&akm->i2c->dev, "resumed\n");
 	printk("alp : akm_compass_resume !! \n");
 	return 0;
 }
@@ -1356,13 +1480,13 @@ static int akm09911_i2c_check_device(
 	struct akm_compass_data *akm = i2c_get_clientdata(client);
 	int err;
 
-	s_akm->sense_info[0] = AK09911_REG_WIA1;
-	err = akm_i2c_rxdata(client, s_akm->sense_info, AKM_SENSOR_INFO_SIZE);
+	akm->sense_info[0] = AK09911_REG_WIA1;
+	err = akm_i2c_rxdata(client, akm->sense_info, AKM_SENSOR_INFO_SIZE);
 	if (err < 0)
 		return err;
 
 	/* Set FUSE access mode */
-	err = AKECS_SetMode(s_akm, AK09911_MODE_FUSE_ACCESS);
+	err = AKECS_SetMode(akm, AK09911_MODE_FUSE_ACCESS);
 	if (err < 0)
 		return err;
 
@@ -1371,12 +1495,13 @@ static int akm09911_i2c_check_device(
 	if (err < 0)
 		return err;
 
-	err = AKECS_SetMode(s_akm, AK09911_MODE_POWERDOWN);
+	err = AKECS_SetMode(akm, AK09911_MODE_POWERDOWN);
 	if (err < 0)
 		return err;
 
 	/* Check read data */
-	if (akm->sense_info[0] != AKM_WIA_VALE) {
+	if ((akm->sense_info[0] != AK09911_WIA1_VALUE) ||
+			(akm->sense_info[1] != AK09911_WIA2_VALUE)) {
 		dev_err(&client->dev,
 			"%s: The device is not AKM Compass.", __func__);
 		return -ENXIO;
@@ -1385,100 +1510,6 @@ static int akm09911_i2c_check_device(
 	return err;
 }
 
-#if AKM_ATTR_ATD_TEST
-//	add the attr for ATD Test
-static ssize_t get_akm09911_state(struct device *dev, struct device_attribute *devattr, char *buf)
-{	
-
-//	struct i2c_client *client = to_i2c_client(dev);
-//	struct akm_compass_data *akm = i2c_get_clientdata(client);
-	int ak09911_wia = 0;
-	int err=0;
-
-	s_akm->sense_info[0] = AK09911_REG_WIA1;
-	if(AKM_DEBUG_MESSAGE) printk("alp : get_akm09911_state 1+\n");
-	err = akm_i2c_rxdata(s_akm->i2c, s_akm->sense_info, AKM_SENSOR_INFO_SIZE);
-	if(AKM_DEBUG_MESSAGE) printk("alp : get_akm09911_state 1-\n");
-	if(err < 0)
-		if(AKM_DEBUG_MESSAGE) printk("get_akm09911_state wia : %d\n",err);
-	if(AKM_DEBUG_MESSAGE) printk("get_akm09911_state wia : %d, %d\n",s_akm->sense_info[0], s_akm->sense_info[1]);
-	if(s_akm->sense_info[0]==72)
-		ak09911_wia =  1;
-	else
-		ak09911_wia =  0;
-	return sprintf(buf, "%d\n",ak09911_wia);
-}
-
-static ssize_t get_akm09911_rawdata(struct device *dev, struct device_attribute *devattr, char *buf)
-{	
-//	struct i2c_client *client = to_i2c_client(dev);
-//	struct akm_compass_data *akm = i2c_get_clientdata(client);
-	uint8_t buffer[AKM_SENSOR_DATA_SIZE];
-	int retval = 0, err=0;
-	int rawdata_x=0,rawdata_y=0,rawdata_z=0;
-
-	s_akm->sense_info[0] = AK09911_REG_CNTL1;
-	err = akm_i2c_rxdata(s_akm->i2c, s_akm->sense_info, 1);
-	printk("get_akm09911_rawdata CNTL1 : (%d)\n",s_akm->sense_info[0]);
-	if (err < 0){
-		if(AKM_DEBUG_MESSAGE) 
-			printk("akm_i2c_rxdata AKM_REG_STATUS read fail\n");
-		return retval;
-	}
-	if(s_akm->sense_info[0]==0){
-		err = AKECS_SetMode(s_akm, AK09911_MODE_SNG_MEASURE);
-		if (err < 0){
-			if(AKM_DEBUG_MESSAGE) printk("get_akm09911_rawdata AK09911_MODE_SNG_MEASURE fail\n");
-		}
-	}else{
-		err = AKECS_SetMode(s_akm, AK09911_MODE_POWERDOWN);
-		if (err < 0){
-			if(AKM_DEBUG_MESSAGE) printk("get_akm09911_rawdata AK09911_MODE_POWERDOWN fail\n");
-		}
-		msleep(50);
-		err = AKECS_SetMode(s_akm, AK09911_MODE_SNG_MEASURE);
-		if (err < 0){
-			if(AKM_DEBUG_MESSAGE) printk("get_akm09911_rawdata AK09911_MODE_SNG_MEASURE fail\n");
-		}
-	}
-	// Read whole data and rest data
-	buffer[0] = AKM_REG_STATUS ;
-	err = akm_i2c_rxdata(s_akm->i2c, buffer, AKM_SENSOR_DATA_SIZE);
-	if (err < 0){
-		if(AKM_DEBUG_MESSAGE) printk("akm_i2c_rxdata AKM_REG_STATUS+1 fail\n");
-		return retval;
-	}
-
-	if(AKM_DEBUG_MESSAGE) printk("rawdataX : (%d) | (%d)\n",buffer[1], buffer[2]);
-	if(AKM_DEBUG_MESSAGE) printk("rawdataY : (%d) | (%d)\n",buffer[3], buffer[4]);
-	if(AKM_DEBUG_MESSAGE) printk("rawdataZ : (%d) | (%d)\n",buffer[5], buffer[6]);
-	rawdata_x = ( buffer[1] | (buffer[2]<<8) );
-	rawdata_y = ( buffer[3] | (buffer[4]<<8) );
-	rawdata_z = ( buffer[5] | (buffer[6]<<8) );
-
-	if(rawdata_x>0x7FFF)
-		rawdata_x = rawdata_x-0x10000;
-	if(rawdata_y>0x7FFF)
-		rawdata_y = rawdata_y-0x10000;
-	if(rawdata_z>0x7FFF)
-		rawdata_z = rawdata_z-0x10000;
-	printk("Rawdata : (%d), (%d), (%d)\n",rawdata_x, rawdata_y, rawdata_z);
-
-	return sprintf(buf, "%d , %d , %d\n",rawdata_x, rawdata_y, rawdata_z);
-}
-
-static DEVICE_ATTR(state, S_IRUGO, get_akm09911_state, NULL);
-static DEVICE_ATTR(rawdata, S_IRUGO, get_akm09911_rawdata, NULL);
-static struct attribute *akm09911_attributes[] = {
-	&dev_attr_state.attr,
-	&dev_attr_rawdata.attr,
-	NULL
-};
-
-static struct attribute_group akm09911_attribute_group = {
-	.attrs = akm09911_attributes
-};
-#endif
 int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct akm09911_platform_data *pdata;
@@ -1605,12 +1636,6 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		goto exit6;
 	}
 
-#if AKM_ATTR_ATD_TEST
-	err = sysfs_create_group(&client->dev.kobj,&akm09911_attribute_group);
-	if (err) {
-		if(AKM_DEBUG_MESSAGE) printk("alp : sysfs_create_group fail\n");
-	}
-#endif
 //	dev_info(&client->dev, "successfully probed.");
 	printk("alp akm_compass_probe --\n");
 	return 0;
@@ -1641,9 +1666,6 @@ static int akm_compass_remove(struct i2c_client *client)
 		free_irq(akm->irq, akm);
 	input_unregister_device(akm->input);
 	kfree(akm);
-#if AKM_ATTR_ATD_TEST
-	sysfs_remove_group(&client->dev.kobj, &akm09911_attribute_group);
-#endif
 	dev_info(&client->dev, "successfully removed.");
 	return 0;
 }

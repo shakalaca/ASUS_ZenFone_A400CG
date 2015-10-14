@@ -44,10 +44,6 @@ source "drivers/isdn/Kconfig"
 
 # input before char - char/joystick depends on it. As does USB.
 
-# Joe add for asus pad ec driver ++
-source "drivers/input/asusec/Kconfig"
-# Joe add for asus pad ec driver --
-
 source "drivers/input/Kconfig"
 
 source "drivers/char/Kconfig"
@@ -71,6 +67,8 @@ source "drivers/gpio/Kconfig"
 source "drivers/w1/Kconfig"
 
 source "drivers/power/Kconfig"
+
+source "drivers/powercap/Kconfig"
 
 source "drivers/hwmon/Kconfig"
 

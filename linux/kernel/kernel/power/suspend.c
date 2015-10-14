@@ -162,8 +162,8 @@ static int suspend_test(int level)
 {
 #ifdef CONFIG_PM_DEBUG
 	if (pm_test_level == level) {
-		printk(KERN_INFO "suspend debug: Waiting for 5 seconds.\n");
-		mdelay(5000);
+		printk(KERN_INFO "suspend debug: Waiting for %d ms.\n",pm_test_interval_time);
+		mdelay(pm_test_interval_time);
 		return 1;
 	}
 #endif /* !CONFIG_PM_DEBUG */

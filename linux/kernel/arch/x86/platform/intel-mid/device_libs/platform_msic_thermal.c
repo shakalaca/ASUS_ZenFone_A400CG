@@ -22,7 +22,6 @@
 #include <linux/platform_data/intel_mid_remoteproc.h>
 #include "platform_msic.h"
 #include "platform_msic_thermal.h"
-#include <linux/HWVersion.h>
 
 /* ctp thermal sensor list */
 static struct intel_mid_thermal_sensor ctp_sensors[] = {
@@ -140,50 +139,6 @@ static struct intel_mid_thermal_sensor lex_sensors[] = {
 
 };
 
-static struct intel_mid_thermal_sensor ctp_175cg_sensors[] = {
-        {
-                .name = "NearPMIC",
-                .index = 0,
-                .slope = 0,
-                .intercept = 0,
-                .adc_channel = 0x05 | CH_NEED_VREF | CH_NEED_VCALIB,
-                .direct = false,
-        },
-        {
-                .name = "NearModem",
-                .index = 1,
-                .slope = 0,
-                .intercept = 0,
-                .adc_channel = 0x05 | CH_NEED_VREF | CH_NEED_VCALIB,
-                .direct = false,
-        },
-        {
-                .name = "underSOC",
-                .index = 2,
-                .slope = 0,
-                .intercept = 0,
-                .adc_channel = 0x06 | CH_NEED_VREF | CH_NEED_VCALIB,
-                .direct = false,
-        },
-        {
-                .name = MSIC_DIE_NAME,
-                .index = 3,
-                .slope = 368,
-                .intercept = 219560,
-                .adc_channel = 0x03 | CH_NEED_VCALIB,
-                .direct = true,
-        },
-        {
-                .name = BPTHERM_NAME,
-                .index = 4,
-                .slope = 788,
-                .intercept = 5065,
-                .adc_channel = 0x09 | CH_NEED_VREF | CH_NEED_VCALIB,
-                .temp_correlation = bptherm_temp_correlation,
-                .direct = false,
-        },
-
-};
 
 static struct intel_mid_thermal_platform_data pdata[] = {
 	[mfld_thermal] = {
@@ -203,23 +158,9 @@ static struct intel_mid_thermal_platform_data pdata[] = {
 	},
 };
 
-static struct intel_mid_thermal_platform_data asus_pdata[] = {
-        [me175cg_thermal] = {
-                .num_sensors = 5,
-                .sensors = ctp_175cg_sensors,
-                .gpu_cooling = true,
-        },
-};
-
-
-extern int Read_PROJ_ID(void);
-
 void __init *msic_thermal_platform_data(void *info)
 {
 	struct platform_device *pdev;
-	int PROJ_ID;
-	PROJ_ID = Read_PROJ_ID();
-	printk("Sewell: Thermal Get ID: %d",PROJ_ID);
 
 	pdev = platform_device_alloc(MSIC_THERM_DEV_NAME, -1);
 	if (!pdev) {
@@ -234,10 +175,7 @@ void __init *msic_thermal_platform_data(void *info)
 		return NULL;
 	}
 
-	
-	if (PROJ_ID == PROJ_ID_ME175CG)
-		pdev->dev.platform_data = &asus_pdata[me175cg_thermal];
-	else if (INTEL_MID_BOARD(2, PHONE, CLVTP, VB, PRO) ||
+	if (INTEL_MID_BOARD(2, PHONE, CLVTP, VB, PRO) ||
 		INTEL_MID_BOARD(2, PHONE, CLVTP, VB, ENG))
 		pdev->dev.platform_data = &pdata[vb_thermal];
 	else if (INTEL_MID_BOARD(1, PHONE, CLVTP) ||

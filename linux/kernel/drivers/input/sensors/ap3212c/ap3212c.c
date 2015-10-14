@@ -141,6 +141,11 @@ static int PS_LowCalibrationValue=50;
 // add by leo for high/low threshold calibration --
 static int PS_VendorCalibrationValue =0; // add by leo for proximity vendor calibration ++
 
+// add by tom for control factory crosstalk flow
+static int Control_Flag = 0;
+static int Threshold_Offset = 100;
+
+
 static int ALS_CalibrationRetryCount=CalibrationRetryTimes;
 static int PS_CalibrationRetryCount=CalibrationRetryTimes;
 static int PS_VendorCalibrationRetryCount=CalibrationRetryTimes;
@@ -155,17 +160,9 @@ static boolean PS_AlreadyCalibration = FALSE;
 static boolean PS_AlreadyVendorCalibration = FALSE;	//add by leo for proximity vendor calibration ++
 
 
-/* Sensors Threshold Info */
-//#define	ALS_LEVEL	18
-//static int Default_als_threshold_lux[ALS_LEVEL+1]={0,5,30,60,100,150,200,250,300,350,450,550,700,900,1100,1300,1500,2000,65535};
-#ifdef CONFIG_ME372CG
-#define	ALS_LEVEL	11
-static int Default_als_threshold_lux[ALS_LEVEL+1]= {0,15,30,50,100,300,550,900,1100,1500,2200,65535};
-#endif
-#ifdef CONFIG_ME372CL
-#define	ALS_LEVEL	16
-static int Default_als_threshold_lux[ALS_LEVEL+1]= {0,50,100,200,300,400,500,650,800,1000,1500,2000,3000,4000,5000,7000,10000};
-#endif
+/* Sensors Threshold Info for HIT Table*/
+#define	ALS_LEVEL	20
+static int Default_als_threshold_lux[ALS_LEVEL+1]= {0,50,100,200,300,400,500,650,800,1000,1500,2000,3000,4000,5000,7000,10000,12500,15000,17500,20000};
 
 static int Default_als_threshold_adc[ALS_LEVEL+1]= {0};
 static int als_threshold_lux[ALS_LEVEL+1]= {0};
@@ -238,7 +235,7 @@ static struct proc_dir_entry *ap3212c_proc_file;
 #define SWITCH_MP_GPIO          78
 #define READ_CMD                1
 #define WRITE_CMD               2
-#define PS_CROSSTALK_HIGHEST_LIMIT  1000
+#define PS_CROSSTALK_HIGHEST_LIMIT  1022
 static unsigned int debug = 0;
 //=========================================================================================
 static int ap3212c_Modify_crosstalk_ini(int cmd, int offset, int modify_or_Cloar0byte)
@@ -329,6 +326,17 @@ static ssize_t ap3212c_register_write(struct file *filp, const char __user *buff
         return len;
 
     }
+	else if((messages[0]=='w')&&(messages[1]=='t')&&(messages[2]=='f'))
+	{	
+        if(&messages[4]==NULL)
+            if(AP3212C_STATUSMSG) printk("[%s]	show debug message\n",__FUNCTION__);
+        if(&messages[4]!=NULL)
+            sscanf (&messages[4], "%d", &en);
+
+        Control_Flag=(en==1)?1:0;
+        if(AP3212C_STATUSMSG) printk( "[%s]	Crosstalk_Flag (%s)\n",__FUNCTION__,(Control_Flag==1)?"on":"off");
+        return len;
+	}
     else if((messages[0]=='a')&&(messages[1]=='l')&&(messages[2]=='s')&&(messages[3]=='_')&&(messages[4]=='e')&&(messages[5]=='n'))
     {
         //als_en+en
@@ -942,18 +950,7 @@ static DEVICE_ATTR(proximity_status, S_IRUGO,ProximitySensor_check_For_ATD_test,
 
 static ssize_t ap3212c_get_ID(struct device *dev, struct device_attribute *attr, char *buf)
 {
-    int ret=0;
-    struct ap3212c_i2c_data *ap3212c_data = data;
-
-    ret = ap3212c_check_device(ap3212c_data);
-    if(ret < 0)
-    {
-        //if(AP3212C_STATUSMSG) printk( "[%s]	ap3212c_check_device Failed \n",__FUNCTION__);
-        return sprintf(buf,"ap3212c_check_device Failed\n");
-    }
-    if(AP3212C_STATUSMSG) printk( "[%s]	AP3212C ID = 0x%x \n",__FUNCTION__,ap3212c_data->id);
-
-    return sprintf(buf,"AP3212C ID = 0x%x \n",ap3212c_data->id);
+    return sprintf(buf,"1\n");
 }
 static DEVICE_ATTR(ap3212c_id, S_IRUGO,ap3212c_get_ID,NULL);
 
@@ -1012,8 +1009,8 @@ static ssize_t IR_get_data(struct device *dev, struct device_attribute *attr, ch
     unsigned int value_LByte=0, value_HByte=0;
     unsigned long IR_Data=0;
 
-    value_LByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_LOW);
-    value_HByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_HIGH);
+    value_LByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, IR_DATA_LOW);
+    value_HByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, IR_DATA_HIGH);
     IR_Data = ((value_HByte << 2) | (value_LByte & 0x03)); //0x03 = 000000 11
 
     if(AP3212C_STATUSMSG) printk( "[%s]	IR_DATA = %d\n",__FUNCTION__,(int)IR_Data);
@@ -1183,21 +1180,10 @@ static ssize_t ps_threshold_show(struct device *dev, struct device_attribute *at
 
 static ssize_t ps_threshold_store(struct device *dev, struct device_attribute *attr,const char *buf, size_t count)
 {
-    int ret=0, ithreshold=0;
-
+    int ithreshold=0;
     sscanf (buf, "%d", &ithreshold);
-    if(unlikely(debug))printk( "[%s]		ps_threshold_store ( ithreshold %d )\n",__FUNCTION__,(int)ithreshold);
-
-    if(ithreshold>0)
-    {
-        PS_HIGH_THD =ithreshold;
-        PS_LOW_THD=ithreshold;
-    }
-    ret = ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
-    if(ret < 0)
-    {
-        if(AP3212C_STATUSMSG) printk( "[%s]		ps_set_threshold (%d, %d) Failed \n",__FUNCTION__,PS_LOW_THD,PS_HIGH_THD);
-    }
+	Threshold_Offset = ithreshold;
+	printk( "[%s]		Threshold_Offset = %d \n",__FUNCTION__,Threshold_Offset);
 
     return count;
 }
@@ -2565,7 +2551,7 @@ static int als_get_calibration_value(struct ap3212c_i2c_data *ap3212c_data)
 static int ps_calibration(struct ap3212c_i2c_data *ap3212c_data, int iControl)
 {
 
-    int PS_HighThresholdValue=0, PS_LowThresholdValue=0;
+    int PS_HighThresholdValue=0, PS_LowThresholdValue=0 , temp = 0 , i = 0;
     unsigned int value_LByte=0, value_HByte=0;
     unsigned long RAW_Data=0;
     struct file *fp=NULL;
@@ -2581,16 +2567,49 @@ static int ps_calibration(struct ap3212c_i2c_data *ap3212c_data, int iControl)
     else
     {
         msleep(300);
-        value_LByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_LOW);
-        value_HByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_HIGH);
-        RAW_Data = (((value_HByte & 0x3f) << 4) | (value_LByte & 0x0f)); //0x3f = 0011 1111; 0x0f = 0000 1111
+		//Read PS data 10 times to get average threshold value
+		for(i=0; i<11; i++)
+		{	
+			value_LByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_LOW);
+			value_HByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, PS_DATA_HIGH);
+			if(value_LByte<0||value_HByte<0)
+			{
+				if(AP3212C_STATUSMSG) printk( "[%s]		Read PS_DATA Failed\n",__FUNCTION__);
+				return -1;
+			}
+			RAW_Data = (((value_HByte & 0x3f) << 4) | (value_LByte & 0x0f)); //0x3f = 0011 1111; 0x0f = 0000 1111
+			if(i!=0)if(AP3212C_STATUSMSG) printk( "[%s]		PS DATA (%d) = %d\n",__FUNCTION__,i,(int)RAW_Data);
+
+			if(i!=0)temp=temp+(int)RAW_Data;
+			msleep(150);
+		}
+		RAW_Data=temp/10;
+		if(AP3212C_STATUSMSG) printk( "[%s]		Threshold Value  = %d\n",__FUNCTION__,RAW_Data);
+        
 
         switch (iControl)
         {
 
             case 1: //calibration high threshold
                 PS_LowThresholdValue = PS_LowCalibrationValue;
-                PS_HighThresholdValue = (int)RAW_Data;
+				if(Control_Flag==0)
+				{
+					if( PS_LowThresholdValue + Threshold_Offset > 1022)
+					{
+						PS_HighThresholdValue = 1020;	
+						printk( "[%s]		PS_LowThresholdValue(%d) + Threshold_Offset(%d) > 1022\n",__FUNCTION__,PS_LowThresholdValue,Threshold_Offset);
+						printk( "[%s]		PS_HighThresholdValue(%d) \n",__FUNCTION__,PS_HighThresholdValue);
+					}
+					else
+					{
+						PS_HighThresholdValue = PS_LowThresholdValue + Threshold_Offset;
+						printk( "[%s]		PS_HighThresholdValue(%d)  = PS_LowThresholdValue(%d) + Threshold_Offset(%d)\n",__FUNCTION__,PS_HighThresholdValue,PS_LowCalibrationValue,Threshold_Offset);
+					}
+				}
+				else
+				{
+					PS_HighThresholdValue = (int)RAW_Data;
+				}
                 break;
 
             case 2: //calibration low threshold

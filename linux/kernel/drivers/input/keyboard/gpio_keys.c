@@ -30,90 +30,6 @@
 #include <linux/of_gpio.h>
 #include <linux/spinlock.h>
 
-
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-#include <linux/microp_notify.h>
-#include <linux/microp_api.h>
-static struct input_dev *virtual_volume_btn;
-static bool attach=false;
-static int virtual_volume_btn_report(struct notifier_block *this, unsigned long event, void *ptr){
-	if(event==P01_ADD){
-		attach=true;
-	}
-	if(event==P01_REMOVE){
-		attach=false;
-	}
-        if(event==P01_VOLUP_KEY_PRESSED){
-                pr_info("[virtual_volume]vol_up pressed!");
-                input_event(virtual_volume_btn, EV_KEY, KEY_VOLUMEUP, 1);
-                input_sync(virtual_volume_btn);
-        }
-        if(event==P01_VOLUP_KEY_RELEASED){
-                pr_info("[virtual_volume]vol_up released!");
-                input_event(virtual_volume_btn, EV_KEY, KEY_VOLUMEUP, 0);
-                input_sync(virtual_volume_btn);
-        }
-        if(event==P01_VOLDN_KEY_PRESSED){
-                pr_info("[virtual_volume]vol_down pressed!");
-                input_event(virtual_volume_btn, EV_KEY, KEY_VOLUMEDOWN, 1);
-                input_sync(virtual_volume_btn);
-        }
-        if(event==P01_VOLDN_KEY_RELEASED){
-                pr_info("[virtual_volume_btn]vol_down released!");
-                input_event(virtual_volume_btn, EV_KEY, KEY_VOLUMEDOWN, 0);
-                input_sync(virtual_volume_btn);
-        }
-        return 0;
-}
-
-static struct notifier_block virtual_volume_btn_notifier = {
-        .notifier_call = virtual_volume_btn_report,    // callback function
-};
-static int Add_virtual_volume_btn()
-{
-        int ret;
-
-        virtual_volume_btn = input_allocate_device();
-        if (unlikely(!virtual_volume_btn)) {
-                pr_info("[virtual_volume]input_allocate_device error!\n");
-                return -ENOMEM;
-        }
-
-        virtual_volume_btn->name = "virtual_volume_btn";
-        virtual_volume_btn->phys = "/dev/input/virtual_volume_btn";
-        virtual_volume_btn->dev.parent = NULL;
-        input_set_capability(virtual_volume_btn, EV_KEY, KEY_VOLUMEDOWN);
-        input_set_capability(virtual_volume_btn, EV_KEY, KEY_VOLUMEUP);
-
-        ret = input_register_device(virtual_volume_btn);
-        if (ret) {
-                pr_info("[virtual_volume]unable to register input dev, error %d\n",ret);
-                goto fail_at_reg_input_dev;
-        }
-        ret = register_microp_notifier(&virtual_volume_btn_notifier);
-        if (ret) {
-                pr_info("[virtual_volume]unable to register microp notifier, error %d\n",ret);
-                goto fail_at_reg_notifier;
-        }
-        pr_info("[virtual_volume] Probe finish!!");
-
-        return 0;
-fail_at_reg_notifier:
-        input_unregister_device(virtual_volume_btn);
-fail_at_reg_input_dev:
-        input_free_device(virtual_volume_btn);
-        return ret;
-}
-
-static void Remove_virtual_volume_btn()
-{
-        input_unregister_device(virtual_volume_btn);
-        input_free_device(virtual_volume_btn);
-        unregister_microp_notifier(&virtual_volume_btn);
-}
-#endif
-
-
 struct gpio_keys_drvdata;
 struct gpio_button_data {
 	struct gpio_keys_drvdata *ddata;
@@ -488,14 +404,6 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	const struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
-
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-	if(attach/* && AX_Is_pad_exist()*/) // Double confirm to disable volume key event
-		return;
-	else
-		attach=false;
-#endif
-
 	int state =
 		(gpio_keys_getval(button->gpio) ? 1 : 0) ^ button->active_low;
 
@@ -636,8 +544,8 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 		if (button->debounce_interval) {
 			error = gpio_set_debounce(button->gpio,
 					button->debounce_interval * 1000);
-			//Jui-Chuan : Force set bdata->timer_debounce, to avoid volume up and down are too sensitive.
 			/* use timer if gpiolib doesn't provide debounce */
+			//Jui-Chuan : Force set bdata->timer_debounce, to avoid volume up and down are too sensitive.
 			//if (error < 0)
 				bdata->timer_debounce =
 						button->debounce_interval;
@@ -1039,9 +947,8 @@ static struct platform_device_id gpio_keys_ids[] = {
 	{
 		.name = "gpio-keys",
 	}, {
-		.name = "gpio-lesskey-nrpt",
+		.name = "gpio-lesskey",
 	}, {
-		.name = "gpio-lesskey-rpt",
 	},
 };
 MODULE_DEVICE_TABLE(platform, gpio_keys_ids);
@@ -1062,20 +969,11 @@ static struct platform_driver gpio_keys_device_driver = {
 
 static int __init gpio_keys_init(void)
 {
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-	int ret=Add_virtual_volume_btn();
-	if(ret){
-		printk("[virtual_volume]PF400CG virtual volume key probe fail!");
-	}
-#endif
 	return platform_driver_register(&gpio_keys_device_driver);
 }
 
 static void __exit gpio_keys_exit(void)
 {
-#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
-        Remove_virtual_volume_btn();
-#endif
 	platform_driver_unregister(&gpio_keys_device_driver);
 }
 

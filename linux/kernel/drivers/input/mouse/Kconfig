@@ -373,16 +373,4 @@ config MOUSE_NAVPOINT_PXA27x
 	  To compile this driver as a module, choose M here: the
 	  module will be called navpoint.
 
-# Joe add for Elan touchpad driver ++
-
-config MOUSE_ELAN_TOUCHPAD
-	tristate "Elan I2C Touchpad support"
-	depends on I2C && HID_ASUS_PAD_EC
-	help
-	  Say y here if you have an Elan I2C Touchpad.
-
-	  To compile this driver as a module, choose M here: the module will be
-	  called elan_i2c.
-
-# Joe add for Elan touchpad driver --
 endif

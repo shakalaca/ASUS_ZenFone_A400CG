@@ -23,10 +23,4 @@ enum {
 	vb_thermal,
 };
 
-enum {
-        me175cg_thermal,
-        
-};
-
-
 #endif

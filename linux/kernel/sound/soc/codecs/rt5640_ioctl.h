@@ -33,7 +33,14 @@ enum {
 	VOIP,
 	RINGTONE,
 	VR,
+	VOICE,
 	USE_MODE_NUM,
+};
+
+//BT hardware switch
+enum {
+	Codec,
+	BT,
 };
 
 #define EQ_REG_NUM 19

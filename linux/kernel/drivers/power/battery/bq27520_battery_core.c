@@ -2,6 +2,7 @@
  * Copyright (c) 2013, ASUSTek, Inc. All Rights Reserved.
  * Written by chris chang chris1_chang@asus.com
  */
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/param.h>
 #include <linux/i2c.h>
@@ -30,6 +31,7 @@ extern int Read_HW_ID(void);
 static int HW_ID;
 
 #define RETRY_COUNT 3
+#define I2C_RETRY_DELAY 5
 extern int entry_mode;
 
 struct battery_dev_info bq27520_dev_info;
@@ -199,21 +201,34 @@ static int bq27520_cntl_cmd(struct i2c_client *client,
 int bq27520_send_subcmd(struct i2c_client *client, int *rt_value, u16 sub_cmd)
 {
     int ret, tmp_buf = 0;
+    int retry_count = RETRY_COUNT;
 
+    do
+    {
     ret = bq27520_cntl_cmd(client, sub_cmd);
     if (ret) {
         dev_err(&client->dev, "Send subcommand 0x%04X error.\n", sub_cmd);
-        return ret;
+        retry_count--;
+        msleep(I2C_RETRY_DELAY);
     }
-    udelay(200);
+    } while (ret && retry_count > 0);
 
     if (!rt_value) return ret;
 
+    retry_count = RETRY_COUNT;
+    udelay(800);
+    do
+    {
     /* need read data to rt_value */
     ret = bq27520_read(client, BQ27520_REG_CNTL, &tmp_buf, 0);
     if (ret)
+    {
         dev_err(&client->dev, "Error!! %s subcommand %04X\n",
                          __func__, sub_cmd);
+        retry_count--;
+        msleep(I2C_RETRY_DELAY);
+    }
+    } while (ret && retry_count > 0);
     *rt_value = tmp_buf;
     return ret;
 }
@@ -342,6 +357,14 @@ void TIgauge_LockStep(void)
         dev_err(&i2c->dev, "%s: i2c write error %d\n", __func__, status);
 }
 
+static ssize_t show_polling(struct device *dev,
+        struct device_attribute *attr, char *buf)
+{
+    u32 time;
+    time = asus_update_all();
+}
+static DEVICE_ATTR(polling, S_IRUGO, show_polling, NULL);
+
 static char gbuffer[64];
 /* Generate UUID by invoking kernel library */
 static void generate_key(void)
@@ -363,6 +386,7 @@ static ssize_t get_updateks(struct device *dev,
 static DEVICE_ATTR(updateks, S_IRUGO, get_updateks, NULL);
 static struct attribute *dev_attrs[] = {
     &dev_attr_updateks.attr,
+    &dev_attr_polling.attr,
     NULL,
 };
 static struct attribute_group dev_attr_grp = {
@@ -418,9 +442,9 @@ static ssize_t nbq27520_proc_bridge_write(struct file *file,
 static int nbq27520_proc_bridge_read(struct seq_file *m, void *v)
 {
     if (bq27520_is_rom_mode()) {
-        seq_printf(m, "%d\n", "7");
+        seq_printf(m, "%s\n", "7");
     } else {
-        seq_printf(m, "%d\n", "8");
+        seq_printf(m, "%s\n", "8");
     }
 
     return 0;
@@ -1039,10 +1063,32 @@ static int bq27520_get_firmware_version(struct i2c_client *client)
 {
     int ret;
     int tmp_buf=0;
+    int retry_count = RETRY_COUNT;
 
-    ret = bq27520_send_subcmd(client, &tmp_buf, BQ27520_SUBCMD_FW_VER);
-    if (ret < 0)
-        return ret;
+    do
+    {
+        ret = bq27520_cntl_cmd(client, BQ27520_SUBCMD_FW_VER);
+        if (ret) {
+            dev_err(&client->dev, "Send subcommand 0x%04X error.\n",
+                BQ27520_SUBCMD_FW_VER);
+            retry_count--;
+            msleep(I2C_RETRY_DELAY);
+        }
+    } while (ret && retry_count > 0);
+
+    retry_count = RETRY_COUNT;
+    mdelay(500);
+
+    do
+    {
+        ret = bq27520_read(client, BQ27520_REG_CNTL, &tmp_buf, 0);
+        if (ret) {
+            dev_err(&client->dev, "Error!! %s subcommand %04X\n",
+                          __func__, BQ27520_REG_CNTL);
+            retry_count--;
+            msleep(I2C_RETRY_DELAY);
+        }
+    } while (ret && retry_count > 0);
 
     ret = sprintf(bq27520_firmware_version, "%04x", tmp_buf);
     batt_info.serial_number = bq27520_firmware_version;
@@ -1328,7 +1374,7 @@ static void bq27520_late_resume(struct early_suspend *h)
 
 static void bq27520_config_earlysuspend(struct bq27520_chip *chip)
 {
-    chip->es.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN - 2;
+    chip->es.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 10;
     chip->es.suspend = bq27520_early_suspend;
     chip->es.resume = bq27520_late_resume;
     register_early_suspend(&chip->es);
@@ -1443,10 +1489,225 @@ int bq27520_is_normal_mode()
     return 1;
 }
 
+int bq27520_dump_registers(struct seq_file *s)
+{
+    int ret, temp_buf = 0;
+    struct i2c_client *client = NULL;
+    client = bq27520_dev_info.i2c;
+
+    seq_printf(s, "=================================================\n");
+    seq_printf(s, "Name\t\t\t\tvalue\n");
+    seq_printf(s, "=================================================\n");
+
+    ret = bq27520_read(client, BQ27520_REG_CNTL, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "Control()\t\t\terror\n");
+    else
+        seq_printf(s, "Control()\t\t\t%d\tN/A\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_AR, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "AtRate()\t\t\terror\n");
+    else
+        seq_printf(s, "AtRate()\t\t\t%d\tmA\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_ARTTE, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "AtRateTimeToEmpty()\t\terror\n");
+    else
+        seq_printf(s, "AtRateTimeToEmpty()\t\t%d\tMinutes\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_TEMP, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "Temperature()\t\t\terror\n");
+    else
+        seq_printf(s, "Temperature()\t\t\t%d\t0.1K\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_VOLT, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "Voltage()\t\t\terror\n");
+    else
+        seq_printf(s, "Voltage()\t\t\t%d\tmV\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_FLAGS, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "Flags()\t\t\t\terror\n");
+    else
+        seq_printf(s, "Flags()\t\t\t\t%d\tN/A\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_NAC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "NominalAvailableCapacity()\terror\n");
+    else
+        seq_printf(s, "NominalAvailableCapacity()\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_FAC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "FullAvailableCapacity()\t\terror\n");
+    else
+        seq_printf(s, "FullAvailableCapacity()\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_RM, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "RemainingCapacity()\t\terror\n");
+    else
+        seq_printf(s, "RemainingCapacity()\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_FCC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "FullChargeCapacity()\t\terror\n");
+    else
+        seq_printf(s, "FullChargeCapacity()\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_AI, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "AverageCurrent()\t\terror\n");
+    else
+        seq_printf(s, "AverageCurrent()\t\t%d\tmA\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_TTE, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "TimeToEmpty()\t\t\terror\n");
+    else
+        seq_printf(s, "TimeToEmpty()\t\t\t%d\tMinutes\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_SI, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "StandbyCurrent()\t\terror\n");
+    else
+        seq_printf(s, "StandbyCurrent()\t\t%d\tmA\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_STTE, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "StandbyTimeToEmpty()\t\terror\n");
+    else
+        seq_printf(s, "StandbyTimeToEmpty()\t\t%d\tMinutes\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_SOH, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "StateOfHealth()\t\t\terror\n");
+    else
+        seq_printf(s, "StateOfHealth()\t\t\t%d\t%/num\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_CC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "CycleCount()\t\t\terror\n");
+    else
+        seq_printf(s, "CycleCount()\t\t\t%d\tnum\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_SOC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "StateOfCharge()\t\t\terror\n");
+    else
+        seq_printf(s, "StateOfCharge()\t\t\t%d\t%\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_IC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "InstantaneousCurrent()\t\terror\n");
+    else
+        seq_printf(s, "InstantaneousCurrent()\t\t%d\tmA\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_IT, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "InternalTemperature()\t\terror\n");
+    else
+        seq_printf(s, "InternalTemperature()\t\t%d\t0.1K\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_RS, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "ResistanceScale()\t\terror\n");
+    else
+        seq_printf(s, "ResistanceScale()\t\t%d\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_OC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "OperationConfiguration()\terror\n");
+    else
+        seq_printf(s, "OperationConfiguration()\t%d\tN/A\n", temp_buf);
+
+    ret = bq27520_read(client, BQ27520_REG_DC, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "DesignCapacity()\t\terror\n");
+    else
+        seq_printf(s, "DesignCapacity()\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, 0x6c, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "UnfilteredRM()\t\t\terror\n");
+    else
+        seq_printf(s, "UnfilteredRM()\t\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, 0x6e, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "FilteredRM()\t\t\terror\n");
+    else
+        seq_printf(s, "FilteredRM()\t\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, 0x70, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "UnfilteredFCC()\t\t\terror\n");
+    else
+        seq_printf(s, "UnfilteredFCC()\t\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, 0x72, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "FilteredFCC()\t\t\terror\n");
+    else
+        seq_printf(s, "FilteredFCC()\t\t\t%d\tmAh\n", temp_buf);
+
+    ret = bq27520_read(client, 0x74, &temp_buf, 0);
+    if(ret)
+        seq_printf(s, "TrueSOC()\t\t\terror\n");
+    else
+        seq_printf(s, "TrueSOC()\t\t\t%d\t%\n", temp_buf);
+
+    return 0;
+}
+
+static int bq27520_debugfs_show(struct seq_file *s, void *data)
+{
+    bq27520_dump_registers(s);
+    return 0;
+}
+
+static int bq27520_debugfs_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, bq27520_debugfs_show, inode->i_private);
+}
+
+static const struct file_operations bq27520_debugfs_fops = {
+    .open = bq27520_debugfs_open,
+    .read = seq_read,
+    .llseek = seq_lseek,
+    .release = single_release,
+};
+
+static const struct file_operations bq27520_thd_fops = {
+    .owner = THIS_MODULE,
+    .open = nbq27520_proc_open,
+    .read = seq_read,
+    .write = nbq27520_proc_write,
+    .llseek = seq_lseek,
+    .release = single_release,
+};
+
+static const struct file_operations d_fs_update_bridge_fops = {
+    .owner = THIS_MODULE,
+    .open = nbq27520_proc_bridge_open,
+    .read = seq_read,
+    .write = nbq27520_proc_bridge_write,
+    .llseek = seq_lseek,
+    .release = single_release,
+};
+
 static int bq27520_bat_i2c_probe(struct i2c_client *client,
                             const struct i2c_device_id *id)
 {
     int ret = 0;
+
+    debugfs_create_file("bq27520", 0644, NULL, NULL, &bq27520_debugfs_fops);
+    debugfs_create_file("twinheadeddragon", 0666, NULL, NULL, &bq27520_thd_fops);
+    debugfs_create_file("ubridge", 0666, NULL, NULL, &d_fs_update_bridge_fops);
 
     mutex_lock(&bq27520_dev_info_mutex);
     bq27520_dev_info.status = DEV_INIT;
@@ -1479,17 +1740,20 @@ static int bq27520_bat_i2c_probe(struct i2c_client *client,
     i2c_set_clientdata(client, chip);
     bq27520_dev_info.i2c = client;
 
+// Disable Cell Data Update in L
+#if 0
     /* Auto Battery Cell Data update */
     ret = bq27520_bat_upt_main_update_flow();
     mutex_lock(&bq27520_dev_info_mutex);
     bq27520_dev_info.update_status = ret;
     mutex_unlock(&bq27520_dev_info_mutex);
-    if (ret < 0 && ret != UPDATE_VOLT_NOT_ENOUGH)
+    if (ret < 0)
         goto update_fail;
     else if (ret >= UPDATE_OK) {
         msleep(500);
         TIgauge_LockStep();
     }
+#endif
 
     ret = bq27520_hw_config(client);
     if (ret < 0)
@@ -1641,9 +1905,6 @@ static int __init bq27520_bat_i2c_init(void)
 
     BAT_DBG("++++++++++++++++ %s ++++++++++++++++\n", __func__);
     HW_ID = Read_HW_ID();
-#ifdef CONFIG_A450CG
-    if (HW_ID) return -1;
-#endif
 
     /* if fw sel type is not equal,
     it will enter update process

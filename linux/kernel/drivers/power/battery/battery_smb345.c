@@ -40,6 +40,7 @@ static bool is_pad_present();
 static void smb345_config_max_current(int usb_state);
 static bool g_disable_700 = true;
 static bool g_init_disable_aicl = true;
+static bool g_is_power_supply_registered = false;
 #if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int a400cg_1200_1600 = 1600;
 static void check_battery_match_device();
@@ -49,7 +50,7 @@ static void check_battery_id();
 #endif
 
 /* I2C communication related */
-#define I2C_RETRY_COUNT 3
+#define I2C_RETRY_COUNT 6
 #define I2C_RETRY_DELAY 5
 
 #define CFG_CHARGE_CURRENT            0x00
@@ -193,6 +194,7 @@ struct smb345_charger {
     bool            otg_battery_uv;
     const struct smb345_charger_platform_data    *pdata;
     charger_jeita_state_t charger_jeita_state;
+    charger_jeita_status_t charger_jeita_status;
     /* wake lock to prevent S3 during charging */
     struct wake_lock wakelock;
 };
@@ -250,7 +252,7 @@ int init_asus_charging_limit_toggle(void)
 static ssize_t nasus_charging_limit_toggle_write(struct file *file,
     const char __user *buf, size_t count, loff_t * ppos)
 {
-    char proc_buf[64];
+    char proc_buf[64] = {0};
 
     if (count > sizeof(proc_buf)) {
         BAT_DBG("%s: data error\n", __func__);
@@ -262,22 +264,25 @@ static ssize_t nasus_charging_limit_toggle_write(struct file *file,
         return -EFAULT;
     }
 
-    if (proc_buf[0] == '1') {
+    if (!strncmp("1", proc_buf, 1)) {
         /* turn on charging limit in eng mode */
         eng_charging_limit = true;
+        BAT_DBG_E(" %s: turn on charging limit: %s", __func__, proc_buf);
     }
-    else if (proc_buf[0] == '0') {
+    else if (!strncmp("0", proc_buf, 1)) {
         /* turn off charging limit in eng mode */
         eng_charging_limit = false;
+        BAT_DBG_E(" %s: turn off charging limit: %s", __func__, proc_buf);
     }
 
     aicl_dete_worker(NULL);
+    request_power_supply_changed();
 
     return count;
 }
 static int nasus_charging_limit_toggle_read(struct seq_file *m, void *v)
 {
-    seq_printf(m, "%s\n", __func__);
+    seq_printf(m, "%s: ENG charging limit %s\n", __func__, eng_charging_limit ? "On" : "Off");
     return 0;
 }
 static int nasus_charging_limit_toggle_open(struct inode *inode, struct file *file)
@@ -372,7 +377,7 @@ static const unsigned int icl_tbl[] = {
 };
 
 /* AICL Results Table (mA) : 3Fh */
-#if defined(CONFIG_A400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_ZC400CG)
+#if defined(CONFIG_A400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 static const unsigned int aicl_results[] = {
     300,
     500,
@@ -384,6 +389,7 @@ static const unsigned int aicl_results[] = {
     2000
 };
 #else
+/* PF400CG, A450CG, A503ML adopted smb346, smb347 */
 static const unsigned int aicl_results[] = {
     300,
     500,
@@ -500,7 +506,7 @@ static inline int get_battery_rsoc(int *rsoc);
 static inline int get_battery_temperature(int *tempr);
 static inline int get_battery_voltage(int *volt);
 
-#ifdef CONFIG_LEDS_INTEL_KPD
+#if defined(CONFIG_LEDS_INTEL_KPD) && (defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG))
 extern void set_off();
 extern void set_red();
 extern void set_green();
@@ -670,6 +676,12 @@ extern bool get_sw_charging_toggle()
 {
     bool ret;
 
+    if (!smb345_dev) {
+        pr_err("Warning: smb345_dev is null "
+            "due to probe function has error\n");
+        return false;
+    }
+
     mutex_lock(&g_charging_toggle_lock);
     ret = g_charging_toggle;
     mutex_unlock(&g_charging_toggle_lock);
@@ -684,7 +696,7 @@ extern int get_charger_type()
     if (!smb345_dev) {
         pr_err("Warning: smb345_dev is null "
             "due to probe function has error\n");
-        return -1;
+        return CABLE_OUT;
     }
 
     mutex_lock(&g_usb_state_lock);
@@ -706,6 +718,9 @@ int request_power_supply_changed()
             "due to probe function has error\n");
         return -1;
     }
+
+    if (!g_is_power_supply_registered)
+        return -1;
 
     power_supply_changed(&smb345_power_supplies[CHARGER_AC-1]);
     power_supply_changed(&smb345_power_supplies[CHARGER_USB-1]);
@@ -729,6 +744,7 @@ static int smb345_register_power_supply(struct device *dev)
         goto batt_err_reg_fail_ac;
     }
 
+    g_is_power_supply_registered = true;
     return 0;
 
 batt_err_reg_fail_ac:
@@ -923,6 +939,7 @@ static int cancel_soft_hot_temp_limit(bool cancel_it)
 /* JEITA function for cell temperature control by SoC
  */
 #ifndef CONFIG_ME302C
+#if !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
 int smb345_soc_control_jeita(void)
 {
     int ret;
@@ -1055,6 +1072,108 @@ int smb345_charger_control_jeita(void)
 
     return ret;
 }
+#else // for FE171CG
+int smb345_soc_control_jeita(void)
+{
+    int ret;
+
+    if (!smb345_dev) {
+        pr_err("Warning: smb345_dev is null "
+            "due to probe function has error\n");
+        return 1;
+    }
+
+    pr_info("%s:\n", __func__);
+    ret = smb345_set_writable(smb345_dev, true);
+    if (ret < 0)
+        return ret;
+
+    /* Set Hard Hot Limit = 72 Deg.C 0bh[5:4]="11" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x0B,
+        BIT(5) | BIT(4),
+        BIT(5) | BIT(4));
+    if (ret) {
+        pr_err("fail to set Hard Hot Limit = 72 Deg.C "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    /* Set Soft Hot Limit Behavior = No Response 07h[1:0]="00" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x07,
+        BIT(1) | BIT(0),
+        0);
+    if (ret) {
+        pr_err("fail to set Soft Hot Limit Behavior = No Response "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    /* Set Soft Cold Temperature Limit = No Response 07h[3:2]="00" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x07,
+        BIT(3) | BIT(2),
+        0);
+    if (ret) {
+        pr_err("fail to set Soft Cold Temperature Limit = No Response "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    return ret;
+}
+int smb345_charger_control_jeita(void)
+{
+    int ret;
+
+    if (!smb345_dev) {
+        pr_err("Warning: smb345_dev is null "
+            "due to probe function has error\n");
+        return 1;
+    }
+
+    pr_info("%s:\n", __func__);
+    ret = smb345_set_writable(smb345_dev, true);
+    if (ret < 0)
+        return ret;
+
+    /* Set Hard Hot Limit = 53 Deg.C 0bh[5:4]="00" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x0B,
+        BIT(5) | BIT(4),
+        0);
+    if (ret) {
+        pr_err("fail to set Hard Hot Limit = 53 Deg.C "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    /* Set Soft Hot Limit Behavior = Float Voltage Compensation 07h[1:0]="10" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x07,
+        BIT(1) | BIT(0),
+        BIT(1));
+    if (ret) {
+        pr_err("fail to set Soft Hot Limit Behavior = Float Voltage Compensation "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    /* Set Soft Cold Temperature Limit = Charge Current Compensation 07h[3:2]="01" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x07,
+        BIT(3) | BIT(2),
+        BIT(2));
+    if (ret) {
+        pr_err("fail to set Soft Cold Temperature Limit = Charge Current Compensation "
+            "ret=%d\n", ret);
+        return ret;
+    }
+
+    return ret;
+}
+#endif
 
 /* new JEITA rule designed by Ming2 */
 int smb3xx_soc_control_float_vol(float_volt_tempr_threshold_t threshold)
@@ -1268,6 +1387,296 @@ int smb345_soc_control_jeita(void) { return 0; };
 int smb345_charger_control_jeita(void) { return 0; };
 int smb345_soc_control_float_vol(int bat_temp) { return 0; };
 int smb3xx_soc_control_float_vol(float_volt_tempr_threshold_t threshold) { return 0; }
+#endif
+
+#if defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
+int smb3xx_jeita_control(int bat_tempr, int bat_volt)
+{
+    static charger_jeita_status_t ori_charger_jeita_status = ROOM;
+    int ret;
+
+    if (!smb345_dev) {
+        pr_err("Warning: smb345_dev is null "
+            "due to probe function has error\n");
+        return POWER_SUPPLY_STATUS_DISCHARGING;
+    }
+
+    ori_charger_jeita_status = smb345_dev->charger_jeita_status;
+
+    /* initial condition for Recharge Voltage depend on Vbatt*/
+    if (bat_volt < 4250)
+        ret = smb345_masked_write(smb345_dev->client,
+            0x01,
+            BIT(3) | BIT(2),
+            0);
+    else
+        ret = smb345_masked_write(smb345_dev->client,
+            0x01,
+            BIT(3) | BIT(2),
+            BIT(3));
+
+    /* condition judgement 1: */
+    if (ori_charger_jeita_status == FREEZE) {
+        if (bat_tempr >= 45)
+            /* control diagram II: */
+            goto control_diagram_II;
+        else
+            /* control diagram I: */
+            goto control_diagram_I;
+    }
+
+    /* condition judgement 2: */
+    if (ori_charger_jeita_status == COLD) {
+        if (bat_tempr >= 130) {
+            /* control diagram III: */
+            goto control_diagram_III;
+        }
+        else if (bat_tempr < 15) {
+            /* control diagram I: */
+            goto control_diagram_I;
+        }
+        else {
+            /* control diagram II: */
+            goto control_diagram_II;
+        }
+    }
+
+    /* condition judgement 3: */
+    if (ori_charger_jeita_status == ROOM) {
+        if (bat_tempr < 100) {
+            /* control diagram II: */
+            goto control_diagram_II;
+        }
+        else if (bat_tempr >= 500) {
+            if (bat_volt > 4110) {
+                /* control diagram V: */
+                goto control_diagram_V;
+            }
+            else {
+                /* control diagram IV: */
+                goto control_diagram_IV;
+            }
+        }
+        else
+            /* control diagram III: */
+            goto control_diagram_III;
+    }
+
+    /* condition judgement 4: */
+    if (ori_charger_jeita_status == HOT) {
+        // state before is "Charging Disable"
+        if (smb345_get_soc_control_float_vol() == 0x2A) {
+            if (bat_tempr <= 470) {
+                /* control diagram III: */
+                goto control_diagram_III;
+            }
+            else if (bat_tempr >=550) {
+                /* control diagram VI: */
+                goto control_diagram_VI;
+            }
+            else {
+                if (bat_volt > 4110) {
+                    /* control diagram V: */
+                    goto control_diagram_V;
+                }
+                else {
+                    /* control diagram IV: */
+                    goto control_diagram_IV;
+                }
+            }
+        }
+        else { // state before is "Charging Enable"
+            if (bat_tempr < 500) {
+                /* control diagram III: */
+                goto control_diagram_III;
+            }
+            else if (bat_tempr >= 550) {
+                /* control diagram VI: */
+                goto control_diagram_VI;
+            }
+            else {
+                if (bat_volt > 4110) {
+                    /* control diagram V: */
+                    goto control_diagram_V;
+                }
+                else {
+                    /* control diagram IV: */
+                    goto control_diagram_IV;
+                }
+            }
+        }
+    }
+
+    /* condition judgement 5: */
+    if (ori_charger_jeita_status == OVERHEAT) {
+        if (bat_tempr <= 520) {
+        /* control diagram IV, V: */
+        if (bat_volt > 4110)
+            /* control diagram V: */
+            goto control_diagram_V;
+        else
+            /* control diagram IV: */
+            goto control_diagram_IV;
+        }
+        else
+            /* control diagram VI: */
+            goto control_diagram_VI;
+    }
+
+    BAT_DBG_E(" %s: *** ERROR ***\n", __func__);
+
+control_diagram_I:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            BIT(5) | BIT(3) | BIT(1));
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    ret = smb345_charging_toggle(JEITA, false);
+    smb345_dev->charger_jeita_status = FREEZE;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    return POWER_SUPPLY_STATUS_DISCHARGING;
+
+control_diagram_II:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            BIT(5) | BIT(3) | BIT(1));
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(6));
+    ret = smb345_charging_toggle(JEITA, true);
+    smb345_dev->charger_jeita_status = COLD;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    return POWER_SUPPLY_STATUS_CHARGING;
+
+control_diagram_III:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            BIT(5) | BIT(3) | BIT(1));
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    ret = smb345_charging_toggle(JEITA, true);
+    smb345_dev->charger_jeita_status = ROOM;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    return POWER_SUPPLY_STATUS_CHARGING;
+
+control_diagram_IV:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            0x1E);
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    ret = smb345_charging_toggle(JEITA, true);
+    smb345_dev->charger_jeita_status = HOT;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    /* Recharge Voltage was set to Vflt-100mV 01h[3:2]="01" */
+    ret = smb345_masked_write(smb345_dev->client, 0x01, BIT(3) | BIT(2), BIT(2));
+    return POWER_SUPPLY_STATUS_CHARGING;
+
+control_diagram_V:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            BIT(5) | BIT(3) | BIT(1));
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    ret = smb345_charging_toggle(JEITA, false);
+    smb345_dev->charger_jeita_status = HOT;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    return POWER_SUPPLY_STATUS_DISCHARGING;
+
+control_diagram_VI:
+    ret = smb345_masked_write(smb345_dev->client,
+            0x03,
+            BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+            BIT(5) | BIT(3) | BIT(1));
+    ret = smb345_masked_write(smb345_dev->client,
+            0x00,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    ret = smb345_charging_toggle(JEITA, false);
+    smb345_dev->charger_jeita_status = OVERHEAT;
+    if (ori_charger_jeita_status != smb345_dev->charger_jeita_status)
+        BAT_DBG(" %s: ori_JEITA: %d, new_JEITA: %d, %d(0.1C), %dmV\n",
+            __func__,
+            ori_charger_jeita_status,
+            smb345_dev->charger_jeita_status, bat_tempr, bat_volt);
+    return POWER_SUPPLY_STATUS_DISCHARGING;
+
+others:
+    return POWER_SUPPLY_STATUS_CHARGING;
+}
+#else
+int smb3xx_jeita_control(int bat_tempr, int bat_volt)
+{
+    return POWER_SUPPLY_STATUS_CHARGING;
+}
+#endif
+
+#if defined(CONFIG_UPI_BATTERY) && (defined(CONFIG_FE171CG) || defined(CONFIG_ME171C))
+int smb3xx_jeita_control_for_upi(int usb_state)
+{
+    int ret;
+    int batt_tempr = 250;/* unit: C  */
+    int batt_volt = 4000;/* unit: mV */
+    int rsoc;
+
+    if (usb_state != AC_IN && usb_state != USB_IN && usb_state != PAD_SUPPLY)
+        return 0;
+
+    /* acquire battery temperature here */
+    ret = get_battery_temperature(&batt_tempr);
+    if (ret) {
+        BAT_DBG_E(" %s: fail to get battery temperature\n", __func__);
+        return ret;
+    }
+
+    /* acquire battery voltage here */
+    ret = get_battery_voltage(&batt_volt);
+    if (ret) {
+        BAT_DBG_E(" %s: fail to get battery voltage\n", __func__);
+        return ret;
+    }
+
+    /* exec jeita function */
+    ret = smb3xx_jeita_control(batt_tempr, batt_volt);
+
+    return ret;
+}
+#else
+int smb3xx_jeita_control_for_upi(int usb_state) { return 0; }
 #endif
 /*----------------------------------------------------------------------------*/
 
@@ -1593,6 +2002,52 @@ static int config_otg_regs(int toggle)
 
     }
 }
+#elif defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
+static int config_otg_regs(int toggle)
+{
+    int ret;
+
+    if (toggle) {
+        /* Set OTG current limit to 250mA: 0Ah[3:2]="00" */
+        ret = smb345_masked_write(smb345_dev->client,
+                0x0A,
+                BIT(3) | BIT(2),
+                0);
+        if (ret) {
+            pr_err("fail to set OTG current limit 250mA ret=%d\n", ret);
+            return ret;
+        }
+
+        /* Toggle to enable OTG function: output High */
+        gpio_set_value(smb345_dev->pdata->gp_sdio_2_clk, 1);
+
+        /* Set OTG current limit to 500mA: 0Ah[3:2]="01" */
+        ret = smb345_masked_write(smb345_dev->client,
+                    0x0A,
+                    BIT(3) | BIT(2),
+                    BIT(2));
+        if (ret) {
+            pr_err("fail to set OTG current limit 750mA ret=%d\n", ret);
+            return ret;
+        }
+    }
+    else {
+        /* Set OTG current limit to 250mA: 0Ah[3:2]="00" */
+        ret = smb345_masked_write(smb345_dev->client,
+                0x0A,
+                BIT(3) | BIT(2),
+                0);
+        if (ret) {
+            pr_err("fail to set OTG current limit 250mA ret=%d\n", ret);
+            return ret;
+        }
+
+        /* Toggle to disable OTG function: output Low */
+        gpio_set_value(smb345_dev->pdata->gp_sdio_2_clk, 0);
+    }
+
+    return ret;
+}
 #else
 static int config_otg_regs(int toggle) { return 0; }
 #endif
@@ -1902,7 +2357,7 @@ static int smb346_set_pad_supply_dc_in_limits(int rsoc)
     return ret;
 }
 
-#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG)
+#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG) && !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
 static int smb345_set_current_limits(int usb_state, bool is_twinsheaded)
 {
     int ret, index=-1;
@@ -1955,7 +2410,7 @@ static int smb345_set_current_limits(int usb_state, bool is_twinsheaded)
 #endif
 
 /* It seems that smb345 does not need AICL control */
-#if !defined(CONFIG_ME302C) && !defined(CONFIG_ME372CG) && !defined(CONFIG_ME372CL) && !defined(CONFIG_A450CG)
+#if !defined(CONFIG_ME302C) && !defined(CONFIG_ME372CG) && !defined(CONFIG_ME372CL) && !defined(CONFIG_A450CG) && !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
 static void aicl_cur_control(int usb_state)
 {
     int aicl_result;
@@ -2002,7 +2457,7 @@ static void aicl_cur_control(int usb_state)
         return;
     }
 }
-#elif defined(CONFIG_A450CG)
+#elif defined(CONFIG_A450CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 static void aicl_cur_control(int usb_state)
 {
     int aicl_result;
@@ -2045,7 +2500,10 @@ void aicl_dete_worker(struct work_struct *dat)
     mutex_unlock(&g_usb_state_lock);
 
     aicl_cur_control(usb_state);
+#if !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
     smb346_soc_detect_batt_tempr(usb_state);
+#endif
+    smb3xx_jeita_control_for_upi(usb_state);
 
     /* acquire battery rsoc here */
     if (get_battery_rsoc(&rsoc)) {
@@ -2347,6 +2805,52 @@ static int smb358_pre_config()
 fail:
     return ret;
 }
+#elif defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
+static int smb358_pre_config()
+{
+    int ret;
+
+    /* set fast charge current: 2000mA 00h[7:5]="111"*/
+    ret = smb345_masked_write(smb345_dev->client,
+            CHG_CURRENT_REG,
+            BIT(7) | BIT(6) | BIT(5),
+            BIT(7) | BIT(6) | BIT(5));
+    if (ret < 0)
+        goto fail;
+
+    /* set cold soft limit current: 600mA 0A[7:6]="10" */
+    ret = smb345_masked_write(smb345_dev->client,
+            OTG_TLIM_THERM_CNTRL_REG,
+            BIT(7) | BIT(6),
+            BIT(7));
+
+    /* set termination current: 200mA 00h[2:0]="111"*/
+    ret = smb345_masked_write(smb345_dev->client,
+        CHG_CURRENT_REG,
+        BIT(2) | BIT(1) | BIT(0),
+        BIT(2) | BIT(1) | BIT(0));
+
+    /* Set Charger Disable 06h[6:5]="00" */
+    ret = smb345_charging_toggle(JEITA, false);
+
+    /* Set Charger Voltage = 4.34V 03h[5:0]="101010" */
+    ret = smb345_masked_write(smb345_dev->client,
+        0x03,
+        BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1) | BIT(0),
+        BIT(5) | BIT(3) | BIT(1));
+
+    /* Set Charger Enable 06h[6:5]="11" */
+    ret = smb345_charging_toggle(JEITA, true);
+
+    if (ret < 0)
+        goto fail;
+
+    if (ret < 0)
+        return ret;
+
+fail:
+    return ret;
+}
 #else
 static int smb358_pre_config() { return 0; }
 #endif
@@ -2472,7 +2976,7 @@ static void smb3xx_config_max_current(int usb_state)
 
     g_init_disable_aicl = false;
 }
-#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
+#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 static void smb3xx_config_max_current(int usb_state)
 {
     #if 0
@@ -2589,12 +3093,25 @@ static void smb3xx_config_max_current(int usb_state)
             return;
         }
 
+        if (HW_ID != HW_ID_MP2) {
         /* Set I_USB_IN=1200mA - Write 01h[3:0]="0100" */
         if (smb345_set_current_limits(AC_IN, false) < 0) {
             dev_err(&smb345_dev->client->dev,
             "%s: fail to set max current limits for USB_IN\n", __func__);
             g_init_disable_aicl = false;
             return;
+        }
+        } else {
+            /* Set I_USB_IN=900mA - Write 01h[3:0]="0011" */
+            if (smb345_masked_write(smb345_dev->client,
+                0x01,
+                BIT(3) | BIT(2) | BIT(1) | BIT(0),
+                BIT(1) | BIT(0))){
+                dev_err(&smb345_dev->client->dev,
+                "%s: fail to set max current limits for USB_IN\n", __func__);
+                g_init_disable_aicl = false;
+                return;
+            }
         }
 
         /* Enable AICL - Write 02h[4]="1" */
@@ -3030,9 +3547,11 @@ int setSMB345Charger(int usb_state)
 
     mutex_unlock(&g_usb_state_lock);
 #ifdef ME372CG_ENG_BUILD
+#if !defined(CONFIG_FE171CG) && !defined(CONFIG_ME171C)
     if (smb345_dev) smb346_soc_detect_batt_tempr(g_usb_state);
 #endif
-    if (smb345_dev) {
+#endif
+    if (smb345_dev && g_is_power_supply_registered) {
         switch (usb_state){
         case USB_IN:
             power_supply_changed(&smb345_power_supplies[CHARGER_USB-1]);
@@ -3097,7 +3616,7 @@ int setSMB345Charger(int usb_state)
 
 #ifdef CONFIG_UPI_BATTERY
         if (smb345_dev) {
-            if (entry_mode == 4) {
+            if (entry_mode == 4 || entry_mode == 1) {
                 if (!wake_lock_active(&wlock)) {
                     BAT_DBG(" %s: asus_battery_power_wakelock "
                         "-> wake lock\n",
@@ -3115,7 +3634,7 @@ int setSMB345Charger(int usb_state)
         usb_to_battery_callback(NO_CABLE);
 #ifdef CONFIG_UPI_BATTERY
         if (smb345_dev) {
-            if (entry_mode == 4) {
+            if (entry_mode == 4 || entry_mode == 1) {
                 if (wake_lock_active(&wlock)) {
                     BAT_DBG(" %s: asus_battery_power_wakelock "
                         "-> wake unlock\n",
@@ -3288,16 +3807,17 @@ int smb345_charging_toggle(charging_toggle_level_t level, bool on)
     if (ret < 0)
         goto out;
 
-#ifdef ME372CG_ENG_BUILD
+#if defined(ME372CG_ENG_BUILD) && defined(CONFIG_UPI_BATTERY)
     /* acquire battery rsoc here */
     if (get_battery_rsoc(&rsoc)) {
         BAT_DBG(" %s: fail to get battery rsoc\n", __func__);
     }
     else {
+        BAT_DBG(" %s: rsoc=%d\n", __func__, rsoc);
         if (rsoc >= 0 && rsoc <= 100) {
             if (eng_charging_limit) {
-                if (rsoc > 59) {
-                    /* stop charging as phone battery rsoc >= 60% in ENG build */
+                if (rsoc > 50) {
+                    /* stop charging as phone battery rsoc > 50% in ENG build */
                     on = false;
                     flag_eng_stop_charging = true;
                     BAT_DBG_E(" %s: *** ENG charging toggle: OFF *** -> rsoc=%d\n",
@@ -3688,7 +4208,7 @@ bool is_A400CG_1600mA_device()
 EXPORT_SYMBOL(is_A400CG_1600mA_device);
 #endif
 
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 static int smb346_otg_gpio_init(struct smb345_charger *smb)
 {
     const struct smb345_charger_platform_data *pdata = smb->pdata;
@@ -3900,7 +4420,7 @@ int smb345_get_charging_status(void)
 }
 //EXPORT_SYMBOL_GPL(smb345_get_charging_status);
 
-#ifndef ME372CG_USER_BUILD
+#ifndef ME372CG_OTHER_BUILD
 int smb345_dump_registers(struct seq_file *s)
 {
     struct smb345_charger *smb;
@@ -4068,7 +4588,7 @@ static const struct file_operations smb345_debugfs_fops2 = {
 };
 #endif
 
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 static int smb346_routine_aicl_control()
 {
     BAT_DBG(" %s\n", __func__);
@@ -4388,56 +4908,6 @@ static int smb346_soc_detect_batt_tempr(int usb_state)
     smb345_dev->charger_jeita_state = charger_jeita_state;
     request_power_supply_changed();
 
-#if 0
-    ret = smb345_soc_control_float_vol(batt_tempr);
-    if (ret)
-        return ret;
-
-    if (batt_tempr < low_tempr_thrsd) {
-        ret = smb345_charging_toggle(JEITA, false);
-        request_power_supply_changed();
-        return ret;
-    }
-    else if (batt_tempr > high_tempr_thrsd) {
-        ret = smb345_charging_toggle(JEITA, false);
-        request_power_supply_changed();
-        g_stop_charging_by_tempr_550 = true;
-        return ret;
-    }
-    #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ME175CG)
-    else if (batt_tempr >= FLOAT_VOLTAGE_TEMPERATURE_THRESHOLD && batt_volt > 4110) {
-        ret = smb345_charging_toggle(JEITA, false);
-        request_power_supply_changed();
-        return ret;
-    }
-    #endif
-    else
-    {
-        #if defined(ME372CG_ENG_BUILD) && defined(CONFIG_UPI_BATTERY)
-        /* acquire battery rsoc here */
-        if (get_battery_rsoc(&rsoc)) {
-            BAT_DBG(" %s: fail to get battery rsoc\n", __func__);
-        }
-        else {
-            if (rsoc > 59 && eng_charging_limit) {
-                ret = smb345_charging_toggle(JEITA, false);
-                request_power_supply_changed();
-                return ret;
-            }
-        }
-        #endif
-
-        #ifndef CONFIG_PF400CG
-        ret = smb345_charging_toggle(JEITA, true);
-        #else
-        if (usb_state == AC_IN || usb_state == USB_IN) {
-            ret = smb345_charging_toggle(JEITA, true);
-            ret = smb345_charging_toggle(BALANCE, true);
-        }
-        #endif
-    }
-#endif
-
     return ret;
 }
 #else
@@ -4508,7 +4978,7 @@ static int smb345_probe(struct i2c_client *client,
 
 #ifdef CONFIG_UPI_BATTERY
     /* init wake lock in COS */
-    if (entry_mode == 4) {
+    if (entry_mode == 4 || entry_mode == 1) {
         BAT_DBG(" %s: wake lock init: asus_battery_power_wakelock\n",
             __func__);
         wake_lock_init(&wlock,
@@ -4536,6 +5006,7 @@ static int smb345_probe(struct i2c_client *client,
 #endif
     /* init charger jeita state by battery temperature to RTS */
     smb->charger_jeita_state = RTS;
+    smb->charger_jeita_status = ROOM;
 
     smb345_dev = smb;
     smb345_dump_registers(NULL);
@@ -4607,12 +5078,6 @@ static int smb345_probe(struct i2c_client *client,
     ret = smb345_register_power_supply(&client->dev);
     if (ret < 0)
         return ret;
-
-#if 0
-    ret = smb346_routine_aicl_control();
-    if (ret < 0)
-        return ret;
-#endif
 
     BAT_DBG(" ++++++++++++++++ %s done ++++++++++++++++\n", __func__);
 

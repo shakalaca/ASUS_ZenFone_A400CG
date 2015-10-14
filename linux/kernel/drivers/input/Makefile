@@ -26,6 +26,5 @@ obj-$(CONFIG_INPUT_MISC)	+= misc/
 
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 obj-$(CONFIG_INPUT_KEYRESET)	+= keyreset.o
-# Tom add for Sensor ++
+
 obj-y += sensors/
-# Tom add for Sensor --

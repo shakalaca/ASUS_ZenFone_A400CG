@@ -1830,6 +1830,7 @@ enum ieee80211_key_len {
 	/* WAPI */
 	WLAN_KEY_LEN_WAPI_SMS4 = 32,
 	/* WAPI */
+
 };
 
 /* Public action codes */
@@ -2035,7 +2036,6 @@ enum ieee80211_sa_query_action {
 #define WLAN_CIPHER_SUITE_AES_CMAC	0x000FAC06
 #define WLAN_CIPHER_SUITE_GCMP		0x000FAC08
 
-/* WAPI */
 #define WLAN_CIPHER_SUITE_SMS4		0x00147201
 
 /* AKM suite selectors */
@@ -2048,7 +2048,6 @@ enum ieee80211_sa_query_action {
 #define WLAN_AKM_SUITE_FT_OVER_SAE	0x000FAC09
 
 /* WAPI */
-
 #define WLAN_AKM_SUITE_WAPI_PSK         0x000FAC11
 #define WLAN_AKM_SUITE_WAPI_CERT        0x000FAC12
 

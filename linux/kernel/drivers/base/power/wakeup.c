@@ -15,6 +15,7 @@
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
 #include <trace/events/power.h>
+#include <linux/workqueue.h>
 
 #include "power.h"
 
@@ -53,15 +54,23 @@ static LIST_HEAD(wakeup_sources);
 
 static DECLARE_WAIT_QUEUE_HEAD(wakeup_count_wait_queue);
 
+struct workqueue_struct *polling_wakelock_wq;
+struct delayed_work polling_wakelock_work;
 void wakeup_source_monitor(void){
 	struct wakeup_source *ws;
 	int active = 0;
+	int counter= 0;
 	struct wakeup_source *last_activity_ws = NULL;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
+		counter++;
+		if (unlikely(!ws)){
+			pr_info("Error detect!! wakeup_source %d is null\n",counter);
+			continue;
+		}
 		if (ws->active) {
-			pr_info("active wakeup source: %s\n", ws->name);
+			pr_info("active Wakelock: %s\n", ws->name);
 			active = 1;
 		} else if (!active && (!last_activity_ws || ktime_to_ns(ws->last_time) > ktime_to_ns(last_activity_ws->last_time))) {
 			last_activity_ws = ws;
@@ -69,8 +78,13 @@ void wakeup_source_monitor(void){
 	}
 
 	if (!active && last_activity_ws)
-		pr_info("last active wakeup source: %s\n", last_activity_ws->name);
+		pr_info("last active Wakelock: %s\n", last_activity_ws->name);
 	rcu_read_unlock();
+}
+void polling_wakelock(struct work_struct *dat){
+        printk("Polling Wakelock:\n");
+        wakeup_source_monitor();
+        queue_delayed_work(polling_wakelock_wq, &polling_wakelock_work, 300*HZ);
 }
 
 
@@ -760,6 +774,7 @@ bool pm_get_wakeup_count(unsigned int *count, bool block)
 			if (inpr == 0 || signal_pending(current))
 				break;
 			pr_info("[Wakelock] %d wakelocks exist. Try to suspend failed, waiting to unlock.\n",inpr);
+			wakeup_source_monitor();
 			schedule();
 		}
 		finish_wait(&wakeup_count_wait_queue, &wait);
@@ -914,6 +929,15 @@ static int __init wakeup_sources_debugfs_init(void)
 {
 	wakeup_sources_stats_dentry = debugfs_create_file("wakeup_sources",
 			S_IRUGO, NULL, NULL, &wakeup_sources_stats_fops);
+
+        polling_wakelock_wq = create_freezable_workqueue("polling_wakelock_wq");
+	if (!polling_wakelock_wq){
+		printk("[Wakelock]polling_wakelock_wq init failed!\n");
+	}
+	else{
+		INIT_DELAYED_WORK(&polling_wakelock_work, polling_wakelock);
+		queue_delayed_work(polling_wakelock_wq, &polling_wakelock_work,300*HZ);
+	}
 	return 0;
 }
 

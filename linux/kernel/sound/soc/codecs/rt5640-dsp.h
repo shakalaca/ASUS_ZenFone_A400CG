@@ -30,12 +30,12 @@ struct rt5640_dsp_param {
 };
 
 int rt5640_dsp_probe(struct snd_soc_codec *codec);
+void rt5640_dsp_remove(struct snd_soc_codec *codec);
 int rt56xx_dsp_ioctl_common(struct snd_hwdep *hw, struct file *file,
-				unsigned int cmd, unsigned long arg);
+			    unsigned int cmd, unsigned long arg);
 #ifdef CONFIG_PM
-int rt5640_dsp_suspend(struct snd_soc_codec *codec, pm_message_t state);
+int rt5640_dsp_suspend(struct snd_soc_codec *codec);
 int rt5640_dsp_resume(struct snd_soc_codec *codec);
 #endif
 
 #endif /* __RT5640_DSP_H__ */
-

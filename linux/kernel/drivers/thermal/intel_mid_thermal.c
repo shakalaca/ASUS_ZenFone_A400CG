@@ -409,17 +409,6 @@ exit:
 	return ret;
 }
 
-static struct thermal_zone_device *tzd_0;
-static struct thermal_zone_device *tzd_1;
-static int check_all_thermal_sensors(struct thermal_zone_device *tzd, long *temp)
-{
-	if(tzd_0 && tzd_1){
-		if(mid_read_temp(tzd_0,temp) >= 0 && mid_read_temp(tzd_1,temp) >= 0)
-			return 1;
-		else return 0;
-	} else return -EINVAL;
-}
-
 /**
  * initialize_sensor - Initializes ADC information for each sensor.
  * @index: index of the sensor
@@ -518,18 +507,6 @@ static struct thermal_zone_device_ops tzd_ops = {
 #endif
 };
 
-static struct thermal_zone_device_ops tzd_ops_have_check = {
-        .get_temp = read_curr_temp,
-	.check_thermal = check_all_thermal_sensors,
-#ifdef CONFIG_DEBUG_THERMAL
-        .get_slope = read_slope,
-        .set_slope = update_slope,
-        .get_intercept = read_intercept,
-        .set_intercept = update_intercept,
-#endif
-};
-
-
 /**
  * mid_thermal_probe - mfld thermal initialize
  * @pdev: platform device structure
@@ -598,23 +575,10 @@ static int mid_thermal_probe(struct platform_device *pdev)
 
 	/* Register each sensor with the generic thermal framework*/
 	for (i = 0; i < platforminfo->num_sensors; i++) {
-		
-		if(i <= 2) {
-	                platforminfo->tzd[i] = thermal_zone_device_register(
-                                platforminfo->sensors[i].name, 0, 0,
-                                initialize_sensor(&platforminfo->sensors[i]),
-                                &tzd_ops_have_check, NULL, 0, 0);
-			if(i==0) tzd_0 = platforminfo->tzd[0];
-			else if(i==1) tzd_1 = platforminfo->tzd[1];
-		}
-		else {
-			platforminfo->tzd[i] = thermal_zone_device_register(
+		platforminfo->tzd[i] = thermal_zone_device_register(
 				platforminfo->sensors[i].name, 0, 0,
 				initialize_sensor(&platforminfo->sensors[i]),
 				&tzd_ops, NULL, 0, 0);
-		}
-
-
 		if (IS_ERR(platforminfo->tzd[i]))
 			goto reg_fail;
 	}

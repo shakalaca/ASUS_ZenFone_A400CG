@@ -37,8 +37,6 @@
 #include <linux/module.h>
 #include "i2c-designware-core.h"
 
-int g_i2c5_reset_by_gsensor=0;
-
 /*
  * Registers offset
  */
@@ -583,10 +581,7 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 
 	/* wait for tx to complete */
 	ret = wait_for_completion_interruptible_timeout(&dev->cmd_complete, HZ);
-	if ( (ret == 0)||(g_i2c5_reset_by_gsensor==1) ) {
-		if(g_i2c5_reset_by_gsensor==1)
-			printk("alp : get  adap->nr(%d) !!!\n",adap->nr);
-		g_i2c5_reset_by_gsensor=0;
+	if (ret == 0) {
 		dev_err(dev->dev, "controller timed out\n");
 		i2c_dw_init(dev);
 		ret = -ETIMEDOUT;

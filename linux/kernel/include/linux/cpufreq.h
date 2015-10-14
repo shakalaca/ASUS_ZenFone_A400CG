@@ -116,9 +116,14 @@ struct cpufreq_interactive_tunables {
 #define DEFAULT_TIMER_SLACK (4 * DEFAULT_TIMER_RATE)
 	int timer_slack_val;
 	bool io_is_busy;
-
-	/*Platform's max freq*/
-	unsigned int platform_max_freq;
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+#define DEFAULT_IRQ_LOAD_THRESHOLD 5
+#define DEFAULT_IOWAIT_LOAD_THRESHOLD 15
+	bool io_busy;
+	unsigned int io_busy_mask;
+	unsigned int irq_load_threshold_val;
+	unsigned int iowait_load_threshold_val;
+#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 };
 
 struct cpufreq_governor;

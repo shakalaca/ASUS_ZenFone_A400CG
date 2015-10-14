@@ -74,7 +74,7 @@
 
 #include <linux/hx8528_me372cl.h>
 
-#define DRIVER_VERSION	"1.1.12"
+#define DRIVER_VERSION	"1.1.15"
 
 //=============================================================================================================
 //
@@ -275,10 +275,10 @@ struct himax_chip_data
 //----[ENABLE_CHIP_RESET_MACHINE]-----------------------------------------------------------------------end
 	
 //----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-#ifdef ENABLE_CHIP_STATUS_MONITOR
-	struct delayed_work himax_chip_monitor;
+//#ifdef ENABLE_CHIP_STATUS_MONITOR
+	//struct delayed_work himax_chip_monitor;
 	int running_status;
-#endif
+//#endif
 //----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end	
 	
 //firmware upgrade by Josh +++
@@ -301,6 +301,9 @@ struct himax_chip_data
 
 	int TP_ID; // add by leo for TP_ID
 	int tp_lens_version_checksum;
+	int back_is_key_down;
+	int home_is_key_down;
+	int menu_is_key_down;
 
 	spinlock_t touch_spinlock;
 
@@ -491,13 +494,8 @@ static u8 ESD_RESET_ACTIVATE = 1;
 #ifdef HX_TP_SYS_SELF_TEST 
 static ssize_t himax_chip_self_test_function(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t himax_self_test_setting(struct device *dev,struct device_attribute *attr, const char *buf, size_t count);
-static ssize_t himax_self_test_show(struct device *dev, struct device_attribute *attr, char *buf);
 static int himax_chip_self_test(uint8_t *data);
-static uint8_t *rFE96_setting=NULL;
-//static uint8_t rFE96_setting_ofilm[8] = { 0x02, 0x58, 0x11, 0x0e, 0x26, 0x18, 0x37, 0x08}; // PR Spec
-//static uint8_t rFE96_setting_wintek[8] = { 0x02, 0x58, 0x12, 0x13, 0x28, 0x1a, 0x32, 0x09}; // PR Spec
-static uint8_t rFE96_setting_ofilm[8] = { 0x02, 0x58, 0x12, 0x0c, 0x21, 0x17, 0x35, 0x08}; // MP Spec
-static uint8_t rFE96_setting_wintek[8] = { 0x02, 0x58, 0x11, 0x12, 0x27, 0x1d, 0x35, 0x0a}; // PR Spec
+static uint8_t rFE96_setting[8] = { 0x02, 0x58, 0x10, 0x14, 0x23, 0x15, 0x31, 0x08}; //add by josh for init self_test FE96
 static int self_test_delay_time = 3; //add by josh for init self_test delay time(s)
 #endif 
 //----[HX_TP_SYS_SELF_TEST]-------------------------------------------------------------------------------end
@@ -645,7 +643,6 @@ static ssize_t himax_tp_id(struct device *dev, struct device_attribute *attr, ch
 
 #ifdef HX_TP_SYS_SELF_TEST 
 static DEVICE_ATTR(tp_self_test, (S_IWUSR|S_IRUGO), himax_chip_self_test_function, himax_self_test_setting);
-static DEVICE_ATTR(self_test_spec, (S_IWUSR|S_IRUGO), himax_self_test_show, NULL);
 #endif
 #ifdef HX_TP_SYS_RESET
 static DEVICE_ATTR(reset, (S_IWUSR|S_IRUGO),NULL, himax_reset_set);
@@ -684,7 +681,6 @@ static struct attribute *himax_attr[] = {
 #endif
 #ifdef HX_TP_SYS_SELF_TEST 
 	&dev_attr_tp_self_test.attr,
-	&dev_attr_self_test_spec.attr,
 #endif
 #ifdef HX_TP_SYS_RESET
 	&dev_attr_reset.attr,
@@ -701,14 +697,6 @@ static struct attribute *himax_attr[] = {
 extern int Read_PROJ_ID(void);
 extern int Read_HW_ID();
 extern int check_cable_status(void);
-
-/*
- *build_vsersion mean TARGET_BUILD_VARIANT
- *eng:1
- *userdebug:2
- *user:3
-*/
-extern int build_version;
 
 // add by josh for skip COS/POS ++
 /*
@@ -872,22 +860,23 @@ static int himax_ts_resume(struct i2c_client *client)
 		if(ret < 0) 
 		{
 			printk(KERN_ERR "[Himax] %s: HX_CMD_TSSLPOUT failed addr = 0x%x\n",__func__, himax_chip->client->addr);
-		} 	
+		}
 		msleep(150);
-		
+
+		ret = himax_irq_enable(himax_chip->client);
+
 		mutex_unlock(&himax_chip->mutex_lock);
 		wake_unlock(&himax_chip->wake_lock);
 
-		if(build_version==1)msleep(300); // add by leo for factory touch FW
-		
-		ret = himax_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail
-		if(ret != 0)
+		if(himax_chip->running_status == 0)
 		{
-			queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
-		}	
-		
-		ret = himax_irq_enable(himax_chip->client);
-		
+			msleep(200);
+			ret = himax_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail
+			if(ret != 0)
+			{
+				queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
+			}
+		}
 	}
 	return 0;
 }
@@ -2347,16 +2336,16 @@ static void himax_chip_reset_function(struct work_struct *dat)
 	
 	printk("[Himax] %s: ++ \n",__func__);
 
-//	wake_lock(&himax_chip->wake_lock);
+	wake_lock(&himax_chip->wake_lock);
 	
-//	err = himax_hw_reset();
-	
-//	err = himax_ts_poweron(); 
-//	if(err == 0){
-//		printk("[Himax] %s: touch power on. \n",__func__);
-//	}else{
-//		printk(KERN_ERR"[Himax] %s: power on error = %d.\n",__func__, err);
-//	}
+	err = himax_hw_reset();
+
+	err = himax_ts_poweron();
+	if(err == 0){
+		printk("[Himax] %s: touch power on. \n",__func__);
+	}else{
+		printk(KERN_ERR "[Himax] %s: power on error = %d.\n",__func__, err);
+	}
 
 //	enable_irq(himax_chip->irq);
 //	irq_enable = true;	
@@ -2364,10 +2353,10 @@ static void himax_chip_reset_function(struct work_struct *dat)
 //	if(debug_log){		
 //		printk("[Himax] %s: %d: enable_irq irq_count=%d, irq_enable =0x%x. \n",__func__, __LINE__, irq_count, irq_enable); 
 //	}
-	
-//	wake_unlock(&himax_chip->wake_lock);
-	
-	err = himax_read_fw_ver(true);	
+	himax_irq_enable(himax_chip->client);
+	wake_unlock(&himax_chip->wake_lock);
+
+	//err = himax_read_fw_ver(true);
 	
 	printk("[Himax] %s: -- \n",__func__);
 }
@@ -2699,7 +2688,7 @@ static u8 himax_read_fw_ver(bool hw_reset)
 	memset(himax_chip->config_firmware_version, 0, 8);
 	
 	ret = himax_irq_disable(himax_chip->client);
-	
+
 	#ifdef HX_RST_PIN_FUNC
 	if(hw_reset)
 	{
@@ -2805,7 +2794,6 @@ static u8 himax_read_fw_ver(bool hw_reset)
 		}
 		i++;
 	}while(i < fw_ver_min_end_addr);
-
 
 	//CFG Version MAJ
 	i = cfg_ver_maj_start_addr;
@@ -2935,7 +2923,7 @@ static u8 himax_read_fw_ver(bool hw_reset)
 	//sprintf(himax_chip->tp_lens_version, "%2.2X",CFG_VER_MAJ_buff[0]);
 	//printk("[Himax]: TP Lens version: %s. \n",himax_chip->tp_lens_version);	
 	// add by leo for TP_ID --
-	
+
 	sprintf(himax_chip->config_firmware_version, "%2.2X",CFG_VER_MIN_buff[11]);
 	himax_chip->config_version_checksum = ((himax_chip->config_firmware_version[0] << 8) | himax_chip->config_firmware_version[1]);
 	printk("[Himax]: Himax config version: %s. \n",himax_chip->config_firmware_version);
@@ -2945,7 +2933,7 @@ err_finish:
 	mutex_unlock(&himax_chip->mutex_lock);
 	
 	err = himax_hw_reset();
-	
+
 	err = himax_ts_poweron(); 
 	if(err == 0){
 		printk("[Himax] %s: touch power on. \n",__func__);
@@ -2978,9 +2966,9 @@ void himax_touch_information(void)
 	#endif
 
 	#if defined(HX_EN_SEL_BUTTON) || defined(HX_EN_MUT_BUTTON)
-	if(HX_BT_NUM > HX_KEY_MAX_COUNT){
+	//if(HX_BT_NUM > HX_KEY_MAX_COUNT){
 		HX_BT_NUM = HX_KEY_MAX_COUNT;
-	}
+	//}
 	#endif
 
 	himax_read_flash( temp_buffer, 0x272, 6);
@@ -3081,13 +3069,6 @@ static ssize_t himax_get_fw_version(struct device *dev, struct device_attribute 
 	printk(KERN_INFO "[Himax]: D%s.%s.%s \n",himax_chip->himax_firmware_version, himax_chip->tp_lens_version, himax_chip->config_firmware_version);
  	return sprintf(buf, "D%s.%s.%s\n", himax_chip->himax_firmware_version, himax_chip->tp_lens_version, himax_chip->config_firmware_version);
 }
-
-static ssize_t himax_self_test_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf,"0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
-	rFE96_setting[0],rFE96_setting[1],rFE96_setting[2],rFE96_setting[3],rFE96_setting[4],rFE96_setting[5],rFE96_setting[6],rFE96_setting[7]);
-}
-
 static ssize_t himax_debug_log(struct device *dev, struct device_attribute *attr, char *buf, size_t count)
 {	
 	if (buf[0] == '0'){
@@ -4100,7 +4081,6 @@ static ssize_t himax_debug_level_dump(struct device *dev,struct device_attribute
 
 		handshaking_result = himax_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail 
 		ret = himax_irq_enable(himax_chip->client);
-
 		return count;
 	}
 
@@ -4191,6 +4171,7 @@ static ssize_t himax_debug_level_dump(struct device *dev,struct device_attribute
 			//return count;                    
 		}
 	}
+
 	// add by leo for exchange RX & TX ++
 	if (buf[0] == 'f') { 
 		HX_RX_NUM = (buf[2] - '0')*10 + buf[3] - '0'; 
@@ -6832,6 +6813,9 @@ firmware_upgrade_finish:
 	queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_monitor, 10*HZ);
 	#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------end	
+
+	msleep(2000); // add by leo for kernel panic after FW update issue
+	himax_read_fw_ver(true); // add by leo for kernel panic after FW update issue
 	
 	return 0;
 }
@@ -6854,6 +6838,13 @@ static int himax_chip_self_firmware_upgrade(struct work_struct *dat)
 static int virtual_key_delay_function(struct work_struct *work)	
 {
 	//printk("[Himax] %s: ++\n",__func__);
+
+	// add by leo for google ui issue ++
+	input_report_key(himax_chip->input_dev, BTN_TOUCH, 0);  // touch up
+	input_mt_sync(himax_chip->input_dev);
+	input_sync(himax_chip->input_dev);
+	// add by leo for google ui issue --
+
 	virtual_key_delay = 0;
 	return 0;
 }
@@ -6905,11 +6896,11 @@ static void himax_ts_work_func(struct work_struct *work)
 		hx_touch_info_size = (HX_MAX_PT+raw_cnt_max+1)*4;
 	}
 	
-	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-	#ifdef ENABLE_CHIP_STATUS_MONITOR
+	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start
+	//#ifdef ENABLE_CHIP_STATUS_MONITOR
 		himax_chip->running_status = 1;
-		cancel_delayed_work_sync(&himax_chip->himax_chip_monitor);
-	#endif
+		//cancel_delayed_work_sync(&himax_chip->himax_chip_monitor);
+	//#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end	
 	
 	start_reg = HX_CMD_RAE;
@@ -7104,6 +7095,36 @@ bypass_checksum_failed_packet:
 	{
 		hx_point_num= buf[HX_TOUCH_INFO_POINT_CNT] & 0x0f;
 	}   
+
+	// add by leo for google ui issue ++
+	if (tpd_key_old != 0xFF)
+	{
+		//if(himax_chip->back_is_key_down != 0){ // add by leo for google ui issue
+		if( (tpd_key & 0x01) == 1 && himax_chip->back_is_key_down == 1){
+			printk("[Himax] %s: Key UP back.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[0], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->back_is_key_down=0;
+		}
+		//if(himax_chip->home_is_key_down != 0){
+		if( ((tpd_key & 0x02) >> 1) == 1 && himax_chip->home_is_key_down == 1){
+			printk("[Himax] %s: Key UP home.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[1], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->home_is_key_down=0;
+		}
+		if( ((tpd_key & 0x04) >> 2) == 1 && himax_chip->menu_is_key_down == 1){
+		//if(himax_chip->menu_is_key_down != 0){
+			printk("[Himax] %s: Key UP menu.\n",__func__);
+			input_report_key(himax_chip->input_dev, tpd_keys_local[2], 0);
+			input_mt_sync(himax_chip->input_dev);
+			input_sync(himax_chip->input_dev);
+			himax_chip->menu_is_key_down=0;
+		}
+	}
+	// add by leo for google ui issue --
 	
 	// Touch Point information
 	if(hx_point_num != 0 && tpd_key == 0xFF)
@@ -7179,7 +7200,7 @@ bypass_checksum_failed_packet:
 				input_mt_sync(himax_chip->input_dev);
 			}
 		} 
-		input_sync(himax_chip->input_dev);   
+		input_sync(himax_chip->input_dev);
 	
 		//----[HX_ESD_WORKAROUND]---------------------------------------------------------------------------start
 		//#ifdef HX_ESD_WORKAROUND
@@ -7198,28 +7219,31 @@ bypass_checksum_failed_packet:
 		temp_x[1] = 0xFFFF;
 		temp_y[1] = 0xFFFF; 
 	
-		if( tpd_key == 1)
+		if( (tpd_key & 0x01) == 0 && himax_chip->back_is_key_down == 0)
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[0], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
-			printk("[Himax]: Press KEY_BACK. \r\n");	
+			printk("[Himax]: Press KEY_BACK. \r\n");
+			himax_chip->back_is_key_down = 1;
 		}
 		
-		if( tpd_key == 2)
+		if(((tpd_key & 0x02) >> 1) == 0 && himax_chip->home_is_key_down == 0)	
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[1], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
-			printk("[Himax]: Press KEY_HOME. \r\n");	
+			printk("[Himax]: Press KEY_HOME. \r\n");
+			himax_chip->home_is_key_down = 1;
 		}
 		
-		if( tpd_key == 3)
+		if(((tpd_key & 0x04) >> 2) == 0 && himax_chip->menu_is_key_down == 0)	
 		{
 			input_report_key(himax_chip->input_dev, tpd_keys_local[2], 1);
 			input_mt_sync(himax_chip->input_dev);
 			input_sync(himax_chip->input_dev);
-			printk("[Himax]: Press KEY_MENU. \r\n");	
+			printk("[Himax]: Press KEY_MENU. \r\n");
+			himax_chip->menu_is_key_down = 1;
 		}
 	}
 	else if(hx_point_num == 0 && tpd_key == 0xFF)
@@ -7231,9 +7255,27 @@ bypass_checksum_failed_packet:
 		
 		if (tpd_key_old != 0xFF)
 		{
-			input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
-			input_mt_sync(himax_chip->input_dev);
-			input_sync(himax_chip->input_dev);
+			if(himax_chip->back_is_key_down != 0){ // add by leo for google ui issue
+				printk("[Himax] %s: Key UP back2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[0], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->back_is_key_down=0; // add by leo for google ui issue
+			}
+			if(himax_chip->home_is_key_down != 0){
+				printk("[Himax] %s: Key UP home2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[1], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->home_is_key_down=0; // add by leo for google ui issue
+			}
+			if(himax_chip->menu_is_key_down != 0){
+				printk("[Himax] %s: Key UP menu2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[2], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->menu_is_key_down=0; // add by leo for google ui issue
+			}
 		}
 		else
 		{
@@ -7349,8 +7391,31 @@ static long himax_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case TOUCH_TP_FW_check:
 		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK \n",__func__);
-		ret = himax_firmware_check();
-		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK = % d\n",__func__, ret);
+		//ret = himax_firmware_check();
+		printk( "[Himax]:%s: FW_VER_MAJ_buff[0]=%d \n",__func__, FW_VER_MAJ_buff[0]);
+		printk( "[Himax]:%s: FW_VER_MIN_buff[0]=%d \n",__func__, FW_VER_MIN_buff[0]);
+		printk( "[Himax]:%s: CFG_VER_MAJ_buff[11]=%d \n",__func__, CFG_VER_MAJ_buff[11]);
+		printk( "[Himax]:%s: CFG_VER_MIN_buff[11]=%d \n",__func__, CFG_VER_MIN_buff[11]);
+		if(himax_chip->TP_ID==3) // wintek GFF
+		{
+			printk( "[Himax]:%s: Wintel GFF TP FW version should be D0509.03.0D\n",__func__);
+			//if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==9)&&(CFG_VER_MAJ_buff[11]==3)&&(CFG_VER_MIN_buff[11]==13)) // D0509.03.0D
+			if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==10)&&(CFG_VER_MAJ_buff[11]==3)&&(CFG_VER_MIN_buff[11]==13)) // D050A.03.0D
+				ret=1;
+			else
+				ret=0;
+		}
+		else
+		{
+			printk( "[Himax]:%s: Ofilm TP FW version should be D0509.00.0D\n",__func__);
+			//if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==9)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==13)) // D0509.00.0D
+			if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==10)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==13)) // D050A.00.0D
+				ret=1;
+			else
+				ret=0;
+		}
+
+		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK = %d\n",__func__, ret);
 		return ret;
 	default:
 		printk( "[Himax]:%s: incorrect cmd (%d) \n",__FUNCTION__, _IOC_NR(cmd));
@@ -7485,6 +7550,9 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	himax_chip->tp_firmware_upgrade_proceed = 0;
 	himax_chip->irq_status = 0;
 	himax_chip->msg_count = 0;
+	himax_chip->back_is_key_down = 0;
+	himax_chip->home_is_key_down = 0;
+	himax_chip->menu_is_key_down = 0;
 	i2c_set_clientdata(client, himax_chip);
 	pdata = client->dev.platform_data;
 	if (likely(pdata != NULL)) {
@@ -7530,11 +7598,6 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	printk("[Himax] %s: init reset pin OK. \n",__func__);
 	
 	himax_get_tp_id(); // add by leo for TP_ID ++
-	if(himax_chip->TP_ID==3){
-		rFE96_setting=rFE96_setting_wintek;
-	}else{
-		rFE96_setting=rFE96_setting_ofilm;
-	}
 	
 	//*********************************************************************************************************
 	// Create Work Queue
@@ -7653,9 +7716,9 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	//----[HX_ESD_WORKAROUND]-------------------------------------------------------------------------------end
 
 	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-#ifdef ENABLE_CHIP_STATUS_MONITOR
+//#ifdef ENABLE_CHIP_STATUS_MONITOR
 	himax_chip->running_status = 0;
-#endif
+//#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end
 	err = himax_touch_sysfs_init();
 	if(err)

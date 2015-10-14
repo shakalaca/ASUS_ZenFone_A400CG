@@ -54,7 +54,7 @@
 #ifdef CONFIG_EARLY_PRINTK_DIRECT
 extern void printascii(char *);
 #endif
-extern int entry_mode;
+
 /* printk's without a loglevel use this.. */
 #define DEFAULT_MESSAGE_LOGLEVEL CONFIG_DEFAULT_MESSAGE_LOGLEVEL
 
@@ -1852,15 +1852,7 @@ static int __init console_setup(char *str)
 	idx = simple_strtoul(s, NULL, 10);
 	*s = 0;
 
-    if (entry_mode == 5)
-    {
-	    if (strcmp(buf, "ttyMFD"))
-            __add_preferred_console(buf, idx, options, brl_options);
-    }
-    else
-        __add_preferred_console(buf, idx, options, brl_options);
-
-
+	__add_preferred_console(buf, idx, options, brl_options);
 	console_set_on_cmdline = 1;
 	return 1;
 }

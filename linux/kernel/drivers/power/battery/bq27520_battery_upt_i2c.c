@@ -387,7 +387,7 @@ int update_from_normal_mode(void)
 
     /* check update voltage first */
     ret = UPDATE_VOLT_NOT_ENOUGH;
-    if (curr_volt < 0 || curr_volt < 3750) {
+    if (curr_volt < 3750) {
         BAT_DBG_E("Voltage(%dmV) not enough, abort flashing!\n", curr_volt);
         return ret;
     }

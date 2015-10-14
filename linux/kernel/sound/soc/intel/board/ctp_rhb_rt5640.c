@@ -765,6 +765,7 @@ int ctp_init(struct snd_soc_pcm_runtime *runtime)
 //	if (HW_ID == HW_ID_ER || HW_ID == HW_ID_PR || HW_ID == HW_ID_MP) {
 		/*Configure I2S HW switch for audio route */
 		//gpio = get_gpio_by_name("CLV_I2S1_SEL");
+#if 0
 		gpio = 90;
 		if (gpio > 0) 
 		{
@@ -777,7 +778,8 @@ int ctp_init(struct snd_soc_pcm_runtime *runtime)
 			gpio_direction_output(gpio, 0);
 		}
 		else
-			pr_err("get_gpio CLV_I2S1_SEL failed! \n");	
+			pr_err("get_gpio CLV_I2S1_SEL failed! \n");
+#endif
 //	}
 	
 	/* Keep the voice call paths active during

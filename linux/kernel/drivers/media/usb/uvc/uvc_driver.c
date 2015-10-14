@@ -31,25 +31,6 @@
 				"<laurent.pinchart@ideasonboard.com>"
 #define DRIVER_DESC		"USB Video Class driver"
 
-//Add for ATD read camera status+++
-int ATD_uvc_status = 0;  //Add for ATD read camera status
-
-static ssize_t uvc_show_status(struct device *dev,struct device_attribute *attr,char *buf)
-{
-       printk("%s: get uvc status (%d) !!\n", __func__, ATD_uvc_status);
-       //Check sensor connect status, just do it  in begining for ATD camera status
-
-       return sprintf(buf,"%d\n", ATD_uvc_status);
-}
-
-static DEVICE_ATTR(uvc_status, S_IRUGO,uvc_show_status,NULL);
-
-static struct attribute *uvc_attributes[] = {
-       &dev_attr_uvc_status.attr,
-       NULL
-};
-//Add for ATD read camera status--- 
-
 unsigned int uvc_clock_param = CLOCK_MONOTONIC;
 unsigned int uvc_no_drop_param;
 static unsigned int uvc_quirks_param = -1;
@@ -1756,16 +1737,14 @@ static int uvc_register_video(struct uvc_device *dev,
 	stream->vdev = vdev;
 	video_set_drvdata(vdev, stream);
 
-	ret = video_register_device(vdev, VFL_TYPE_GRABBER, 10);
+	ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);
 	if (ret < 0) {
 		uvc_printk(KERN_ERR, "Failed to register video device (%d).\n",
 			   ret);
-		ATD_uvc_status = 0;  //Add for ATD camera status
 		stream->vdev = NULL;
 		video_device_release(vdev);
 		return ret;
-	}else
-		ATD_uvc_status = 1;  //Add for ATD camera status
+	}
 
 	if (stream->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		stream->chain->caps |= V4L2_CAP_VIDEO_CAPTURE;
@@ -1852,17 +1831,6 @@ static int uvc_probe(struct usb_interface *intf,
 	/* Allocate memory for the device and initialize it. */
 	if ((dev = kzalloc(sizeof *dev, GFP_KERNEL)) == NULL)
 		return -ENOMEM;
-
-	//Add for ATD read camera status+++
-       dev->sensor_uvc_attribute.attrs = uvc_attributes;
-
-       // Register sysfs hooks
-       ret = sysfs_create_group(&intf->dev.kobj, &dev->sensor_uvc_attribute);
-       if (ret) {
-               dev_err(&intf->dev, "Not able to create the sysfs\n");
-               return ret;
-       }
-       //Add for ATD read camera status---
 
 	INIT_LIST_HEAD(&dev->entities);
 	INIT_LIST_HEAD(&dev->chains);
@@ -2454,18 +2422,6 @@ static struct usb_device_id uvc_ids[] = {
 				| UVC_QUIRK_IGNORE_SELECTOR_UNIT },
 	/* Generic USB Video Class */
 	{ USB_INTERFACE_INFO(USB_CLASS_VIDEO, 1, 0) },
-	/* ASUS++ Chicony CNFCHA6 USB Camera */
-	{ .match_flags          = USB_DEVICE_ID_MATCH_DEVICE
-                                | USB_DEVICE_ID_MATCH_INT_INFO,
-          .idVendor             = 0x04f2,
-          .idProduct            = 0xb3ff,
-          .bInterfaceClass      = USB_CLASS_VIDEO,
-          .bInterfaceSubClass   = 1,
-          .bInterfaceProtocol   = 0,
-          .driver_info          = UVC_QUIRK_PROBE_MINMAX
-                                | UVC_QUIRK_IGNORE_SELECTOR_UNIT },
-        /* Generic USB Video Class */
-        { USB_INTERFACE_INFO(USB_CLASS_VIDEO, 1, 0) },
 	{}
 };
 

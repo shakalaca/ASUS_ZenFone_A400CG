@@ -161,9 +161,7 @@ abort:
 	if (state == SUSPEND_REQUESTED_AND_SUSPENDED)
 		__pm_relax(early_suspend_ws);
 	spin_unlock_irqrestore(&state_lock, irqflags);
-	int ret = queue_work(suspend_wq, &suspend_work);
-	if(!ret)
-		pr_info("Suspend_work is already in auto suspend queue.\n");
+	queue_work(suspend_wq, &suspend_work);
 }
 
 static void late_resume(struct work_struct *work)

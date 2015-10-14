@@ -732,6 +732,21 @@ static int get_ether_addr(const char *str, u8 *dev_addr)
 	return 1;
 }
 
+static bool is_mac_uninitalize=true;
+static u8 macaddr[ETH_ALEN];
+
+static int myget_ether_addr(const char *rndis_mac, u8 *dev_addr)
+{
+	dev_addr[0]=0x00;
+	dev_addr[1]=0x09;
+	dev_addr[2]=0x4c;
+	dev_addr[3]=rndis_mac[3];
+	dev_addr[4]=rndis_mac[4];
+	dev_addr[5]=rndis_mac[5];
+
+	return 0;
+}
+
 static const struct net_device_ops eth_netdev_ops = {
 	.ndo_open		= eth_open,
 	.ndo_stop		= eth_stop,
@@ -783,9 +798,22 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 	dev->net = net;
 	snprintf(net->name, sizeof(net->name), "%s%%d", netname);
 
-	if (get_ether_addr(dev_addr, net->dev_addr))
-		dev_warn(&g->dev,
-			"using random %s ethernet address\n", "self");
+	if(dev_addr){
+		if(get_ether_addr(dev_addr, net->dev_addr))
+			dev_warn(&g->dev,
+				"using random %s ethernet address\n", "self");
+	}
+	else{
+		if(is_mac_uninitalize){
+			memcpy(macaddr,ethaddr,ETH_ALEN);
+			is_mac_uninitalize=false;
+		}
+
+		if (myget_ether_addr(macaddr, net->dev_addr))
+			dev_warn(&g->dev,
+				"using random %s ethernet address\n", "self");
+	}
+
 	if (get_ether_addr(host_addr, dev->host_mac))
 		dev_warn(&g->dev,
 			"using random %s ethernet address\n", "host");

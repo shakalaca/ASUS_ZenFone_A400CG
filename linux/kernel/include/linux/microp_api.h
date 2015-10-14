@@ -4,32 +4,32 @@
 #define PROXIMITY_KDATA_SIZE 11
 
 enum Batt_ID{
-    Batt_P01=0,
-    Batt_Dock=1,
+    Batt_P01 = 0,
+    Batt_Dock = 1,
 };
 
 enum p01_Cable_Status{
-    P01_CABLE_UNKNOWN=-1,
-    P01_CABLE_NO=0,
-    P01_CABLE_CHARGER=1,
-    P01_CABLE_USB=2,
-    P01_CABLE_OTG=7,
+    P01_CABLE_UNKNOWN = -1,
+    P01_CABLE_NO = 0,
+    P01_CABLE_CHARGER = 1,
+    P01_CABLE_USB = 2,
+    P01_CABLE_OTG = 7,
 };
 
 enum p01_Charging_Status{
     P01_CHARGING_ERR = -1,
     P01_CHARGING_NO = 0,
-    P01_CHARGING_ONGOING=1,
-    P01_CHARGING_FULL=2,
+    P01_CHARGING_ONGOING = 1,
+    P01_CHARGING_FULL = 2,
 };
 
 enum P72_HW_ID{
-    P72_ER1_2_HWID=0,
-    P72_ER2_HWID=1,
-    P72_PR_HWID=2,
-    P72_MP_HWID=3,
-    P72_ER1_1_HWID=98,
-    P72_SR_HWID=99,
+    P72_ER1_2_HWID = 0,
+    P72_ER2_HWID = 1,
+    P72_PR_HWID = 2,
+    P72_MP_HWID = 3,
+    P72_ER1_1_HWID = 98,
+    P72_SR_HWID = 99,
 };
 
 enum P72G_TS_ID {
@@ -119,7 +119,7 @@ int AX_MicroP_get_ChargingStatus(int target);
 *           1: dock battery
 *
 *  return: 0 for 'no charger/usb', 1 for 'charger', 2 for 'USB', '255' for 'unknown', <0 value means something error
-*/ 
+*/
 
 int AX_MicroP_get_USBDetectStatus(int target);
 
@@ -129,20 +129,20 @@ int AX_MicroP_get_USBDetectStatus(int target);
 /*
 *  GPIO direct control
 *  @ AX_MicroP_getGPIOPinLevel
-*  input: 
-            - pinID
+*  input:
+	- pinID
 *  return: 0 for low, 1 for high, <0 value means something error
 *
 
 *  @ AX_MicroP_setGPIOOutputPin
-*  input: 
-*           - pinID
-*           - level: 0 for low, 1 for high
+*  input:
+*	- pinID
+*	- level: 0 for low, 1 for high
 *  return: the status of operation. 0 for success, <0 value means something error
 
 *  @ AX_MicroP_getGPIOOutputPinLevel
 *  input:
-            - pinID
+	- pinID
 *  return: 0 for low, 1 for high, <0 value means something error
 */
 
@@ -152,25 +152,25 @@ int AX_MicroP_getGPIOOutputPinLevel(int pinID);
 
 
 
-// return =0: success
-//           <0: error
+
+
 int AX_MicroP_setPWMValue(uint8_t value);
 
-// return >=0: success
-//           <0: error
+
+
 int AX_MicroP_getPWMValue(void);
 
-//ASUS_BSP +++ Maggie_Lee "For Pad I2C suspend/resume api"
+
 #if defined(ASUS_A11_PROJECT) || defined(ASUS_A68M_PROJECT)
 int AX_MicroP_Is_resuming(void);
 void AX_MicroP_Bus_Suspending(int susp);
 #endif
-//ASUS_BSP --- Maggie_Lee "For Pad I2C suspend/resume api"
+
 int AX_MicroP_enterSleeping(void);
 int AX_MicroP_enterResuming(void);
 /*
 *  @AX_MicroP_enableInterrupt
-*  input: 
+*  input:
 *            - intrpin: input pin id
 *            -  enable: 0 for 'disable', 1 for 'enable'
 *  return: 0 for success, <0 value means something error
@@ -219,18 +219,16 @@ int AX_MicroP_getMICROPID(void);
 void AX_MicroP_set_VBusPower(int level);
 int AX_MicroP_get_VBusPower(void);
 
-// for proximity kdata
-int AX_MicroP_set_Proxm_crosstalk(unsigned char* data);
-int AX_MicroP_get_Proxm_crosstalk(unsigned char* data);
-int AX_MicroP_set_Proxm_threshold(unsigned char* data);
-int AX_MicroP_get_Proxm_threshold(unsigned char* data);
 
-// for share interrupt gpio request
+int AX_MicroP_set_Proxm_crosstalk(unsigned char *data);
+int AX_MicroP_get_Proxm_crosstalk(unsigned char *data);
+int AX_MicroP_set_Proxm_threshold(unsigned char *data);
+int AX_MicroP_get_Proxm_threshold(unsigned char *data);
+
+
 int AX_request_gpio_33(void);
 void AX_setECPowerOff(void);
 
 int AX_MicroP_setSPK_EN(uint8_t enable);
 int AX_MicroP_setRCV_EN(uint8_t enable);
-bool AX_Is_pad_exist(void);
-void AX_Recheck_EC_interrupt(void);
 #endif

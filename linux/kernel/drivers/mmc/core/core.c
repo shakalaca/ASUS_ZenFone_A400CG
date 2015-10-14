@@ -244,6 +244,19 @@ void mmc_request_done(struct mmc_host *host, struct mmc_request *mrq)
 
 EXPORT_SYMBOL(mmc_request_done);
 
+static void mmc_qos_update(struct mmc_host *host, struct mmc_request *mrq,
+		s32 new_value)
+{
+	if (!host || !host->qos || !mrq)
+		return;
+
+	if (host->card && mmc_card_mmc(host->card) && mrq->data) {
+		if (mrq->data->flags & MMC_DATA_WRITE)
+			pm_qos_update_request(host->qos, new_value);
+	} else
+		pm_qos_update_request(host->qos, new_value);
+}
+
 static void
 mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 {
@@ -316,15 +329,7 @@ mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 	}
 	mmc_host_clk_hold(host);
 	led_trigger_event(host->led, LED_FULL);
-	if (host->qos) {
-		if (host->card && mmc_card_mmc(host->card) && mrq->data) {
-			if (mrq->data->flags & MMC_DATA_WRITE)
-				pm_qos_update_request(host->qos,
-						CSTATE_EXIT_LATENCY_C2);
-		} else
-			pm_qos_update_request(host->qos,
-					CSTATE_EXIT_LATENCY_C2);
-	}
+	mmc_qos_update(host, mrq, CSTATE_EXIT_LATENCY_C2);
 	host->ops->request(host, mrq);
 }
 
@@ -489,6 +494,7 @@ static int mmc_wait_for_data_req_done(struct mmc_host *host,
 			    mmc_card_removed(host->card)) {
 				err = host->areq->err_check(host->card,
 							    host->areq);
+				mmc_qos_update(host, mrq, PM_QOS_DEFAULT_VALUE);
 				break; /* return err */
 			} else {
 				pr_info("%s: req failed (CMD%u): %d, retrying...\n",
@@ -520,23 +526,16 @@ static void mmc_wait_for_req_done(struct mmc_host *host,
 
 		cmd = mrq->cmd;
 		if (!cmd->error || !cmd->retries ||
-		    mmc_card_removed(host->card))
+		    mmc_card_removed(host->card)) {
+			mmc_qos_update(host, mrq, PM_QOS_DEFAULT_VALUE);
 			break;
+		}
 
 		pr_debug("%s: req failed (CMD%u): %d, retrying...\n",
 			 mmc_hostname(host), cmd->opcode, cmd->error);
 		cmd->retries--;
 		cmd->error = 0;
 		host->ops->request(host, mrq);
-	}
-	if (host->qos) {
-		if (host->card && mmc_card_mmc(host->card) && mrq->data) {
-			if (mrq->data->flags & MMC_DATA_WRITE)
-				pm_qos_update_request(host->qos,
-						PM_QOS_DEFAULT_VALUE);
-		} else
-			pm_qos_update_request(host->qos,
-					PM_QOS_DEFAULT_VALUE);
 	}
 }
 
@@ -1087,6 +1086,8 @@ void mmc_set_chip_select(struct mmc_host *host, int mode)
 static void __mmc_set_clock(struct mmc_host *host, unsigned int hz)
 {
 	WARN_ON(hz < host->f_min);
+	if (hz < host->f_min)
+		hz = host->f_min;
 
 	if (hz > host->f_max)
 		hz = host->f_max;
@@ -1522,9 +1523,12 @@ int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage)
 
 power_cycle:
 	if (err) {
+		int ocr;
 		pr_debug("%s: Signal voltage switch failed, "
 			"power cycling card\n", mmc_hostname(host));
+		ocr = host->ocr;
 		mmc_power_cycle(host);
+		host->ocr = mmc_select_voltage(host, ocr);
 	}
 
 	mmc_host_clk_release(host);
@@ -1600,20 +1604,23 @@ static void mmc_power_up(struct mmc_host *host)
 	/*
 	 * This delay should be sufficient to allow the power supply
 	 * to reach the minimum voltage.
-	 *
-	 * Some magic in Intel/CTP/SD0(mmc1) controller, it need more delay time before
+	 * Different device may have different supply power up time.
+	 * The max value should be 35ms per spec. If there is tPRU,
+	 * use it to wait for supply power up stable.
+	 */
+	if (host->tpru)
+		usleep_range(host->tpru * 1000, host->tpru * 1000 + 100);
+	else
+		usleep_range(10000, 11000);
+
+	/* Some magic in Intel/CTP/SD0(mmc1) controller, it need more delay time before
 	 * clock startup. Otherwise lots of noise go on CMD/DATA lines.
 	 */
-    usleep_range(1000,1000);
 	if (!mmc_card_keep_power(host) && !(host->pm_caps & MMC_PM_KEEP_POWER)) {
         if (host->ops->get_cd && host->ops->get_cd(host) == 1) {
             /* card present. additional delay time */
             pr_debug("%s: long delay in %s\n", mmc_hostname(host), __func__);
-            mmc_delay(70);
-        }
-        else {
-            /* standard delay time */
-            mmc_delay(9);
+            mmc_delay(60);
         }
     }
 
@@ -1625,8 +1632,13 @@ static void mmc_power_up(struct mmc_host *host)
 	/*
 	 * This delay must be at least 74 clock sizes, or 1 ms, or the
 	 * time required to reach a stable voltage.
+	 * Different device may have different supply ramp up time.
+	 * If there is tRAMP, use it to wait for supply ramp up stable.
 	 */
-    (host->pm_caps & MMC_PM_KEEP_POWER) ? usleep_range(1000,1000) : usleep_range(5000,5000);
+	if (host->tramp)
+		usleep_range(host->tramp * 1000, host->tramp * 1000 + 100);
+	else
+		usleep_range(5000, 6000);
 
 	mmc_host_clk_release(host);
 }
@@ -1655,6 +1667,7 @@ void mmc_power_off(struct mmc_host *host)
 	host->ios.power_mode = MMC_POWER_OFF;
 	host->ios.bus_width = MMC_BUS_WIDTH_1;
 	host->ios.timing = MMC_TIMING_LEGACY;
+	host->ios.signal_voltage = 0;
 	mmc_set_ios(host);
 
 	if (host->ops->set_dev_power)
@@ -1673,8 +1686,12 @@ void mmc_power_off(struct mmc_host *host)
 void mmc_power_cycle(struct mmc_host *host)
 {
 	mmc_power_off(host);
-	/* Wait at least 1 ms according to SD spec */
-	mmc_delay(1);
+	/*
+	 * Wait at least 1 ms according to SD spec
+	 * some of the SD card seems only 1ms is not enough,
+	 * change the actual delay to be 10ms for safe
+	 */
+	mmc_delay(10);
 	mmc_power_up(host);
 }
 
@@ -2414,18 +2431,6 @@ static int mmc_do_hw_reset(struct mmc_host *host, int check)
 			}
 
 		}
-	}
-
-	/*
-	 * It was observed that some kind of eMMC device may fail to response
-	 * to CMD suddenly during normal usage. And the issue dispeared if
-	 * the same eMMC device working in DDR50. So disabling HS200 and force
-	 * the eMMC device working in DDR50 before reset the eMMC device.
-	 */
-	if ((host->caps2 & MMC_CAP2_HS200_1_8V_SDR) &&
-			(host->caps2 & MMC_CAP2_HS200_DIS)) {
-		pr_warn("%s: disable eMMC HS200\n", __func__);
-		host->caps2 &= ~MMC_CAP2_HS200_1_8V_SDR;
 	}
 
 	if (card && mmc_card_sd(card) &&

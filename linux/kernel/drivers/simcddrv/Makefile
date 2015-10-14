@@ -9,3 +9,4 @@ obj-$(CONFIG_ME175CG) += simcddrv2.o
 obj-$(CONFIG_PF400CG) += simcddrv2.o
 obj-$(CONFIG_A400CG)  += simcddrv2.o
 obj-$(CONFIG_A450CG)  += simcddrv2.o
+obj-$(CONFIG_FE171CG) += simcddrv2.o

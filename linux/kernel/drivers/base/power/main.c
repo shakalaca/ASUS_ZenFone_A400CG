@@ -1152,7 +1152,7 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
                                       ,__func__,dev_name(dev));
                         goto Complete;
 		}
-                msleep(100);
+                msleep(50);
         }
 
 	if (dev->pm_domain) {
@@ -1326,7 +1326,7 @@ static int device_prepare(struct device *dev, pm_message_t state)
                                       ,__func__,dev_name(dev));
 			return -EBUSY;
 		}
-		msleep(100);
+		msleep(50);
 	}
 
 	dev->power.wakeup_path = device_may_wakeup(dev);

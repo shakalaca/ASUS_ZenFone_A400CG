@@ -71,7 +71,7 @@ struct ug31xx_module_interface {
 	int (*resume)(char user_space_response);
 	int (*shutdown)(void);
 	int (*update)(char user_space_response);
-	int (*reset)(char *ggb, char keep_rsoc);
+	int (*reset)(char *ggb, char keep_rsoc, char reset_chip);
 
 	int (*shell_update)(void);
 	unsigned char * (*shell_memory)(int *mem_size);

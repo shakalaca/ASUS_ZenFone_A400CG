@@ -115,7 +115,7 @@ hweq_t ME175CG_hweq_param[] = {
         },
         {/*SPK MULTIMEDIA  */
                 {0xa0,  0xa1,   0xa2,   0xa3,   0xa4,   0xa5,   0xa6,   0xa7,   0xa8,   0xa9,   0xaa,   0xab,   0xac,   0xad,   0xae,   0xaf,   0xb0,   0xb1,   0xb2},
-                {0x1c10,0x01f4, 0xc5e9, 0x1a98, 0x1d2c, 0xc882, 0x1c10, 0x01f4, 0xe904, 0x1c10, 0x01f4, 0xe904, 0x1c10, 0x01f4, 0x1c10, 0x01f4, 0x1f8e, 0x0070, 0x1f8f},
+                {0x1c10,0x0000, 0xc883, 0x1c10, 0x0000, 0xd588, 0x1c10, 0x0000, 0xe904, 0x1c10, 0x0000, 0x0000, 0x1c10, 0x0000, 0x0436, 0x0000, 0x1f1c, 0x00dd, 0x1f1f},
                 0x0040,
         },
         {/* HP MULTIMEDIA*/
@@ -249,6 +249,8 @@ hweq_t PF400CG_drc_agc_param[] = {
 		0x0000
 	},
 };
+#define RT5640_HWEQ_LEN ARRAY_SIZE(PF400CG_hweq_param)
+#define RT5640_DRC_AGC_LEN ARRAY_SIZE(PF400CG_drc_agc_param)
 
 hweq_t A400CG_drc_agc_param[] = {
         {/*Off*/
@@ -273,7 +275,7 @@ hweq_t A400CG_drc_agc_param[] = {
         },
         {/*Ringtone(a12 ringtone)*/
                 {0xb4,   0xb5,   0xb6},
-                {0x6006, 0x1fe8, 0x0000},
+                {0x6208, 0x1faa, 0x0000},
                 0x0000
         },
         {/*Ringtone(headphone ringtone)*/
@@ -284,6 +286,11 @@ hweq_t A400CG_drc_agc_param[] = {
         {/*Ringtone(p72g ringtone)*/
                 {0xb4,   0xb5,   0xb6},
                 {0x460c, 0x1fa6, 0x0000},
+                0x0000
+        },
+        {/*Playback(a12)*/
+                {0xb4,   0xb5,   0xb6},
+                {0x620d, 0x1faa, 0x0000},
                 0x0000
         },
 };
@@ -366,6 +373,8 @@ int rt5640_update_drc_agc_mode(struct snd_soc_codec *codec, int mode, int device
 		if (device == A12_SPEAKER) index = 4;
 		else if (device == HEADPHONE) index = 5;
 		else if (device == P72G_SPEAKER) index = 6;
+	} else if (mode == PLAYBACK) {
+		index = 7;
 	} else {
 		pr_err("%s : Not support mode %d device %d\n", __func__, mode, device);
 		index = 0;

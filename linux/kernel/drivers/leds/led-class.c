@@ -127,7 +127,7 @@ static ssize_t led_delay_off_store(struct device *dev,
 static struct device_attribute led_class_attrs[] = {
 	__ATTR(brightness, 0644, led_brightness_show, led_brightness_store),
 	__ATTR(max_brightness, 0444, led_max_brightness_show, NULL),
-  __ATTR(delay_on, 0644, led_delay_on_show, led_delay_on_store),
+	__ATTR(delay_on, 0644, led_delay_on_show, led_delay_on_store),
 	__ATTR(delay_off, 0644, led_delay_off_show, led_delay_off_store),
 #ifdef CONFIG_LEDS_TRIGGERS
 	__ATTR(trigger, 0644, led_trigger_show, led_trigger_store),

@@ -31,7 +31,7 @@
 #if defined(CONFIG_A450CG)
 #include "ug31xx_ggb_data_A450CG_DEF_20140515_155911.h"
 #else // ME175CG && FE170CG
-#if defined(CONFIG_FE170CG)
+#if defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 #include "ug31xx_ggb_data_FE171CG_20141114_174756.h"
 #elif defined(CONFIG_FE171MG)
 #include "ug31xx_ggb_data_FE171MG_20141024_101023.h"
@@ -534,9 +534,7 @@ static void set_project_config(void)
 	ggb_board_gain = 915;
 	charge_termination_current = 135;
 #else	///< ME175CG & FE170CSG
-#if defined(CONFIG_FE170CG)
-	standby_current = 3;
-#elif defined(CONFIG_FE171MG)
+#if defined(CONFIG_FE171MG) || defined(CONFIG_FE171CG) || defined(CONFIG_ME171C)
 	standby_current = 3;
 	if (hwid <= HW_ID_ER)
 		ggb_board_offset = 2;
@@ -601,7 +599,7 @@ static void update_project_config(void)
                                   cc_chg_offset_100);
   }
 }
-#if !defined(CONFIG_FE170CSG) && !defined(CONFIG_FE171MG)
+#if !defined(CONFIG_FE171MG)
 #define smb3xx_get_charger_type get_charger_type
 #endif
 
@@ -1486,6 +1484,7 @@ static enum power_supply_property ug31xx_batt_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
+    POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
@@ -1565,6 +1564,16 @@ static int ug31xx_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = 1;
 		break;
+  case POWER_SUPPLY_PROP_TECHNOLOGY:
+    if(ug31xx_drv_status == UG31XX_DRV_NOT_READY)
+    {
+      val->intval = POWER_SUPPLY_TECHNOLOGY_UNKNOWN;
+    }
+    else
+    {
+      val->intval = POWER_SUPPLY_TECHNOLOGY_LIPO;
+    }
+    break;
 	case POWER_SUPPLY_PROP_STATUS:
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
@@ -2414,11 +2423,11 @@ static void batt_info_update_work_func(struct work_struct *work)
     
 		if(op_options & LKM_OPTIONS_FORCE_RESET)
 		{
-			ug31_module.reset(FactoryGGBXFile, true);
+			ug31_module.reset(FactoryGGBXFile, true, 1);
 		}
 		else
 		{
-			ug31_module.reset(FactoryGGBXFile, false);
+			ug31_module.reset(FactoryGGBXFile, false, 1);
 		}
 		
 	  if(now_is_charging == true)
@@ -3386,7 +3395,7 @@ static void batt_reinitial_work_func(struct work_struct *work)
   else
   {
     GAUGE_info("[%s] reset, retry count = %d\n", __func__, retry_cnt);
-    rtn = ug31_module.reset(FactoryGGBXFile, true);
+    rtn = ug31_module.reset(FactoryGGBXFile, true, 1);
     if(rtn != 0)
     {
       start_charging();
@@ -3457,6 +3466,7 @@ static void batt_probe_work_func(struct work_struct *work)
 #ifdef UG31XX_PROC_DEV	
 	struct proc_dir_entry *ent;
 #endif  ///< end of UG31XX_PROC_DEV
+  unsigned char now_cable_status;
 
 #ifdef CONFIG_PF400CG
 	if (!hwid) {
@@ -3470,12 +3480,52 @@ static void batt_probe_work_func(struct work_struct *work)
 	#else   ///< else of UG31XX_SHIFT_RSOC
 	ug31_module.set_options(op_options);  
 	#endif  ///< end of UG31XX_SHIFT_RSOC
+  ug31_module.enable_save_data(0);
 	rtn = ug31_module.initial(FactoryGGBXFile, ((probe_with_cable == true) ? UG31XX_CABLE_IN : UG31XX_CABLE_OUT));
+  ug31_module.enable_save_data(1);
 	op_options = op_options & (~LKM_OPTIONS_FORCE_RESET);
 	if(rtn != 0)
 	{
 		goto initial_fail;
 	}
+
+	start_charging();
+
+	/* acquired charger type from charger driver */
+	switch (smb3xx_get_charger_type()) {
+	case USB_IN:
+		now_cable_status = UG31XX_USB_PC_CABLE;
+		GAUGE_err("[%s] UG31XX_USB_PC_CABLE\n", __func__);
+		break;
+	case AC_IN:
+		now_cable_status = UG31XX_AC_ADAPTER_CABLE;
+		GAUGE_err("[%s] UG31XX_AC_ADAPTER_CABLE\n", __func__);
+		break;
+	case CABLE_OUT:
+		now_cable_status = UG31XX_NO_CABLE;
+		GAUGE_err("[%s] UG31XX_NO_CABLE\n", __func__);
+		break;
+	case PAD_SUPPLY:
+		now_cable_status = UG31XX_PAD_POWER;
+		GAUGE_err("[%s] UG31XX_PAD_POWER\n", __func__);
+		break;
+	}
+
+  if(now_cable_status != cur_cable_status)
+  {
+    GAUGE_err("[%s]: Cable status changed -> Reset\n", __func__);
+	if(now_cable_status != CABLE_OUT)
+	{
+		stop_charging();
+		msleep(1000);
+	}
+    rtn = ug31_module.reset(FactoryGGBXFile, true, 0);
+	  if(rtn != 0)
+	  {
+		  goto initial_fail;
+	  }
+  }
+	cur_cable_status = now_cable_status;
 
 	op_options = op_options | LKM_OPTIONS_ADJUST_DESIGN_CAPACITY;
 	adjust_cell_table();

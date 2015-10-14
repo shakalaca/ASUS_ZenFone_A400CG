@@ -3698,6 +3698,7 @@ static void langwell_udc_remove(struct pci_dev *pdev)
  * wrap this driver around the specified device, but
  * don't respond over USB until a gadget driver binds to us.
  */
+
 static int udc_init_completed = 0;
 int langwell_udc_init_completed(void)
 {

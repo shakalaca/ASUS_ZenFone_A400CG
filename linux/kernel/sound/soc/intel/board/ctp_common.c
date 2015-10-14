@@ -24,7 +24,7 @@
  */
 
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
 
 #include <linux/module.h>
 #include <linux/delay.h>
@@ -33,98 +33,22 @@
 #include <linux/gpio.h>
 #include <linux/rpmsg.h>
 #include <linux/mod_devicetable.h>
-#include <linux/input.h>
-#include <linux/time.h>
-#include <asm/intel_mid_gpadc.h>
 #include <asm/intel_scu_pmic.h>
 #include <asm/intel_scu_ipcutil.h>
 #include <asm/intel_mid_rpmsg.h>
-#include <asm/intel_mid_remoteproc.h>
+#include <linux/platform_data/intel_mid_remoteproc.h>
 #include <asm/platform_ctp_audio.h>
 #include <sound/pcm.h>
 #include <sound/jack.h>
+#include <linux/input.h>
 #include <sound/soc.h>
 #include "ctp_common.h"
-#include <linux/HWVersion.h>
 
 /* Headset jack detection gpios func(s) */
 #define HPDETECT_POLL_INTERVAL  msecs_to_jiffies(300)  /* 300ms */
 #define HS_DET_RETRY	5
-#define JACK_DEBOUNCE_REMOVE    50
-#define JACK_DEBOUNCE_INSERT    100
-
-extern int Read_PROJ_ID(void);
-static int PROJ_ID;
-static bool ME175CG_detect_flag = false;
-
-// joe_cheng : ME372CG Switch for uart and headset
-static int HS_PATH_EN_GPIO;
-static ssize_t hs_show(struct device *dev, struct device_attribute *attr,
-                        char *buf);
-static ssize_t hs_store(struct device *dev, struct device_attribute *attr,
-                        const char *buf, size_t count);
-static DEVICE_ATTR(hs_uart_status, S_IWUSR | S_IRUGO, hs_show, hs_store);
-
-static ssize_t hs_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-	//printk("joe hs_show \n");
-	return sprintf(buf, "%d\n", gpio_get_value_cansleep(HS_PATH_EN_GPIO));
-}
-
-static ssize_t hs_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
-{
-	//printk("joe hs_store %s\n", buf);
-	if (buf[0] == '0') {
-		gpio_set_value_cansleep(HS_PATH_EN_GPIO, 0);
-		printk("%s HS_PATH_EN_GPIO 0\n", __func__);
-	}
-	else if (buf[0] == '1') {
-		gpio_set_value_cansleep(HS_PATH_EN_GPIO, 1);
-		printk("%s HS_PATH_EN_GPIO 1\n", __func__);
-	}
-	return 1;
-}
-/*
-#ifdef PF400CG_DOCK_DEBUG
-extern void mid_dock_report(int state);
-static ssize_t dock_state_store(struct device *dev, struct device_attribute *attr,
-                        const char *buf, size_t count);
-static DEVICE_ATTR(dock_status, S_IWUSR | S_IRUGO, NULL, dock_state_store);
-static ssize_t dock_state_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
-{
-	pr_debug("%s : %s\n", __func__, buf);
-	if (buf[0] == '0') {
-		mid_dock_report(0);
-	}
-	else if (buf[0] == '1') {
-		mid_dock_report(1);
-	}
-	return 1;
-}
-#endif
-*/
-#define HEADSET_BUTTON_KEYCODE 226
-
-extern int rt5640_enable_micbias(int headset_devices);
-
-enum {
-        NO_DEVICE = 0,
-        HEADSET_WITH_MIC,
-        HEADSET_WITHOUT_MIC
-};
-
-extern void mid_headset_report(int state);
-static int hp_status = NO_DEVICE;
-struct input_dev *input;
-static unsigned int g_headset_detect_time_start = 0;
-static unsigned int g_headset_detect_time_end = 0;
-static unsigned int g_headset_detect_time_resume = 0;
 
 struct snd_soc_card snd_soc_card_ctp = {
-	.name = "cloverview_audio",
 	.set_bias_level = ctp_set_bias_level,
 	.set_bias_level_post = ctp_set_bias_level_post,
 };
@@ -161,174 +85,16 @@ static struct snd_soc_jack_gpio hs_gpio[] = {
 	[CTP_HSDET_GPIO] = {
 		.name = "cs-hsdet-gpio",
 		.report = SND_JACK_HEADSET,
-		.debounce_time = 100,
 		.jack_status_check = ctp_soc_jack_gpio_detect,
-		.wake = true,
 	},
 	[CTP_BTN_GPIO] = {
 		.name = "cs-hsbutton-gpio",
 		.report = SND_JACK_HEADSET | SND_JACK_BTN_0,
 		.debounce_time = 100,
 		.jack_status_check = ctp_soc_jack_gpio_detect_bp,
-		.irq_flags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+		.irq_flags = IRQF_TRIGGER_FALLING,
 	},
 };
-
-static int set_mic_bias(struct snd_soc_jack *jack,
-			const char *bias_widget, bool enable)
-{
-	struct snd_soc_codec *codec = jack->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
-
-	if (enable)
-		snd_soc_dapm_force_enable_pin(dapm, bias_widget);
-	else
-		snd_soc_dapm_disable_pin(dapm, bias_widget);
-
-	snd_soc_dapm_sync(&codec->dapm);
-
-	return 0;
-}
-
-static ssize_t headset_state_show(struct device *dev, struct device_attribute *attr,
-                char *buf);
-static ssize_t headset_state_store(struct device *dev, struct device_attribute *attr,
-                        const char *buf, size_t count);
-static DEVICE_ATTR(a12_headset_status, S_IWUSR | S_IRUGO, headset_state_show, headset_state_store);
-static ssize_t headset_state_show(struct device *dev, struct device_attribute *attr,
-                char *buf)
-{
-	return 0;
-}
-static ssize_t headset_state_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
-{
-	unsigned int mask = SND_JACK_HEADSET;
-	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
-	struct snd_soc_jack *jack = gpio->jack;
-	pr_err("%s : %s\n", __func__, buf);
-	if (buf[0] == '0') {
-		set_mic_bias(jack, "micbias1", false);
-		snd_soc_jack_report(jack, 0, mask);
-		mid_headset_report(HEADSET_WITHOUT_MIC);
-	}
-	else if (buf[0] == '1') {
-		set_mic_bias(jack, "micbias1", true);
-		snd_soc_jack_report(jack, 3, mask);
-		mid_headset_report(HEADSET_WITH_MIC);
-	}
-	return 1;
-}
-
-int ctp_startup_probe(struct snd_pcm_substream *substream)
-{
-	pr_debug("%s - applying rate constraint\n", __func__);
-	snd_pcm_hw_constraint_list(substream->runtime, 0,
-					SNDRV_PCM_HW_PARAM_RATE,
-					&constraints_48000);
-	return 0;
-}
-
-int ctp_startup_asp(struct snd_pcm_substream *substream)
-{
-	pr_debug("%s - applying rate constraint\n", __func__);
-	snd_pcm_hw_constraint_list(substream->runtime, 0,
-				SNDRV_PCM_HW_PARAM_RATE,
-				&constraints_48000);
-	return 0;
-}
-
-int ctp_startup_bt_xsp(struct snd_pcm_substream *substream)
-{
-	pr_debug("%s - applying rate constraint\n", __func__);
-	snd_pcm_hw_constraint_list(substream->runtime, 0,
-				SNDRV_PCM_HW_PARAM_RATE,
-				&constraints_8000_16000);
-	return 0;
-}
-int get_ssp_bt_sco_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	ucontrol->value.integer.value[0] = ctl->ssp_bt_sco_master_mode;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(get_ssp_bt_sco_master_mode);
-
-int set_ssp_bt_sco_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	if (ucontrol->value.integer.value[0] == ctl->ssp_bt_sco_master_mode)
-		return 0;
-
-	ctl->ssp_bt_sco_master_mode = ucontrol->value.integer.value[0];
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(set_ssp_bt_sco_master_mode);
-
-int get_ssp_voip_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	ucontrol->value.integer.value[0] = ctl->ssp_voip_master_mode;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(get_ssp_voip_master_mode);
-
-int set_ssp_voip_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	if (ucontrol->value.integer.value[0] == ctl->ssp_voip_master_mode)
-		return 0;
-
-	ctl->ssp_voip_master_mode = ucontrol->value.integer.value[0];
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(set_ssp_voip_master_mode);
-
-int get_ssp_modem_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	ucontrol->value.integer.value[0] = ctl->ssp_modem_master_mode;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(get_ssp_modem_master_mode);
-
-int set_ssp_modem_master_mode(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	struct comms_mc_private *ctl = &(ctx->comms_ctl);
-
-	if (ucontrol->value.integer.value[0] == ctl->ssp_modem_master_mode)
-		return 0;
-
-	ctl->ssp_modem_master_mode = ucontrol->value.integer.value[0];
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(set_ssp_modem_master_mode);
 
 int ctp_set_clk_fmt(struct snd_soc_dai *codec_dai, struct ctp_clk_fmt *clk_fmt)
 {
@@ -358,6 +124,8 @@ int ctp_set_bias_level(struct snd_soc_card *card,
 		enum snd_soc_bias_level level)
 {
 	struct snd_soc_codec *codec;
+	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
+	int ret = 0;
 
 	/* Clock management is done only if there is an associated codec
 	 * to dapm context and if this not the dummy codec
@@ -375,8 +143,16 @@ int ctp_set_bias_level(struct snd_soc_card *card,
 	case SND_SOC_BIAS_ON:
 	case SND_SOC_BIAS_PREPARE:
 	case SND_SOC_BIAS_STANDBY:
-		if (card->dapm.bias_level == SND_SOC_BIAS_OFF)
+		if (card->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			intel_scu_ipc_set_osc_clk0(true, CLK0_MSIC);
+			if (ctx->ops->set_bias_level) {
+				ret = ctx->ops->set_bias_level(card, codec, level);
+				if (ret < 0) {
+					pr_err("Failed with %d\n", ret);
+					return ret;
+				}
+			}
+		}
 		card->dapm.bias_level = level;
 		break;
 	case SND_SOC_BIAS_OFF:
@@ -400,6 +176,8 @@ int ctp_set_bias_level_post(struct snd_soc_card *card,
 		enum snd_soc_bias_level level)
 {
 	struct snd_soc_codec *codec;
+	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
+	int ret = 0;
 
 	/* Clock management is done only if there is an associated codec
 	 * to dapm context and if this not the dummy codec
@@ -424,6 +202,13 @@ int ctp_set_bias_level_post(struct snd_soc_card *card,
 	case SND_SOC_BIAS_OFF:
 		if (codec->dapm.bias_level != SND_SOC_BIAS_OFF)
 			break;
+		if (ctx->ops->set_bias_level_post) {
+			ret = ctx->ops->set_bias_level_post(card, codec, level);
+			if (ret < 0) {
+				pr_err("Failed with %d\n", ret);
+				return ret;
+			}
+		}
 		intel_scu_ipc_set_osc_clk0(false, CLK0_MSIC);
 		card->dapm.bias_level = level;
 		break;
@@ -432,8 +217,25 @@ int ctp_set_bias_level_post(struct snd_soc_card *card,
 		return -EINVAL;
 		break;
 	}
+	dapm->bias_level = level;
 	pr_debug("%s:card(%s)->bias_level %u\n", __func__, card->name,
 			card->dapm.bias_level);
+	return 0;
+}
+
+static int set_mic_bias(struct snd_soc_jack *jack,
+			const char *bias_widget, bool enable)
+{
+	struct snd_soc_codec *codec = jack->codec;
+	struct snd_soc_dapm_context *dapm = &codec->dapm;
+
+	if (enable)
+		snd_soc_dapm_force_enable_pin(dapm, bias_widget);
+	else
+		snd_soc_dapm_disable_pin(dapm, bias_widget);
+
+	snd_soc_dapm_sync(&codec->dapm);
+
 	return 0;
 }
 
@@ -462,19 +264,15 @@ static inline void set_bp_interrupt(struct ctp_mc_private *ctx, bool enable)
 		if (!atomic_dec_return(&ctx->bpirq_flag)) {
 			pr_debug("Disable %d interrupt line\n", ctx->bpirq);
 			disable_irq_nosync(ctx->bpirq);
-		} else {
-			pr_debug("h2w : increase bpirq_flag\n");
+		} else
 			atomic_inc(&ctx->bpirq_flag);
-		}
 	} else {
 		if (atomic_inc_return(&ctx->bpirq_flag) == 1) {
 			/* If BP intr not enabled */
 			pr_debug("Enable %d interrupt line\n", ctx->bpirq);
 			enable_irq(ctx->bpirq);
-		} else {
-			pr_debug("h2w : decrease bpirq_flag\n");
+		} else
 			atomic_dec(&ctx->bpirq_flag);
-		}
 	}
 }
 
@@ -487,53 +285,6 @@ void cancel_all_work(struct ctp_mc_private *ctx)
 	cancel_delayed_work_sync(&gpio->work);
 }
 
-static int check_headset_type(void)
-{
-	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_BTN_GPIO];
-	int i, hp_state = NO_DEVICE; 
-	for (i = 0; i < 5; i++) {
-		pr_debug("h2w : %s() %d, gpio %d\n", __func__, i, gpio->gpio);
-		msleep(10); // 10ms
-                pr_debug("h2w : %s() %d, value %d\n", __func__, i, gpio_get_value(gpio->gpio));
-		if (gpio_get_value(gpio->gpio) == 0) {
-			pr_debug("h2w : %s() hook is 0, i = %d\n", __func__, i);
-			hp_state = HEADSET_WITH_MIC;
-			break;
-		} else {
-			pr_debug("h2w : %s() hook is 1, i = %d\n", __func__, i);
-			hp_state = HEADSET_WITHOUT_MIC;
-		}
-	}
-	pr_info("h2w : headset status %d\n", hp_state);
-	return hp_state;
-}
-
-static void button_pressed(void)
-{
-	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
-	struct snd_soc_jack *jack = gpio->jack;
-	struct ctp_mc_private *ctx =
-		container_of(jack, struct ctp_mc_private, ctp_jack);
-
-	wake_lock_timeout(ctx->button_wake_lock, msecs_to_jiffies(200));
-	input_report_key(input, HEADSET_BUTTON_KEYCODE, 1);
-	input_sync(input);
-	pr_info("h2w : %s()\n", __func__);
-}
-
-static void button_released(void)
-{
-	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
-	struct snd_soc_jack *jack = gpio->jack;
-	struct ctp_mc_private *ctx =
-		container_of(jack, struct ctp_mc_private, ctp_jack);
-	input_report_key(input, HEADSET_BUTTON_KEYCODE, 0);
-	input_sync(input);
-	pr_info("h2w : %s()\n", __func__);
-	if (wake_lock_active(ctx->button_wake_lock))
-		wake_unlock(ctx->button_wake_lock);
-}
-
 int ctp_soc_jack_gpio_detect(void)
 {
 	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
@@ -542,6 +293,7 @@ int ctp_soc_jack_gpio_detect(void)
 		container_of(jack, struct ctp_mc_private, ctp_jack);
 
 	int enable;
+
 	/* During jack removal, spurious BP interrupt may occur.
 	 * Better to disable interrupt until jack insert/removal stabilize.
 	 * Also cancel the BP and jack_work if already sceduled */
@@ -550,8 +302,15 @@ int ctp_soc_jack_gpio_detect(void)
 	enable = gpio_get_value(gpio->gpio);
 	if (gpio->invert)
 		enable = !enable;
-        pr_debug("%s:gpio->%d=0x%d jack_status %d\n", __func__, gpio->gpio, enable, jack->status);
-        msleep(gpio->debounce_time);
+	pr_debug("%s:gpio->%d=0x%d\n", __func__, gpio->gpio, enable);
+
+	if (!enable) {
+		atomic_set(&ctx->hs_det_retry, HS_DET_RETRY);
+		schedule_delayed_work(&ctx->jack_work_insert,
+					HPDETECT_POLL_INTERVAL);
+	} else
+		schedule_delayed_work(&ctx->jack_work_remove,
+					HPDETECT_POLL_INTERVAL);
 #ifdef CONFIG_HAS_WAKELOCK
 	/*
 	 * Take wakelock for one second to give time for the detection
@@ -559,36 +318,9 @@ int ctp_soc_jack_gpio_detect(void)
 	 * have big impact to power consumption.
 	 */
 	wake_lock_timeout(ctx->jack_wake_lock,
-		HPDETECT_POLL_INTERVAL + msecs_to_jiffies(300));
-#endif
-        msleep(ctx->ops->micsdet_debounce);
-	
-	if (!enable) {
-               set_bp_interrupt(ctx, true);
-		atomic_set(&ctx->hs_det_retry, HS_DET_RETRY);
-                if(PROJ_ID != PROJ_ID_ME175CG || !ME175CG_detect_flag)
-                g_headset_detect_time_start = jiffies;
-		pr_info("h2w : headset/headphone connecting\n");
-		schedule_delayed_work(&ctx->jack_work_insert,
-					HPDETECT_POLL_INTERVAL);
-	} else {
-		pr_info("h2w : headset/headphone disconnecting\n");
-		schedule_delayed_work(&ctx->jack_work_remove,
-					HPDETECT_POLL_INTERVAL);
-                if(PROJ_ID == PROJ_ID_ME175CG)
-                ME175CG_detect_flag = false;
-	}
-#ifdef CONFIG_HAS_WAKELOCK
-	/*
-	 * Take wakelock for one second to give time for the detection
-	 * to finish. Jack detection is happening rarely so this doesn't
-	 * have big impact to power consumption.
-	 */
-	//wake_lock_timeout(ctx->jack_wake_lock,
-	//	HPDETECT_POLL_INTERVAL + msecs_to_jiffies(200));
+			HPDETECT_POLL_INTERVAL + msecs_to_jiffies(50));
 #endif
 
-	pr_debug("h2w : %s jack status %d\n", __func__, jack->status);
 	/* Report old status */
 	return jack->status;
 }
@@ -611,57 +343,17 @@ void headset_insert_poll(struct work_struct *work)
 		return;
 	}
 
-        if(gpio->invert)
-	        enable = !enable;
-
-	set_mic_bias(jack, "micbias1", true);
+	pr_debug("%s: Current jack status = 0x%x\n", __func__, jack->status);
+	set_mic_bias(jack, ctx->ops->mic_bias, true);
 	msleep(ctx->ops->micsdet_debounce);
-        if(PROJ_ID != PROJ_ID_ME175CG || !ME175CG_detect_flag){
-          status = ctx->ops->hp_detection(codec, jack, enable);
-          ME175CG_detect_flag = true;
-        }
-        else
-        status = jack->status;
+	status = ctx->ops->hp_detection(codec, jack, enable);
+	if (status == SND_JACK_HEADSET) {
+		set_bp_interrupt(ctx, true);
+		ctx->headset_plug_flag = true;
+	}
+	if (jack->status != status)
+		snd_soc_jack_report(jack, status, mask);
 
-        hp_status = check_headset_type();
-        pr_debug("h2w %s() : headset status %d, current jack status 0x%x\n", __func__, hp_status, jack->status);
-
-        if(!enable)
-        {
-            if (hp_status == HEADSET_WITH_MIC)
-            {
-               gpio->debounce_time = JACK_DEBOUNCE_REMOVE;
-               mid_headset_report(HEADSET_WITH_MIC);
-	       pr_info("h2w : headset connected\n");
-            }
-            else
-            {
-               set_mic_bias(jack, "micbias1", false);
-               gpio->debounce_time = JACK_DEBOUNCE_REMOVE;
-               set_bp_interrupt(ctx, false);
-
-               if (hp_status == HEADSET_WITHOUT_MIC) {
-		       mid_headset_report(HEADSET_WITHOUT_MIC);
-	       	       pr_info("h2w : headphone connected\n");
-               } else {
-		       hp_status = 0;
-		       mid_headset_report(NO_DEVICE);
-               }
-            }
-        }
-        else
-        {
-            hp_status = 0;
-            mid_headset_report(NO_DEVICE);
-            set_bp_interrupt(ctx, false);
-        }
-	if (jack->status != status) {
-                // Alex_Hong: Hook detection is now decided by GPIO rather than by codec micbias overcurrent
-                if(hp_status == HEADSET_WITH_MIC)
-               		snd_soc_jack_report(jack, status | 0x2, mask);
-                else
-                	snd_soc_jack_report(jack, status & ~0x2, mask);
-        }
 	/*
 	 * At this point the HS may be half inserted and still be
 	 * detected as HP, so recheck after HPDETECT_POLL_INTERVAL
@@ -678,6 +370,9 @@ void headset_insert_poll(struct work_struct *work)
 		schedule_delayed_work(&ctx->jack_work_insert,
 					HPDETECT_POLL_INTERVAL);
 	}
+	if (!atomic_read(&ctx->hs_det_retry) &&
+			status == SND_JACK_HEADPHONE)
+		set_mic_bias(jack, "MIC2 Bias", false);
 
 	pr_debug("%s: status 0x%x\n", __func__, status);
 }
@@ -700,117 +395,82 @@ void headset_remove_poll(struct work_struct *work)
 		return;
 	}
 
-        if (gpio->invert)
-	        enable = !enable;
-
 	pr_debug("%s: Current jack status = 0x%x\n", __func__, jack->status);
 	status = ctx->ops->hp_detection(codec, jack, enable);
-        mid_headset_report(NO_DEVICE);
-        set_bp_interrupt(ctx, false);
+	set_bp_interrupt(ctx, false);
 	ctx->headset_plug_flag = false;
-	set_mic_bias(jack, "micbias1", false);
-        gpio->debounce_time = JACK_DEBOUNCE_INSERT;
+	set_mic_bias(jack, ctx->ops->mic_bias, false);
+
+	/* If the jack is removed while the button status is pressed */
+
+	pr_debug("button press flag:%d status:%x\n",
+					ctx->btn_press_flag, status);
+	if (ctx->btn_press_flag) {
+		snd_soc_jack_report(jack, SND_JACK_HEADSET,
+					SND_JACK_BTN_0 | SND_JACK_HEADSET);
+		ctx->btn_press_flag = false;
+	}
 
 	if (jack->status != status)
 		snd_soc_jack_report(jack, status, mask);
-	pr_debug("%s: headset status 0x%x\n", __func__, status);
+	pr_debug("%s: status 0x%x\n", __func__, status);
 }
 
 int ctp_soc_jack_gpio_detect_bp(void)
 {
 	struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_BTN_GPIO];
-	int enable, hs_status;
+	int enable, hs_status, status;
 	struct snd_soc_jack *jack = gpio->jack;
-	//struct snd_soc_codec *codec = jack->codec;
-	//unsigned int mask = SND_JACK_BTN_0 | SND_JACK_HEADSET;
+	struct snd_soc_codec *codec = jack->codec;
+	unsigned int mask = SND_JACK_BTN_0 | SND_JACK_HEADSET;
 	struct ctp_mc_private *ctx =
 		container_of(jack, struct ctp_mc_private, ctp_jack);
 
-	g_headset_detect_time_end = jiffies;
-	/*
-	if (((g_headset_detect_time_end - g_headset_detect_time_start) < 200) || 
-	     (g_headset_detect_time_end - g_headset_detect_time_resume) < 300 ) {
-		pr_err("h2w : Ignore spurious button interrupt(%lu) (%lu)\n", 
-				(g_headset_detect_time_end - g_headset_detect_time_start),
-				(g_headset_detect_time_end - g_headset_detect_time_resume));
-		return 0;
-	}
-	*/
-	if ((g_headset_detect_time_end - g_headset_detect_time_start) < 200) {
-		pr_err("h2w : Ignore spurious button interrupt(%u)\n", 
-				(g_headset_detect_time_end - g_headset_detect_time_start));
-		return jack->status;
-	}
-	enable = gpio_get_value_cansleep(gpio->gpio);
+	status = 0;
+	enable = gpio_get_value(gpio->gpio);
 	if (gpio->invert)
 		enable = !enable;
-	pr_debug("%s: button gpio %d = %d\n", __func__, gpio->gpio, enable);
+	pr_debug("%s: gpio->%d=0x%x\n", __func__, gpio->gpio, enable);
 
 	/* Check for headset status before processing interrupt */
 	gpio = &hs_gpio[CTP_HSDET_GPIO];
 	hs_status = gpio_get_value(gpio->gpio);
 	if (gpio->invert)
 		hs_status = !hs_status;
-	pr_debug("%s: jack gpio %d = %d, jack status %x \n", __func__, gpio->gpio, hs_status, jack->status);
-        if (((hp_status & HEADSET_WITH_MIC) == HEADSET_WITH_MIC)
+	pr_debug("%s: gpio->%d=0x%x\n", __func__, gpio->gpio, hs_status);
+	pr_debug("Jack status = %x\n", jack->status);
+	if (((jack->status & SND_JACK_HEADSET) == SND_JACK_HEADSET)
 						&& (!hs_status)) {
-//		pr_debug("h2w enable %d bpirq_flag %d btn_press_flag %d\n", enable, ctx->bpirq_flag, ctx->btn_press_flag);
-		if (!atomic_dec_return(&ctx->bpirq_flag)) {
-			atomic_inc(&ctx->bpirq_flag);
-			if (enable && atomic_read(&ctx->btn_press_flag) == 0) { // press
-				atomic_set(&ctx->btn_press_flag, 1);
-				//pr_debug("h2w %s() : button press %d, bpirq_flag %d\n", __func__, enable, ctx->bpirq_flag);
-				pr_debug("h2w %s() : button press %d\n", __func__, enable);
-				button_pressed();
-			} else if (!enable && atomic_read(&ctx->btn_press_flag) == 1) { // release
-				atomic_set(&ctx->btn_press_flag, 0);
-				//pr_debug("h2w %s() : button release %d, bpirq_flag %d\n", __func__, enable, ctx->bpirq_flag);
-				pr_debug("h2w %s() : button release %d\n", __func__, enable);
-				button_released();
-			} else {
-				// joe_cheng : TT#296425, only got one interrupt(release) when resume. Assume it's correct
-				// interrupt and send a short button click. 
-				pr_info("h2w %s() : button interrupt \n", __func__);
-				input_report_key(input, HEADSET_BUTTON_KEYCODE, 1);
-				input_sync(input);
-				input_report_key(input, HEADSET_BUTTON_KEYCODE, 0);
-				input_sync(input);
-			}
-		} else {
-			atomic_inc(&ctx->bpirq_flag);
-			atomic_set(&ctx->btn_press_flag, 0);
-			pr_err("h2w %s() : Invalid button interrupt\n", __func__);
-		}
 		/* HS present, process the interrupt */
-#if 0		
 		if (!enable) {
 			/* Jack removal might be in progress, check interrupt status
 			 * before proceeding for button press detection */
 			if (!atomic_dec_return(&ctx->bpirq_flag)) {
 				status = ctx->ops->bp_detection(codec, jack, enable);
+				if (status == mask) {
+					ctx->btn_press_flag = true;
+				} else {
+					if (!(ctx->btn_press_flag))
+						snd_soc_jack_report(jack, mask, mask);
+					ctx->btn_press_flag = false;
+				}
 				atomic_inc(&ctx->bpirq_flag);
-				printk("h2w %s() : get button interrupt\n", __func__);
-				button_pressed();
-			} else {
+			} else
 				atomic_inc(&ctx->bpirq_flag);
-				button_pressed();
-				printk("h2w %s() : get button interrupt 2\n");
-			}
 		} else {
 			status = jack->status;
 			pr_debug("%s:Invalid BP interrupt\n", __func__);
 		}
-#endif
 	} else {
 		pr_debug("%s:Spurious BP interrupt : jack_status 0x%x, HS_status 0x%x\n",
 				__func__, jack->status, hs_status);
-		set_mic_bias(jack, "micbias1", false);
+		set_mic_bias(jack, ctx->ops->mic_bias, false);
 		/* Disable Button_press interrupt if no Headset */
 		set_bp_interrupt(ctx, false);
 	}
-	//pr_debug("%s: status 0x%x\n", __func__, status);
+	pr_debug("%s: status 0x%x\n", __func__, status);
 
-	return jack->status;
+	return status;
 }
 
 
@@ -820,10 +480,7 @@ static int snd_ctp_prepare(struct device *dev)
 {
 	struct snd_soc_card *card = dev_get_drvdata(dev);
 	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	pr_info("In %s device name\n", __func__);
-
-        //struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
-        //struct snd_soc_jack *jack = gpio->jack;
+	pr_debug("In %s device name\n", __func__);
 
 	/* switch the mclk to the lowpower mode */
 	if (ctx->headset_plug_flag && !ctx->voice_call_flag) {
@@ -833,22 +490,13 @@ static int snd_ctp_prepare(struct device *dev)
 			intel_scu_ipc_osc_clk(OSC_CLK_AUDIO, 4800);
 		}
 	}
-/*
-        if (hp_status == 1) {
-		set_bp_interrupt(ctx, false);
-                set_mic_bias(jack, "micbias1", false);
-	}
-*/
 	return snd_soc_suspend(dev);
 }
 static void snd_ctp_complete(struct device *dev)
 {
-        struct snd_soc_jack_gpio *gpio = &hs_gpio[CTP_HSDET_GPIO];
 	struct snd_soc_card *card = dev_get_drvdata(dev);
 	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(card);
-	pr_info("In %s\n", __func__);
-
-        //struct snd_soc_jack *jack = gpio->jack;
+	pr_debug("In %s\n", __func__);
 	/* switch the mclk to the normal mode */
 	if (ctx->headset_plug_flag && !ctx->voice_call_flag) {
 		if (ctx->ops->mclk_switch) {
@@ -857,25 +505,7 @@ static void snd_ctp_complete(struct device *dev)
 			ctx->ops->mclk_switch(dev, true);
 		}
 	}
-	/*
-        if (hp_status == 1 && !gpio_get_value_cansleep(gpio->gpio)) {
-                printk("%s call rt5640_enable_micbias\n", __func__);
-                rt5640_enable_micbias(hp_status);
-        }
-	*/
 	snd_soc_resume(dev);
-
-        if (hp_status == HEADSET_WITHOUT_MIC && !gpio_get_value_cansleep(gpio->gpio)) {
-		msleep(200);
-		/*
-		if (hp_status == 1) {
-	                set_mic_bias(jack, "micbias1", true);
-			set_bp_interrupt(ctx, true);
-		}
-		*/
-        }
-        
-	g_headset_detect_time_resume = jiffies;
 }
 
 static int snd_ctp_poweroff(struct device *dev)
@@ -898,11 +528,6 @@ static void free_jack_wake_lock(struct ctp_mc_private *ctx)
 	if (wake_lock_active(ctx->jack_wake_lock))
 		wake_unlock(ctx->jack_wake_lock);
 	wake_lock_destroy(ctx->jack_wake_lock);
-
-	if (wake_lock_active(ctx->button_wake_lock))
-		wake_unlock(ctx->button_wake_lock);
-	wake_lock_destroy(ctx->button_wake_lock);
-	
 #endif
 }
 
@@ -930,6 +555,16 @@ static int snd_ctp_mc_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static void snd_ctp_mc_shutdown(struct platform_device *pdev)
+{
+	struct snd_soc_card *soc_card = platform_get_drvdata(pdev);
+	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(soc_card);
+
+	pr_debug("In %s\n", __func__);
+	/* unregister jack intr */
+	snd_ctp_unregister_jack(ctx, pdev);
+}
+
 static int snd_ctp_jack_init(struct snd_soc_pcm_runtime *runtime,
 						bool jack_supported)
 {
@@ -952,6 +587,7 @@ static int snd_ctp_jack_init(struct snd_soc_pcm_runtime *runtime,
 		pr_err("jack creation failed\n");
 		return ret;
 	}
+	snd_jack_set_key(ctx->ctp_jack.jack, SND_JACK_BTN_0, KEY_MEDIA);
 	ret = snd_soc_jack_add_gpios(&ctx->ctp_jack, 2, ctx->hs_gpio_ops);
 	if (ret) {
 		pr_err("adding jack GPIO failed\n");
@@ -968,7 +604,6 @@ static int snd_ctp_jack_init(struct snd_soc_pcm_runtime *runtime,
 	disable_irq_nosync(irq);
 	atomic_set(&ctx->bpirq_flag, 0);
 	atomic_set(&ctx->hs_det_retry, HS_DET_RETRY);
-	atomic_set(&ctx->btn_press_flag, 0);
 	return 0;
 }
 
@@ -1002,16 +637,6 @@ int snd_ctp_register_jack_data(struct platform_device *pdev,
 	}
 	wake_lock_init(ctx->jack_wake_lock, WAKE_LOCK_SUSPEND,
 			"jack_detect");
-	
-	ctx->button_wake_lock =
-		devm_kzalloc(&pdev->dev, sizeof(*(ctx->button_wake_lock)), GFP_ATOMIC);
-	if (!ctx->button_wake_lock) {
-		pr_err("allocation failed for button wake_lock\n");
-		return -ENOMEM;
-	}
-	wake_lock_init(ctx->button_wake_lock, WAKE_LOCK_SUSPEND,
-			"button_detect");
-	
 #endif
 	if (pdata->codec_gpio_hsdet >= 0 && pdata->codec_gpio_button >= 0) {
 		hs_gpio[CTP_HSDET_GPIO].gpio = pdata->codec_gpio_hsdet;
@@ -1022,6 +647,9 @@ int snd_ctp_register_jack_data(struct platform_device *pdev,
 			return ret_val;
 		}
 		ctx->bpirq = ret_val;
+		pr_debug("hs_det_gpio:%d, codec_gpio:%d\n",
+			hs_gpio[CTP_HSDET_GPIO].gpio,
+			hs_gpio[CTP_BTN_GPIO].gpio);
 	}
 	ctx->hs_gpio_ops = hs_gpio;
 	return 0;
@@ -1031,6 +659,7 @@ static int snd_ctp_mc_probe(struct platform_device *pdev)
 {
 	int ret_val = 0;
 	struct ctp_mc_private *ctx;
+	struct ctp_audio_platform_data *pdata = pdev->dev.platform_data;
 
 	pr_debug("In %s\n", __func__);
 	ctx = devm_kzalloc(&pdev->dev, sizeof(*ctx), GFP_ATOMIC);
@@ -1045,8 +674,17 @@ static int snd_ctp_mc_probe(struct platform_device *pdev)
 	if (ctx->ops == NULL)
 		return -EINVAL;
 
+	ctx->ops->card_name(&snd_soc_card_ctp);
 	ctx->ops->dai_link(&snd_soc_card_ctp);
-
+	if (ctx->ops->dmic3_support) {
+		ret_val = gpio_request(pdata->codec_gpio_dmic, "dmic_switch_gpio");
+		if (!ret_val) {
+			ctx->dmic_gpio = pdata->codec_gpio_dmic;
+		} else {
+			pr_err("req dmic_switch_gpio failed:%d\n", ret_val);
+			return ret_val;
+		}
+	}
 	ret_val = snd_ctp_register_jack_data(pdev, ctx);
 	if (ret_val)
 		goto free_jack;
@@ -1058,67 +696,17 @@ static int snd_ctp_mc_probe(struct platform_device *pdev)
 		goto free_jack;
 	}
 
+	if (!snd_soc_card_ctp.instantiated) {
+		pr_err("snd_soc_card_ctp is not instantiated.\n");
+		ret_val = -ENODEV;
+		goto free_jack;
+	}
+
 	platform_set_drvdata(pdev, &snd_soc_card_ctp);
-
-	// joe_cheng
-	input = input_allocate_device();
-	if (!input) {
-		ret_val = -ENOMEM;
-		printk("h2w : input device allocated failed\n");
-		return 1;
-	}
-
-	input->name = "headset_dev";
-	set_bit(EV_SYN, input->evbit);
-	set_bit(EV_KEY, input->evbit);
-	//set_bit(KEY_POWER, input->keybit);
-	set_bit(HEADSET_BUTTON_KEYCODE, input->keybit);
-	//set_bit(HEADSET_PLUG_KEYCODE, input->keybit);
-
-	ret_val = input_register_device(input);
-	if (ret_val < 0)
-		printk("h2w : can't register input device\n");
-	
-	PROJ_ID = Read_PROJ_ID();
-
-	// joe_cheng : Switch for uart and headset
-	// Without gpio control : ME302C, TX201LA
-	// With gpio control : ME372CG, ME372CL, ME372CG-CR, (A12 and ME175CG TBD)
-	if (PROJ_ID != PROJ_ID_ME302C && PROJ_ID != PROJ_ID_GEMINI) {
-		HS_PATH_EN_GPIO = 173; // gpio-core-77
-		if (HS_PATH_EN_GPIO < 0) {
-			pr_err("%s : Failed to get GPIO_CORE_77\n", __func__);
-			return HS_PATH_EN_GPIO;
-		}
-		ret_val = gpio_request(HS_PATH_EN_GPIO, "audio_debug");
-		if (ret_val) {
-			pr_err("%s: Failed to request gpio %d\n", __func__, HS_PATH_EN_GPIO);
-			return ret_val;
-		}
-		ret_val = gpio_direction_output(HS_PATH_EN_GPIO, 0);
-		if (ret_val) {
-			pr_err("%s: Failed to pull down gpio %d\n", __func__, HS_PATH_EN_GPIO);
-			return ret_val;
-		}
-		ret_val = device_create_file(&pdev->dev, &dev_attr_hs_uart_status);
-		if (ret_val < 0)
-			pr_err("%s(): add hs_uart_status error\n", __func__);
-#ifdef PF400CG_DOCK_DEBUG		
-		ret_val = device_create_file(&pdev->dev, &dev_attr_dock_status);
-		if (ret_val < 0)
-			pr_err("%s(): add dock_status error\n", __func__);
-#endif			
-	}
-	if (PROJ_ID == PROJ_ID_PF400CG) {
-		ret_val = device_create_file(&pdev->dev, &dev_attr_a12_headset_status);
-		if (ret_val < 0)
-			pr_err("%s(): add a12_headset_status error\n", __func__);
-	}
-
-	pr_info("%s : successfully exited probe\n", __func__);
+	pr_debug("successfully exited probe\n");
 	return ret_val;
 free_jack:
-	free_jack_wake_lock(ctx);
+	snd_ctp_unregister_jack(ctx, pdev);
 	return ret_val;
 }
 
@@ -1130,8 +718,24 @@ const struct dev_pm_ops snd_ctp_mc_pm_ops = {
 
 static struct platform_device_id ctp_audio_ids[] = {
 	{
-		.name		= "ctp_audio",
-		.driver_data	= (kernel_ulong_t)&ctp_rhb_ops,
+		.name		= "ctp_rhb_cs42l73",
+		.driver_data	= (kernel_ulong_t)&ctp_rhb_cs42l73_ops,
+	},
+	{
+		.name		= "ctp_vb_cs42l73",
+		.driver_data	= (kernel_ulong_t)&ctp_vb_cs42l73_ops,
+	},
+	{
+		.name		= "merr_prh_cs42l73",
+		.driver_data	= (kernel_ulong_t)&merr_bb_cs42l73_ops,
+	},
+	{
+		.name		= "ctp_ht_wm5102",
+		.driver_data	= (kernel_ulong_t)&ctp_ht_wm5102_ops,
+	},
+	{
+		.name		= "ctp_lt_wm8994",
+		.driver_data	= (kernel_ulong_t)&ctp_lt_wm8994_ops,
 	},
 	{ },
 };
@@ -1145,6 +749,7 @@ static struct platform_driver snd_ctp_mc_driver = {
 	},
 	.probe = snd_ctp_mc_probe,
 	.remove = snd_ctp_mc_remove,
+	.shutdown = snd_ctp_mc_shutdown,
 	.id_table = ctp_audio_ids,
 };
 

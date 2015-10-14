@@ -160,6 +160,7 @@ struct sfi_device_table_entry {
 #define SFI_DEV_TYPE_IPC	4
 #define SFI_DEV_TYPE_SD		5
 #define SFI_DEV_TYPE_MDM	6
+#define SFI_DEV_TYPE_USB	7
 
 	u8	host_num;	/* attached to host 0, 1...*/
 	u16	addr;
@@ -184,6 +185,7 @@ struct sfi_oemr_table_entry {
 	u8  Camera_3M;
 	u8  Camera_1_2M_Lense;
 } __packed;
+
 
 typedef int (*sfi_table_handler) (struct sfi_table_header *table);
 

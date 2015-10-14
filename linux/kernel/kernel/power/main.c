@@ -74,6 +74,7 @@ power_attr(pm_async);
 
 #ifdef CONFIG_PM_DEBUG
 int pm_test_level = TEST_NONE;
+int pm_test_interval_time = 5000;
 
 static const char * const pm_tests[__TEST_AFTER_LAST] = {
 	[TEST_NONE] = "none",
@@ -133,6 +134,23 @@ static ssize_t pm_test_store(struct kobject *kobj, struct kobj_attribute *attr,
 }
 
 power_attr(pm_test);
+
+static ssize_t pm_test_interval_time_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
+	return sprintf(buf, "%d\n", pm_test_interval_time);
+}
+
+static ssize_t pm_test_interval_time_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t n){
+        unsigned long val;
+
+        if (kstrtoul(buf, 10, &val))
+                return -EINVAL;
+
+        pm_test_interval_time = val;
+        return n;
+
+}
+power_attr(pm_test_interval_time);
+
 #endif /* CONFIG_PM_DEBUG */
 
 #ifdef CONFIG_DEBUG_FS
@@ -610,6 +628,7 @@ static struct attribute * g[] = {
 #endif
 #ifdef CONFIG_PM_DEBUG
 	&pm_test_attr.attr,
+	&pm_test_interval_time_attr.attr,
 #endif
 #ifdef CONFIG_PM_SLEEP_DEBUG
 	&pm_print_times_attr.attr,

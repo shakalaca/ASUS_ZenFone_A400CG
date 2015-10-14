@@ -144,14 +144,6 @@ config USB_EHCI_HCD_SPH
 
 	  If unsure, say N
 
-config USB_EHCI_SPH_GEMINI
-	bool "SPH function for Gemini"
-	depends on USB_EHCI_HCD
-	default n
-	---help---
-	  Say 'Y' to turn on SPH support for the EHCI host controller driver.
-	  Set GPIO control for Gemini Schematics.
-
 config USB_HCD_HSIC
 	bool "HSIC support"
 	depends on USB_EHCI_HCD

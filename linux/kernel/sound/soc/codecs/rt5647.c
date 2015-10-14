@@ -52,7 +52,7 @@ struct rt5647_init_reg {
 	u16 val;
 };
 
-struct delayed_work hp_work;
+struct delayed_work hp_work, inl_work, inr_work;
 static struct snd_soc_codec  *codec_global;
 
 // joe_cheng : for ATD audio_codec_status
@@ -155,7 +155,9 @@ static struct rt5647_init_reg init_list[] = {
 	{ RT5647_GEN_CTRL3	, 0x1280 },
 #endif
 	{ RT5647_CJ_CTRL2       , 0x0027 }, // joe_cheng : add for headphone detection
+	{ RT5647_DRC1_HL_CTRL2  , 0x0700 },
 //	{ RT5647_DIG_INF1_DATA  , 0x1102 },
+	{ RT5647_CJ_CTRL3       , 0xc000}, // joe_cheng : update for jack detection 
 };
 #define RT5647_INIT_REG_LEN ARRAY_SIZE(init_list)
 
@@ -201,10 +203,10 @@ static const u16 rt5647_reg[RT5647_VENDOR_ID2 + 1] = {
 	[RT5647_HP_VOL] = 0xc8c8,
 	[RT5647_SPK_VOL] = 0xc8c8,
 	[RT5647_LOUT1] = 0xc8c8,
-	[RT5647_MONO_OUT] = 0xc60a,
+	[RT5647_MONO_OUT] = 0xc600,
 	[RT5647_CJ_CTRL1] = 0x0002,
 	[RT5647_CJ_CTRL2] = 0x0827,
-	[RT5647_CJ_CTRL3] = 0xe000,
+	[RT5647_CJ_CTRL3] = 0xc000, // joe_cheng : update for jack detection 
 	[RT5647_INL1_INR1_VOL] = 0x0808,
 	[RT5647_SIDETONE_CTRL] = 0x018b,
 	[RT5647_DAC1_DIG_VOL] = 0xafaf,
@@ -706,7 +708,7 @@ int rt5647_headset_detect(struct snd_soc_codec *codec, int jack_insert)
 		snd_soc_dapm_force_enable_pin(&codec->dapm, "Mic Det Power");
 		snd_soc_dapm_sync(&codec->dapm);
 
-		snd_soc_write(codec, RT5647_CJ_CTRL1, 0x0006);
+		snd_soc_write(codec, RT5647_CJ_CTRL1, 0x0006); 
 
 		snd_soc_write(codec, RT5647_JD_CTRL3, 0x00b0); 
 		snd_soc_write(codec, RT5647_GEN_CTRL3, 0x0080);
@@ -716,9 +718,16 @@ int rt5647_headset_detect(struct snd_soc_codec *codec, int jack_insert)
 			RT5647_CBJ_MN_JD, 0);
 		snd_soc_update_bits(codec, RT5647_CJ_CTRL2,
 			RT5647_CBJ_MN_JD, RT5647_CBJ_MN_JD);
-		msleep(400);
-		val = snd_soc_read(codec, RT5647_CJ_CTRL3) & 0x7;
-		pr_debug("%s: MX-0C val=%d\n", __func__, val);
+		
+		int i = 0, sleep_time[4] = {300, 150, 100, 50, 25};
+		while(i < 5){
+			msleep(sleep_time[i]);
+			val = snd_soc_read(codec, RT5647_CJ_CTRL3) & 0x7;
+			pr_debug("%s: %d MX-0C val=%d sleep %d\n", __func__, i, val, sleep_time[i]);
+			i++;
+			if (val == 0x1 || val == 0x2 || val == 0x4)
+				break; 
+		}
 
 		switch (val) {
 		case 0x1: /* Nokia type*/
@@ -833,17 +842,17 @@ static unsigned int bst_tlv[] = {
 	8, 8, TLV_DB_SCALE_ITEM(5200, 0, 0),
 };
 
-/* IN1/IN2 Input Type */
+/* IN2/IN3 Input Type */
 static const char *rt5647_input_mode[] = {
 	"Single ended", "Differential"
 };
 
 static const SOC_ENUM_SINGLE_DECL(
-	rt5647_in1_mode_enum, RT5647_IN1_IN2,
+	rt5647_in2_mode_enum, RT5647_IN1_IN2,
 	RT5647_IN_SFT1, rt5647_input_mode);
 
 static const SOC_ENUM_SINGLE_DECL(
-	rt5647_in2_mode_enum, RT5647_IN3,
+	rt5647_in3_mode_enum, RT5647_IN3,
 	RT5647_IN_SFT2, rt5647_input_mode);
 
 /* Interface data select */
@@ -893,15 +902,6 @@ static int rt5647_scenario_put(struct snd_kcontrol *kcontrol,
 		return 0;
 
 	Hal_user_scenario_mode = ucontrol->value.integer.value[0];
-
-	// joe_cheng : workaround for music -> ringtone DRC not applied. 
-	if (Hal_user_scenario_mode == RINGTONE) {
-		pr_debug("%s : update ringtone drc 1\n", __func__);
-		rt5647_update_drc_mode(codec, 1);
-	} else {
-		pr_debug("%s : update ringtone drc 0\n", __func__);
-		rt5647_update_drc_mode(codec, 0);
-	}	
 	
 	return 0;
 }
@@ -1016,12 +1016,15 @@ static const struct snd_kcontrol_new rt5647_snd_controls[] = {
 			RT5647_L_VOL_SFT, RT5647_R_VOL_SFT,
 			175, 0, dac_vol_tlv),
 	/* IN1/IN2 Control */
-	SOC_ENUM("IN1 Mode Control",  rt5647_in1_mode_enum),
-	SOC_SINGLE_TLV("IN1 Boost", RT5647_IN1_IN2,
-		RT5647_BST_SFT1, 8, 0, bst_tlv),
+	SOC_SINGLE_TLV("IN1 Boost", RT5647_CJ_CTRL1,
+		RT5647_CBJ_BST1_SFT, 8, 0, bst_tlv),
+	//SOC_SINGLE_TLV("IN1 Boost", RT5647_IN1_IN2,
 	SOC_ENUM("IN2 Mode Control", rt5647_in2_mode_enum),
-	SOC_SINGLE_TLV("IN2 Boost", RT5647_IN3,
-		RT5647_BST_SFT2, 8, 0, bst_tlv),
+	SOC_SINGLE_TLV("IN2 Boost", RT5647_IN1_IN2,
+		RT5647_BST_SFT1, 8, 0, bst_tlv),
+	SOC_ENUM("IN3 Mode Control", rt5647_in3_mode_enum),
+	SOC_SINGLE_TLV("IN3 Boost", RT5647_IN3,
+		RT5647_BST_SFT1, 8, 0, bst_tlv),
 	/* INL/INR Volume Control */
 	SOC_DOUBLE_TLV("IN Capture Volume", RT5647_INL1_INR1_VOL,
 			RT5647_INL_VOL_SFT, RT5647_INR_VOL_SFT,
@@ -1713,18 +1716,16 @@ static int rt5647_sto1_adcl_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_update_bits(codec, RT5647_STO1_ADC_DIG_VOL,
 			RT5647_L_MUTE, 0);
-		/*
-		if ((Hal_user_scenario_mode == RECORD || Hal_user_scenario_mode == VR) && (Hal_user_current_device == DMIC)) {
-			rt5647_update_eqmode(codec, EQ_CH_ADC, RECORD);
+		
+		if (Hal_user_scenario_mode == RECORD && Hal_user_current_device == DMIC) {
+			rt5647_update_drc_mode(codec, 2);
+		} else if (Hal_user_scenario_mode == RECORD && Hal_user_current_device == HEADSETMIC) {
+			rt5647_update_drc_mode(codec, 3);
 		}
-		*/
+		
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
-		/*
-		if ((Hal_user_scenario_mode == RECORD || Hal_user_scenario_mode == VR) && (Hal_user_current_device == DMIC)) {
-			rt5647_update_eqmode(codec, EQ_CH_ADC, NORMAL);
-		}
-		*/
+		rt5647_update_drc_mode(codec, 0);
 		snd_soc_update_bits(codec, RT5647_STO1_ADC_DIG_VOL,
 			RT5647_L_MUTE,
 			RT5647_L_MUTE);
@@ -1747,18 +1748,14 @@ static int rt5647_sto1_adcr_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_update_bits(codec, RT5647_STO1_ADC_DIG_VOL,
 			RT5647_R_MUTE, 0);
-		/*
-		if ((Hal_user_scenario_mode == RECORD || Hal_user_scenario_mode == VR) && (Hal_user_current_device == DMIC)) {
-			rt5647_update_eqmode(codec, EQ_CH_ADC, RECORD);
+		if (Hal_user_scenario_mode == RECORD && Hal_user_current_device == DMIC) {
+			rt5647_update_drc_mode(codec, 2);
+		} else if (Hal_user_scenario_mode == RECORD && Hal_user_current_device == HEADSETMIC) {
+			rt5647_update_drc_mode(codec, 3);
 		}
-		*/
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
-		/*
-		if ((Hal_user_scenario_mode == RECORD || Hal_user_scenario_mode == VR) && (Hal_user_current_device == DMIC)) {
-			rt5647_update_eqmode(codec, EQ_CH_ADC, NORMAL);
-		}
-		*/
+		rt5647_update_drc_mode(codec, 0);
 		snd_soc_update_bits(codec, RT5647_STO1_ADC_DIG_VOL,
 			RT5647_R_MUTE,
 			RT5647_R_MUTE);
@@ -1917,6 +1914,9 @@ static void rt5647_pmd_depop(struct snd_soc_codec *codec)
 {
 	/* headphone mute sequence */
 	cancel_delayed_work_sync(&hp_work);
+	snd_soc_update_bits(codec, RT5647_HP_VOL,
+		RT5647_L_MUTE | RT5647_R_MUTE, RT5647_L_MUTE | RT5647_R_MUTE);
+	msleep(5);
 	snd_soc_update_bits(codec, RT5647_DEPOP_M3,
 		RT5647_CP_FQ1_MASK | RT5647_CP_FQ2_MASK | RT5647_CP_FQ3_MASK,
 		(RT5647_CP_FQ_96_KHZ << RT5647_CP_FQ1_SFT) |
@@ -2166,10 +2166,11 @@ static int rt5647_dac_l_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_PRE_PMD:
 	//	if (Hal_user_scenario_mode == PLAYBACK && Hal_user_current_device == SPEAKER) {
 			rt5647_update_eqmode(codec, EQ_CH_DACL, NORMAL);
-	//	} else if (Hal_user_scenario_mode == RINGTONE && Hal_user_current_device == SPEAKER) {
+	//	}  
+		if (Hal_user_scenario_mode == NORMAL && Hal_user_current_device == NONE) {
 			pr_debug("%s : rt5647_update_drc_mode 0\n", __func__);
 			rt5647_update_drc_mode(codec, 0);
-	//	}
+		}
 		break;
 	
 	default:
@@ -2200,11 +2201,12 @@ static int rt5647_dac_r_event(struct snd_soc_dapm_widget *w,
 
 	case SND_SOC_DAPM_PRE_PMD:
 	//	if (Hal_user_scenario_mode == PLAYBACK && Hal_user_current_device == SPEAKER) {
-			rt5647_update_eqmode(codec, EQ_CH_DACL, NORMAL);
-	//	} else if (Hal_user_scenario_mode == RINGTONE && Hal_user_current_device == SPEAKER) {
+			rt5647_update_eqmode(codec, EQ_CH_DACR, NORMAL);
+	//	}  
+		if (Hal_user_scenario_mode == NORMAL && Hal_user_current_device == NONE) {
 			pr_debug("%s : rt5647_update_drc_mode 0\n", __func__);
 			rt5647_update_drc_mode(codec, 0);
-	//	}
+		}
 		break;
 
 	default:
@@ -2294,29 +2296,23 @@ static int rt5647_inl_event(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_codec *codec = w->codec;
 
+	pr_debug("%s : event %d\n", __func__, event);
+
 	switch (event) {
 		case SND_SOC_DAPM_PRE_PMD:
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x10);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x20);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x30);
-			mdelay(5);
-//			snd_soc_update_bits(w->codec, RT5647_HPOMIXL_CTRL,
-//					RT5647_M_IN_HV, RT5647_M_IN_HV);
+			snd_soc_write(w->codec, RT5647_INL1_INR1_VOL, 0x1f1f);
+			msleep(5);
 			break;
 		case SND_SOC_DAPM_POST_PMU:
-//			snd_soc_update_bits(w->codec, RT5647_HPOMIXL_CTRL,
-//					RT5647_M_IN_HV, 0);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x30);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x20);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x10);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x00);
+			schedule_delayed_work(&inl_work, msecs_to_jiffies(1000));
 			break;
+		case SND_SOC_DAPM_PRE_PMU:
+			snd_soc_update_bits(w->codec, RT5647_HP_VOL, RT5647_L_MUTE | RT5647_R_MUTE, RT5647_L_MUTE | RT5647_R_MUTE);
+			msleep(5);
+			snd_soc_update_bits(w->codec, RT5647_INL1_INR1_VOL, 0xff00, 0x1f00);
+			msleep(5);
+			snd_soc_update_bits(w->codec, RT5647_HPMIXL_CTRL, 0x30, 0x30);
+			msleep(5);
 		default:
 			return 0;
 	}
@@ -2329,30 +2325,24 @@ static int rt5647_inr_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
 	struct snd_soc_codec *codec = w->codec;
+	
+	pr_debug("%s : event %d\n", __func__, event);
 
 	switch (event) {
 		case SND_SOC_DAPM_PRE_PMD:
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x10);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x20);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x30);
-			mdelay(5);
-//			snd_soc_update_bits(w->codec, RT5647_HPOMIXR_CTRL,
-//					RT5647_M_IN_HV, RT5647_M_IN_HV);
+			snd_soc_write(w->codec, RT5647_INL1_INR1_VOL, 0x1f1f);
+			msleep(5);
 			break;
 		case SND_SOC_DAPM_POST_PMU:
-//			snd_soc_update_bits(w->codec, RT5647_HPOMIXR_CTRL,
-//					RT5647_M_IN_HV, 0);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x30);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x20);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x10);
-			mdelay(5);
-			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x00);
+			schedule_delayed_work(&inr_work, msecs_to_jiffies(1000));
 			break;
+		case SND_SOC_DAPM_PRE_PMU:
+			snd_soc_update_bits(w->codec, RT5647_HP_VOL, RT5647_L_MUTE | RT5647_R_MUTE, RT5647_L_MUTE | RT5647_R_MUTE);
+			msleep(5);
+			snd_soc_write(w->codec, RT5647_INL1_INR1_VOL, 0x1f1f);
+			msleep(5);
+			snd_soc_update_bits(w->codec, RT5647_HPMIXR_CTRL, 0x30, 0x30);
+			msleep(5);
 		default:
 			return 0;
 	}
@@ -2421,10 +2411,10 @@ static const struct snd_soc_dapm_widget rt5647_dapm_widgets[] = {
 	/* Input Volume */
 	SND_SOC_DAPM_PGA_E("INL VOL", RT5647_PWR_VOL,
 		RT5647_PWR_IN_L_BIT, 0, NULL, 0,
-		rt5647_inl_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+		rt5647_inl_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
 	SND_SOC_DAPM_PGA_E("INR VOL", RT5647_PWR_VOL,
 		RT5647_PWR_IN_R_BIT, 0, NULL, 0,
-		rt5647_inr_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+		rt5647_inr_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
 	/* IN Mux */
 	SND_SOC_DAPM_MUX("INL Mux", SND_SOC_NOPM, 0, 0, &rt5647_inl_mux),
 	SND_SOC_DAPM_MUX("INR Mux", SND_SOC_NOPM, 0, 0, &rt5647_inr_mux),
@@ -3629,10 +3619,50 @@ static int rt5647_set_bias_level(struct snd_soc_codec *codec,
 
 void do_hp_work(struct work_struct *work)
 {
-msleep(5);
-snd_soc_update_bits( codec_global , RT5647_HP_VOL,
-		RT5647_L_MUTE | RT5647_R_MUTE, 0);
-msleep(65);
+	msleep(5);
+	snd_soc_update_bits( codec_global , RT5647_HP_VOL,
+			RT5647_L_MUTE | RT5647_R_MUTE, 0);
+	msleep(65);
+}
+
+void do_inl_work(struct work_struct *work)
+{
+	pr_debug("%s : inl write post pmu\n");
+	snd_soc_write(codec_global, RT5647_INL1_INR1_VOL, 0x0808);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HP_VOL, RT5647_L_MUTE | RT5647_R_MUTE, 0);
+	msleep(5);
+	/*
+	snd_soc_write(codec_global, RT5647_INL1_INR1_VOL, 0x0808);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HP_VOL, RT5647_L_MUTE, 0);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXL_CTRL, 0x30, 0x30);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXL_CTRL, 0x30, 0x20);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXL_CTRL, 0x30, 0x10);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXL_CTRL, 0x30, 0x00);
+	*/
+}
+
+void do_inr_work(struct work_struct *work)
+{
+	pr_debug("%s : inr write post pmu\n");
+	snd_soc_write(codec_global, RT5647_INL1_INR1_VOL, 0x0808);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HP_VOL, RT5647_L_MUTE | RT5647_R_MUTE, 0);
+	msleep(5);
+	/*
+	snd_soc_update_bits(codec_global, RT5647_HPMIXR_CTRL, 0x30, 0x30);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXR_CTRL, 0x30, 0x20);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXR_CTRL, 0x30, 0x10);
+	msleep(5);
+	snd_soc_update_bits(codec_global, RT5647_HPMIXR_CTRL, 0x30, 0x00);
+	*/
 }
 
 static int rt5647_probe(struct snd_soc_codec *codec)
@@ -3733,6 +3763,8 @@ static int rt5647_probe(struct snd_soc_codec *codec)
 
 	rt5647->jack_type = 0;
         INIT_DELAYED_WORK(&hp_work, do_hp_work);
+        INIT_DELAYED_WORK(&inl_work, do_inl_work);
+        INIT_DELAYED_WORK(&inr_work, do_inr_work);
 	pr_info("%s : probe success\n", __func__);
 	return 0;
 }

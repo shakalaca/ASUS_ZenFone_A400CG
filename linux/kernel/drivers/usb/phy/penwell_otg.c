@@ -44,16 +44,6 @@
 #include "../core/usb.h"
 #include <linux/intel_mid_pm.h>
 #include <linux/HWVersion.h>
-#include <linux/microp_notify.h>
-
-struct asus_ec_event
-{
-    struct mutex evt_mutex;
-    bool cable_event;
-    bool pad_session;
-};
-struct asus_ec_event p72g_ec_evt;
-
 #if defined(CONFIG_ME302C_BATTERY_SMB347) || defined(CONFIG_ME372CG_BATTERY_SMB345)
 extern int setSMB345Charger(int usb_state);
 #endif
@@ -78,13 +68,10 @@ extern int himax_a400cg_cable_status(int status);
 #if CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG
 extern int himax_a450cg_cable_status(int status);
 #endif
-#ifdef CONFIG_EEPROM_PADSTATION
-extern int register_microp_notifier(struct notifier_block *nb);
-extern int unregister_microp_notifier(struct notifier_block *nb);
+#if CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL
+extern int himax_me372cl_cable_status(int status);
 #endif
-
 extern int Read_PROJ_ID(void);
-extern int Read_HW_ID(void);
 extern int langwell_udc_init_completed(void);
 extern int entry_mode;
 
@@ -119,11 +106,6 @@ static void penwell_spi_reset_phy(void);
 static int penwell_otg_charger_hwdet(bool enable);
 static void update_hsm(void);
 static void set_client_mode(void);
-void penwell_update_transceiver(unsigned int wait_time);
-
-#ifdef CONFIG_EEPROM_PADSTATION
-static int station_notify(struct notifier_block *this, unsigned long event, void *ptr);
-#endif
 
 #ifdef CONFIG_DEBUG_FS
 unsigned int *pm_sss0_base;
@@ -169,7 +151,7 @@ inline void notify_cable_status(int type)
 	#ifdef CONFIG_TX201LA_BATTERY_EC
 	asus_pad_battery_set_cable_status(type);
 	#endif
-	if (entry_mode ==1){
+	if (entry_mode == 1){
 		#if CONFIG_TOUCHSCREEN_HIMAX_HX8528
 		hx8528_cable_status(type);
 		#endif
@@ -185,63 +167,11 @@ inline void notify_cable_status(int type)
 		#if CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG
 		himax_a450cg_cable_status(type);
 		#endif
+		#if CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL
+		himax_me372cl_cable_status(type);	
+		#endif
 	}
 }
-
-static struct penwell_otg *the_transceiver;
-
-#ifdef CONFIG_EEPROM_PADSTATION
-static struct notifier_block station_notifier = {
-        .notifier_call =    station_notify,
-};
-
-static int station_notify(struct notifier_block *this, unsigned long event, void *ptr)
-{
-	struct penwell_otg		*pnw = the_transceiver;
-	struct intel_mid_otg_xceiv		*iotg = &pnw->iotg;
-	struct otg_hsm				*hsm = &iotg->hsm;
-
-	printk("USB : station_notify event = %d , HW_ID = %d\n",event,Read_HW_ID());
-	mutex_lock(&p72g_ec_evt.evt_mutex);
-	p72g_ec_evt.cable_event = false;
-	mutex_unlock(&p72g_ec_evt.evt_mutex);
-		switch (event)
-			{
-                       case P01_ADD:
-					mutex_lock(&p72g_ec_evt.evt_mutex);
-					p72g_ec_evt.pad_session = true;
-					mutex_unlock(&p72g_ec_evt.evt_mutex);
-					return NOTIFY_OK;
-	                case P01_USB_IN:
-                       case P01_AC_IN:
-					hsm->b_sess_vld =1;
-					break;
-	                case P01_AC_USB_OUT:
-					hsm->b_sess_vld =0;
-					break;
-	                case P01_REMOVE:
-					mutex_lock(&p72g_ec_evt.evt_mutex);
-					p72g_ec_evt.pad_session = false;
-					mutex_unlock(&p72g_ec_evt.evt_mutex);
-					return NOTIFY_OK;
-                       case PAD_USB_OTG_ENABLE:
-					hsm->id = ID_A;
-					hsm->a_vbus_vld = 1;
-					break;
-                       case PAD_USB_OTG_DISABLE:
-					hsm->id = ID_B;
-					hsm->a_vbus_vld = 0;
-					break;
-	               default:
-				   	return NOTIFY_OK;
-			}
-	mutex_lock(&p72g_ec_evt.evt_mutex);
-	p72g_ec_evt.cable_event = true;
-	mutex_unlock(&p72g_ec_evt.evt_mutex);
-	penwell_update_transceiver(0);
-	return NOTIFY_DONE;
-}
-#endif
 
 static int pnw_sleep_pm_callback(struct notifier_block *nfb,
 			unsigned long action, void *ignored)
@@ -437,7 +367,7 @@ static const char *psc_string(enum power_supply_charger_cable_type charger)
 
 static struct penwell_otg *the_transceiver;
 
-void penwell_update_transceiver(unsigned int wait_time)
+void penwell_update_transceiver(void)
 {
 	struct penwell_otg	*pnw = the_transceiver;
 	unsigned long	flags;
@@ -450,12 +380,7 @@ void penwell_update_transceiver(unsigned int wait_time)
 
 	spin_lock_irqsave(&pnw->lock, flags);
 	if (!pnw->queue_stop) {
-#ifdef CONFIG_EEPROM_PADSTATION
-		wake_lock_timeout(&pnw->wake_lock, msecs_to_jiffies(wait_time+200));
-		queue_delayed_work(pnw->qwork, &pnw->work, msecs_to_jiffies(wait_time));
-#else
 		queue_work(pnw->qwork, &pnw->work);
-#endif
 		dev_dbg(pnw->dev, "transceiver is updated\n");
 	}
 	spin_unlock_irqrestore(&pnw->lock, flags);
@@ -997,21 +922,12 @@ static void penwell_otg_phy_enable(int on)
 static int penwell_otg_set_vbus(struct usb_otg *otg, bool enabled)
 {
 	struct penwell_otg		*pnw = the_transceiver;
-	struct intel_mid_otg_xceiv		*iotg = &pnw->iotg;
-	struct otg_hsm				*hsm = &iotg->hsm;
 	u8				data;
 	unsigned long			flags;
 	int				retval = 0;
 	struct otg_bc_event		*evt;
 
 	dev_dbg(pnw->dev, "%s ---> %s\n", __func__, enabled ? "on" : "off");
-
-	if (Read_PROJ_ID()==PROJ_ID_TX201LAF){
-		if (enabled)
-			hsm->a_vbus_vld = 1;
-		else
-			hsm->a_vbus_vld = 0;
-	}
 
 	/*
 	 * For Clovertrail, VBUS is driven by TPS2052 power switch chip.
@@ -1046,16 +962,12 @@ static int penwell_otg_set_vbus(struct usb_otg *otg, bool enabled)
 						enabled ? "ON" : "OFF");
 			atomic_notifier_call_chain(&pnw->iotg.otg.notifier,
 				USB_EVENT_DRIVE_VBUS, &enabled);
-			if (pnw->otg_state){
-				#if defined(CONFIG_ME302C_BATTERY_SMB347) || defined(CONFIG_ME372CG_BATTERY_SMB345)
-				setSMB345Charger(enabled? ENABLE_5V : DISABLE_5V);
-				#endif
-				#if CONFIG_HID_ASUS_PAD_EC
-				ite8566_usb_cable_status(enabled? ENABLE_5V : DISABLE_5V);
-				#endif
-			}else
-				dev_info(pnw->dev, "USB notification: not support OTG function\n");
-				
+			#if defined(CONFIG_ME302C_BATTERY_SMB347) || defined(CONFIG_ME372CG_BATTERY_SMB345)
+			setSMB345Charger(enabled ? ENABLE_5V : DISABLE_5V);
+			#endif
+			#if CONFIG_HID_ASUS_PAD_EC
+            ite8566_usb_cable_status(enabled? ENABLE_5V : DISABLE_5V);
+			#endif
 			kfree(evt);
 			goto done;
 		}
@@ -2408,7 +2320,7 @@ static void penwell_otg_timer_fn(unsigned long indicator)
 
 	dev_dbg(pnw->dev, "kernel timer - timeout\n");
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 }
 
 /* kernel timer used for OTG timing */
@@ -2576,7 +2488,7 @@ static void pnw_phy_ctrl_rst(void)
 
 	/* after reset, need to sync to OTGSC status bits to hsm */
 	update_hsm();
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 }
 
 static void set_host_mode(void)
@@ -2671,18 +2583,21 @@ static void penwell_otg_eye_diagram_optimize(void)
 {
 	struct penwell_otg		*pnw = the_transceiver;
 	struct intel_mid_otg_xceiv	*iotg = &pnw->iotg;
-	int				retval,projid;
+	int				retval;
 	u8				value = 0;
 
 	/* Check platform value as different value will be used*/
-	projid = Read_PROJ_ID();
 	if (is_clovertrail(to_pci_dev(pnw->dev))) {
 		/* Set 0x7f for better quality in eye diagram
 		 * It means ZHSDRV = 0b11 and IHSTX = 0b1111*/
-		if (projid==PROJ_ID_ME372CG || projid==PROJ_ID_ME372CL || projid==PROJ_ID_A450CG)
+		if (Read_PROJ_ID()==PROJ_ID_ME372CG || Read_PROJ_ID()==PROJ_ID_ME372CL)
 			value = 0x7a;
-		else if (projid==PROJ_ID_ME175CG || projid==PROJ_ID_A400CG)
+		else if (Read_PROJ_ID()==PROJ_ID_ME175CG || Read_PROJ_ID()==PROJ_ID_A400CG)
 			value = 0x77;
+		else if (Read_PROJ_ID()==PROJ_ID_FE171CG || Read_PROJ_ID()==PROJ_ID_ME171C)
+			value = 0x7c;
+		else if (Read_PROJ_ID()==PROJ_ID_A450CG)
+			value = 0x6f;
 		else
 			value = 0x7f;
 	} else {
@@ -2719,7 +2634,7 @@ static irqreturn_t otg_dummy_irq(int irq, void *_dev)
 	*/
 	if (pnw->iotg.hsm.b_conn) {
 		pnw->iotg.hsm.b_conn = 0;
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 	}
 
 	/* Clear interrupts */
@@ -2835,11 +2750,7 @@ static irqreturn_t otg_irq_handle(struct penwell_otg *pnw,
 	}
 
 	if (flag)
-#ifdef CONFIG_EEPROM_PADSTATION
-		penwell_update_transceiver(300);
-#else
-		penwell_update_transceiver(0);
-#endif
+		penwell_update_transceiver();
 
 	return IRQ_HANDLED;
 }
@@ -3033,7 +2944,7 @@ static int penwell_otg_iotg_notify(struct notifier_block *nb,
 	}
 
 	if (flag)
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 
 	return NOTIFY_OK;
 }
@@ -3093,7 +3004,7 @@ static void penwell_otg_hnp_poll_work(struct work_struct *work)
 				"Device A host - start HNP - a_bus_req = 0\n");
 			iotg->hsm.a_bus_req = 0;
 		}
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 	} else {
 		dev_dbg(pnw->dev, "host_request_flag = 0\n");
 		penwell_otg_continue_hnp_poll(&pnw->iotg);
@@ -3185,12 +3096,12 @@ static void penwell_otg_ulpi_poll_work(struct work_struct *work)
 		dev_err(pnw->dev, "ulpi read time out by polling\n");
 		iotg->hsm.ulpi_error = 1;
 		iotg->hsm.ulpi_polling = 0;
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 	} else if (data != 0x5A) {
 		dev_err(pnw->dev, "ulpi read value incorrect by polling\n");
 		iotg->hsm.ulpi_error = 1;
 		iotg->hsm.ulpi_polling = 0;
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 	} else {
 		dev_dbg(pnw->dev, "ulpi fine by polling\n");
 		iotg->hsm.ulpi_error = 0;
@@ -3282,26 +3193,10 @@ static void penwell_otg_work(struct work_struct *work)
 	int					retval;
 	struct pci_dev				*pdev;
 	unsigned long				flags;
-	unsigned long timeout;
+	unsigned long				timeout;
 
 	dev_dbg(pnw->dev,
 		"old state = %s\n", state_string(iotg->otg.state));
-
-	if (Read_PROJ_ID()==PROJ_ID_TX201LAF && iotg->otg.state ==OTG_STATE_A_HOST)
-			hsm->a_vbus_vld = 1;
-
-#ifdef CONFIG_EEPROM_PADSTATION
-	if (p72g_ec_evt.pad_session && !p72g_ec_evt.cable_event){
-		printk("station attach , ignore usb irq!!!\n");
-		mutex_lock(&p72g_ec_evt.evt_mutex);
-		p72g_ec_evt.cable_event = false;
-		mutex_unlock(&p72g_ec_evt.evt_mutex);
-		return ;
-	}
-	mutex_lock(&p72g_ec_evt.evt_mutex);
-    	p72g_ec_evt.cable_event = false;
-	mutex_unlock(&p72g_ec_evt.evt_mutex);
-#endif
 
 	pm_runtime_get_sync(pnw->dev);
 
@@ -3329,7 +3224,7 @@ static void penwell_otg_work(struct work_struct *work)
 			pm_runtime_get(pnw->dev);
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->b_adp_sense_tmout) {
 			hsm->b_adp_sense_tmout = 0;
 		} else if (hsm->b_srp_fail_tmout) {
@@ -3338,7 +3233,7 @@ static void penwell_otg_work(struct work_struct *work)
 			hsm->b_bus_req = 0;
 			penwell_otg_nsf_msg(6);
 
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->b_sess_vld) {
 			/* Check if DCP is detected */
 			spin_lock_irqsave(&pnw->charger_lock, flags);
@@ -3447,10 +3342,11 @@ static void penwell_otg_work(struct work_struct *work)
 							PHYRESET);
 					penwell_otg_msic_spi_access(false);
 				}
-				wake_unlock(&pnw->cable_lock);
+                wake_unlock(&pnw->cable_lock);
 				break;
 			} else if (charger_type == CHRG_DCP) {
 				dev_info(pnw->dev, "DCP detected\n");
+
 				/* DCP: set charger type, current, notify EM */
 				penwell_otg_update_chrg_cap(CHRG_DCP,
 							CHRG_CURR_DCP);
@@ -3482,7 +3378,7 @@ static void penwell_otg_work(struct work_struct *work)
 					pm_runtime_get(pnw->dev);
 
 					iotg->otg.state = OTG_STATE_A_IDLE;
-					penwell_update_transceiver(0);
+					penwell_update_transceiver();
 					wake_unlock(&pnw->cable_lock);
 					break;
 				} else if (hsm->id == ID_ACA_B) {
@@ -3697,7 +3593,7 @@ static void penwell_otg_work(struct work_struct *work)
 			pm_runtime_get(pnw->dev);
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->ulpi_error && !hsm->in_test_mode) {
 			/* WA: try to recover once detected PHY issue */
 			hsm->ulpi_error = 0;
@@ -3828,7 +3724,7 @@ static void penwell_otg_work(struct work_struct *work)
 			iotg->hsm.a_bus_req = 1;
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (!hsm->b_sess_vld || hsm->id == ID_ACA_B) {
 			/* Move to B_IDLE state, VBUS off/ACA */
 
@@ -3865,7 +3761,7 @@ static void penwell_otg_work(struct work_struct *work)
 			penwell_otg_HAAR(0);
 
 			iotg->otg.state = OTG_STATE_B_HOST;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->a_bus_resume || hsm->b_ase0_brst_tmout) {
 			/* Move to B_HOST state, A connected */
 
@@ -3918,7 +3814,7 @@ static void penwell_otg_work(struct work_struct *work)
 			hsm->a_bus_req = 1;
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (!hsm->b_sess_vld || hsm->id == ID_ACA_B) {
 			/* Move to B_IDLE state, VBUS off/ACA */
 
@@ -3991,7 +3887,7 @@ static void penwell_otg_work(struct work_struct *work)
 			set_client_mode();
 
 			iotg->otg.state = OTG_STATE_B_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 
 			/* Decrement the device usage counter */
 			pm_runtime_put(pnw->dev);
@@ -4047,7 +3943,7 @@ static void penwell_otg_work(struct work_struct *work)
 
 			iotg->otg.state = OTG_STATE_A_WAIT_VRISE;
 
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->b_sess_end || hsm->a_sess_vld ||
 				hsm->a_srp_det || !hsm->b_sess_vld) {
 			hsm->a_srp_det = 0;
@@ -4098,13 +3994,13 @@ static void penwell_otg_work(struct work_struct *work)
 			penwell_otg_eye_diagram_optimize();
 
 			timeout = jiffies + 5*HZ;
-			while (time_before(jiffies, timeout)) {
+			while (time_before(jiffies, timeout)){
 				if (iotg->start_host && langwell_udc_init_completed())
 					break;
 				else
 					msleep(10);
-				}
-			if (!time_before(jiffies, timeout))
+			}
+			if(!time_before(jiffies, timeout))
 				dev_err(pnw->dev, "iotg->start_host not registered, give up!\n");
 
 			if (iotg->start_host) {
@@ -4576,7 +4472,7 @@ static void penwell_otg_work(struct work_struct *work)
 			hsm->a_bus_req = 1;
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		} else if (hsm->test_device && hsm->otg_vbus_off
 					&& hsm->tst_noadp_tmout) {
 			/* After noadp timeout, switch back to normal mode */
@@ -4587,7 +4483,7 @@ static void penwell_otg_work(struct work_struct *work)
 			hsm->a_bus_req = 1;
 
 			iotg->otg.state = OTG_STATE_A_IDLE;
-			penwell_update_transceiver(0);
+			penwell_update_transceiver();
 		}
 		break;
 	default:
@@ -4799,16 +4695,6 @@ show_chargers(struct device *_dev, struct device_attribute *attr, char *buf)
 }
 static DEVICE_ATTR(chargers, S_IRUGO, show_chargers, NULL);
 
-show_otgstate(struct device *_dev, struct device_attribute *attr, char *buf)
-{
-	struct penwell_otg		*pnw = the_transceiver;
-       // for user build can use OTG function
-       pnw->otg_state = !pnw->otg_state;
-       scnprintf(buf, PAGE_SIZE,"OTG function state = %s\n", pnw->otg_state? "true":"flase");
-
-}
-static DEVICE_ATTR(otgstate, S_IRUGO, show_otgstate, NULL);
-
 static ssize_t
 get_a_bus_req(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -4856,7 +4742,7 @@ set_a_bus_req(struct device *dev, struct device_attribute *attr,
 		}
 	}
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return count;
 }
@@ -4902,7 +4788,7 @@ set_a_bus_drop(struct device *dev, struct device_attribute *attr,
 		dev_dbg(pnw->dev, "a_bus_drop = 1, so a_bus_req = 0\n");
 	}
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return count;
 }
@@ -4962,7 +4848,7 @@ set_b_bus_req(struct device *dev, struct device_attribute *attr,
 		}
 	}
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return count;
 }
@@ -4988,7 +4874,7 @@ set_a_clr_err(struct device *dev, struct device_attribute *attr,
 		dev_dbg(pnw->dev, "a_clr_err = 1\n");
 	}
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return count;
 }
@@ -5005,7 +4891,7 @@ set_ulpi_err(struct device *dev, struct device_attribute *attr,
 
 	iotg->hsm.ulpi_error = 1;
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return count;
 }
@@ -5122,8 +5008,6 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 	dev_info(&pdev->dev, "Intel OTG2.0 controller is detected.\n");
 	dev_info(&pdev->dev, "Driver version: " DRIVER_VERSION "\n");
 
-	mutex_init(&p72g_ec_evt.evt_mutex);
-
 	if (pci_enable_device(pdev) < 0) {
 		retval = -ENODEV;
 		goto done;
@@ -5179,11 +5063,7 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 	}
 
 	INIT_LIST_HEAD(&pnw->chrg_evt_queue);
-#ifdef CONFIG_EEPROM_PADSTATION
-	INIT_DELAYED_WORK(&pnw->work, penwell_otg_work);
-#else
 	INIT_WORK(&pnw->work, penwell_otg_work);
-#endif
 	INIT_WORK(&pnw->psc_notify, penwell_otg_psc_notify_work);
 	INIT_WORK(&pnw->hnp_poll_work, penwell_otg_hnp_poll_work);
 	INIT_WORK(&pnw->uevent_work, penwell_otg_uevent_work);
@@ -5215,7 +5095,6 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 	pnw->rt_quiesce = 0;
 	pnw->queue_stop = 0;
 	pnw->phy_power_state = 1;
-	pnw->otg_state = true;
 	if (usb_add_phy(&pnw->iotg.otg, USB_PHY_TYPE_USB2)) {
 		dev_err(pnw->dev, "can't set transceiver\n");
 		retval = -EBUSY;
@@ -5362,13 +5241,7 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 
 	reset_otg();
 	init_hsm();
-#if 0   //control OTG function turn on/off
-	if (Read_PROJ_ID()==PROJ_ID_A400CG || Read_PROJ_ID()==PROJ_ID_PF400CG)
-		pnw->otg_state = false;  //disable otg function
-#endif
-#ifdef CONFIG_EEPROM_PADSTATION
-	register_microp_notifier(&station_notifier);
-#endif
+
 	/* we need to set active early or the first irqs will be ignored */
 	pm_runtime_set_active(&pdev->dev);
 
@@ -5423,13 +5296,6 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 		goto err;
 	}
 
-	retval = device_create_file(&pdev->dev, &dev_attr_otgstate);
-	if (retval < 0) {
-		dev_dbg(pnw->dev,
-			"Can't otgstate sysfs attribute: %d\n", retval);
-		goto err;
-	}
-
 	retval = sysfs_create_group(&pdev->dev.kobj, &debug_dev_attr_group);
 	if (retval < 0) {
 		dev_dbg(pnw->dev,
@@ -5440,7 +5306,7 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_allow(&pdev->dev);
 
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	return 0;
 
@@ -5455,8 +5321,6 @@ static void penwell_otg_remove(struct pci_dev *pdev)
 {
 	struct penwell_otg *pnw = the_transceiver;
 	struct otg_bc_event *evt, *tmp;
-
-	mutex_destroy(&p72g_ec_evt.evt_mutex);
 
 	/* ACA device detection disable */
 	penwell_otg_aca_disable();
@@ -5482,7 +5346,6 @@ static void penwell_otg_remove(struct pci_dev *pdev)
 	writel(0, pnw->iotg.base + CI_OTGSC);
 
 	wake_lock_destroy(&pnw->wake_lock);
-	wake_lock_destroy(&pnw->cable_lock);
 
 	if (pdev->irq)
 		free_irq(pdev->irq, pnw);
@@ -5495,13 +5358,9 @@ static void penwell_otg_remove(struct pci_dev *pdev)
 		release_mem_region(pci_resource_start(pdev, 0),
 				pci_resource_len(pdev, 0));
 
-#ifdef CONFIG_EEPROM_PADSTATION
-	unregister_microp_notifier(&station_notifier);
-#endif
 	usb_remove_phy(&pnw->iotg.otg);
 	pci_disable_device(pdev);
 	sysfs_remove_group(&pdev->dev.kobj, &debug_dev_attr_group);
-	device_remove_file(&pdev->dev, &dev_attr_otgstate);
 	device_remove_file(&pdev->dev, &dev_attr_chargers);
 	device_remove_file(&pdev->dev, &dev_attr_hsm);
 	device_remove_file(&pdev->dev, &dev_attr_registers);
@@ -5622,7 +5481,7 @@ static int penwell_otg_suspend_noirq(struct device *dev)
 		pnw->queue_stop = 0;
 		spin_unlock_irqrestore(&pnw->lock, flags);
 
-		penwell_update_transceiver(0);
+		penwell_update_transceiver();
 	} else {
 		penwell_otg_phy_low_power(1);
 		penwell_otg_vusb330_low_power(1);
@@ -5871,7 +5730,7 @@ static int penwell_otg_resume(struct device *dev)
 	* if any ID change and update hsm correspondingly
 	*/
 	update_hsm();
-	penwell_update_transceiver(0);
+	penwell_update_transceiver();
 
 	dev_dbg(pnw->dev, "%s <---\n", __func__);
 	return ret;

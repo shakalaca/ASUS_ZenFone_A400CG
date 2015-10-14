@@ -552,13 +552,14 @@ static int ar0543_power_ctrl(struct v4l2_subdev *sd, int flag)
 				SPI_ENABLE=1;
 		}
 	}	
-
-	SPI_ret=spi_init_extra_parameter();
-
-	if (SPI_ret==SPI_magic_number) {
-		SPI_ENABLE=1;		
-	} else if (SPI_ret==EEPROM_magic_number) {
-		SPI_ENABLE=0;
+	if (flag){
+		SPI_ret=spi_init_extra_parameter();
+	
+		if (SPI_ret==SPI_magic_number) {
+			SPI_ENABLE=1;		
+		} else if (SPI_ret==EEPROM_magic_number) {
+			SPI_ENABLE=0;
+		}
 	}
 
 	//printk("HW ID:%d\n", HW_ID);

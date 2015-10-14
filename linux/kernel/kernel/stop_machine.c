@@ -405,9 +405,10 @@ static int stop_machine_cpu_stop(void *data)
 {
 	struct stop_machine_data *smdata = data;
 	enum stopmachine_state curstate = STOPMACHINE_NONE;
-	int cpu = smp_processor_id(), err = 0,i=0;
+	int cpu = smp_processor_id(), err = 0;
 	unsigned long flags;
 	bool is_active;
+
 	/*
 	 * When called from stop_machine_from_inactive_cpu(), irq might
 	 * already be disabled.  Save the state and restore it on exit.
@@ -420,7 +421,7 @@ static int stop_machine_cpu_stop(void *data)
 		is_active = cpumask_test_cpu(cpu, smdata->active_cpus);
 
 	/* Simple state machine */
-	for(i=0; i<0x00040000 && curstate != STOPMACHINE_EXIT;i++) {
+	do {
 		/* Chill out and ensure we re-read stopmachine_state. */
 		cpu_relax();
 		if (smdata->state != curstate) {
@@ -439,11 +440,7 @@ static int stop_machine_cpu_stop(void *data)
 			}
 			ack_state(smdata);
 		}
-	}
-	if(curstate != STOPMACHINE_EXIT){
-		printk("Error Detect! CPU#%d hang up when migration! curstate=%d, smdata->state=%d, i=%d\n",cpu,curstate,smdata->state,i);
-		err=-EAGAIN;
-	}
+	} while (curstate != STOPMACHINE_EXIT);
 
 	local_irq_restore(flags);
 	return err;

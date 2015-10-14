@@ -23,16 +23,6 @@
 #include <linux/usb/ehci_sph_pci.h>
 #include <linux/gpio.h>
 
-#ifdef CONFIG_USB_EHCI_SPH_GEMINI
-#define CS_GPIO_ENABLE 1
-#define CS_GPIO_DISABLE 0
-#define CS_GPIO_NAME "SPH_CS"
-#else
-#define CS_GPIO_ENABLE 0
-#define CS_GPIO_DISABLE 1
-#define CS_GPIO_NAME "SPH_CS_N"
-#endif
-
 static void sph_phy_enable(struct pci_dev *pdev)
 {
 	struct ehci_sph_pdata	*sph_pdata;
@@ -43,7 +33,7 @@ static void sph_phy_enable(struct pci_dev *pdev)
 		return;
 	if (!sph_pdata->has_gpio)
 		return;
-	gpio_direction_output(sph_pdata->gpio_cs_n, CS_GPIO_ENABLE);
+	gpio_direction_output(sph_pdata->gpio_cs_n, 0);
 
 	gpio_direction_output(sph_pdata->gpio_reset_n, 0);
 	usleep_range(200, 500);
@@ -61,7 +51,7 @@ static void sph_phy_disable(struct pci_dev *pdev)
 	if (!sph_pdata->has_gpio)
 		return;
 
-	gpio_direction_output(sph_pdata->gpio_cs_n, CS_GPIO_DISABLE);
+	gpio_direction_output(sph_pdata->gpio_cs_n, 1);
 }
 
 static int sph_gpio_init(struct pci_dev *pdev)
@@ -80,7 +70,7 @@ static int sph_gpio_init(struct pci_dev *pdev)
 		goto ret;
 
 	if (gpio_is_valid(sph_pdata->gpio_cs_n)) {
-		retval = gpio_request(sph_pdata->gpio_cs_n, CS_GPIO_NAME);
+		retval = gpio_request(sph_pdata->gpio_cs_n, "sph_phy_cs_n");
 		if (retval < 0) {
 			dev_err(&pdev->dev, "Request GPIO %d with error %d\n",
 			sph_pdata->gpio_cs_n, retval);

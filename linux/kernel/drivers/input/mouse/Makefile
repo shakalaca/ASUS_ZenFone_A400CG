@@ -23,10 +23,6 @@ obj-$(CONFIG_MOUSE_SYNAPTICS_I2C)	+= synaptics_i2c.o
 obj-$(CONFIG_MOUSE_SYNAPTICS_USB)	+= synaptics_usb.o
 obj-$(CONFIG_MOUSE_VSXXXAA)		+= vsxxxaa.o
 
-# Joe add for Elan touchpad driver ++
-obj-$(CONFIG_MOUSE_ELAN_TOUCHPAD)		+= elan_touchpad.o
-# Joe add for Elan touchpad driver --
-
 psmouse-objs := psmouse-base.o synaptics.o
 
 psmouse-$(CONFIG_MOUSE_PS2_ALPS)	+= alps.o

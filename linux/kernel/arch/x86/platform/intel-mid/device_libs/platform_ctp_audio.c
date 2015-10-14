@@ -37,12 +37,10 @@ void *ctp_audio_platform_data(void *info)
 	char name[SFI_NAME_LEN+1];
 
 	ctp_audio_pdata.codec_gpio_hsdet = get_gpio_by_name("gpio_plugdet");
-        pr_info("codec_gpio_hsdet:%d",ctp_audio_pdata.codec_gpio_hsdet);
-#ifdef CONFIG_A450CG
+#if defined(CONFIG_A450CG)
 	ctp_audio_pdata.codec_gpio_button = get_gpio_by_name("gpio_codec_int");
 #else
 	ctp_audio_pdata.codec_gpio_button = get_gpio_by_name("HOOK_DET");
-        pr_info("codec_gpio_button:%d",ctp_audio_pdata.codec_gpio_button);
 #endif
 	ctp_audio_pdata.codec_gpio_dmic = GPIO_DMIC_1_EN;
 	ret = add_sst_platform_device();
