@@ -541,6 +541,7 @@ static void set_project_config(void)
 #endif
 #endif
 #endif
+  ggb_config = ggb_config | 0x00000800;
 }
 
 static void update_project_config(void)
@@ -2905,7 +2906,8 @@ static void calibrate_rsoc(void)
 
     if(table_rsoc < current_rsoc)
     {
-      ug31_module.set_capacity_force(table_rsoc);
+//      ug31_module.set_capacity_force(table_rsoc);
+      GAUGE_err("[%s]: Inhibit set_capacity_force(%d)\n", __func__, table_rsoc);
     }
   }
 

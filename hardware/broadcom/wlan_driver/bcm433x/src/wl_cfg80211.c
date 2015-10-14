@@ -9235,6 +9235,9 @@ static s32 wl_notify_escan_complete(struct wl_priv *wl,
 	}
 #endif /* WL_SCHED_SCAN */
 	if (likely(wl->scan_request)) {
+/* fix kernel crash when wl->scan_request->wiphy==NULL*/
+		if(likely(wl->scan_request->wiphy))
+/* fix kernel crash when wl->scan_request->wiphy==NULL*/
 		cfg80211_scan_done(wl->scan_request, aborted);
 		wl->scan_request = NULL;
 	}
