@@ -69,6 +69,7 @@ extern int is_csv_call_active(void);
 extern int output_device_from_hal(void);
 static int is_asrc5_changed;
 
+static bool RingTone_coming = false;
 static int headphone_retry_time = 0;
 static int dac_is_unmute = 0;
 static int rt5640_index_write(struct snd_soc_codec *codec,
@@ -863,6 +864,7 @@ static int rt5640_scenario_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct rt5640_priv *rt5640 = snd_soc_codec_get_drvdata(codec);
+        unsigned int val;
 
 	printk("rt5640_scenario_put: value %d\n",ucontrol->value.integer.value[0]);
 
@@ -870,6 +872,39 @@ static int rt5640_scenario_put(struct snd_kcontrol *kcontrol,
 		return 0;
 
 	Hal_user_scenario_mode = ucontrol->value.integer.value[0];
+
+        val = snd_soc_read(codec, RT5640_STO_DAC_MIXER) & 0x4040;
+        snd_soc_update_bits(codec, RT5640_STO_DAC_MIXER, 0x4040, 0x4040);
+
+        if(Hal_user_scenario_mode == RINGTONE)
+            RingTone_coming = true;
+        else if(RingTone_coming) {
+
+            RingTone_coming = false;
+            if(Hal_user_scenario_mode == RECORD) {
+                if(gpio_get_value(JACK_DETECT_PIN) != 0) { //Board-mic DMIC
+                      snd_soc_write(codec, RT5640_DRC_AGC_1, 0xe226);
+                      snd_soc_write(codec, RT5640_DRC_AGC_2, 0x33b2);
+                      snd_soc_write(codec, RT5640_DRC_AGC_3, 0xa557);
+                } else { //Headset-mic AMIC
+                      snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
+                      snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+                      snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
+                }
+                printk("%s : update agc for recording after ringtone\n", __func__);
+            } else if(Hal_user_scenario_mode == PLAYBACK) {
+                rt5640_update_eqmode(codec, Hal_user_scenario_mode, A12_SPEAKER);
+                snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
+                snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+                snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
+            } else {
+                snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
+                snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+                snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
+            }
+
+        }
+        snd_soc_update_bits(codec, RT5640_STO_DAC_MIXER, 0x4040, val);
 
 	return 0;
 }
@@ -1873,13 +1908,6 @@ static int rt5640_spk_l_event(struct snd_soc_dapm_widget *w,
 			        rt5640_update_eqmode(codec, NONE, NONE);
 //			  rt5640_update_drc_agc_mode(codec, NONE, A12_SPEAKER);
 //			  rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, A12_SPEAKER, false);
-		          if (Hal_user_scenario_mode == RINGTONE) {
-			  	snd_soc_write(codec, RT5640_DRC_AGC_1, 0x0206);
-				snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
-				snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
-			  } else if(Hal_user_scenario_mode == RECORD) {
-				printk("%s : don't update drc for ringtone\n", __func__);
-			  }
                         }
 #endif
 			cancel_delayed_work_sync(&spk_amp_l_work);

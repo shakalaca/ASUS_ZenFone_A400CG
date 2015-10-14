@@ -588,6 +588,11 @@ extern int dhd_keep_alive_onoff(dhd_pub_t *dhd);
 #define DHD_MULTICAST6_FILTER_NUM	3
 #define DHD_MDNS_FILTER_NUM		4
 #define DHD_ARP_FILTER_NUM		5
+#define DHD_NETBIOS_FILTER_NUM				6
+#define DHD_IGMPV3_MEMBERSHIP_REPORT_NUM		7
+#define DHD_IGMPV2_MEMBERSHIP_REPORT_NUM		8
+#define DHD_ICMP_ROUTER_SOLICTITATION_NUM		9
+#define DHD_ICMPV6_MULTICAST_LISTENER_REPORT_NUM	10
 extern int 	dhd_os_enable_packet_filter(dhd_pub_t *dhdp, int val);
 extern void dhd_enable_packet_filter(int value, dhd_pub_t *dhd);
 extern int net_os_enable_packet_filter(struct net_device *dev, int val);

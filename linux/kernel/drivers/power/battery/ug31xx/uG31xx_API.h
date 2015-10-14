@@ -51,6 +51,10 @@
 #define UG31XX_I2C_HIGH_SPEED_MODE    (_UPI_FALSE_)
 #define UG31XX_I2C_TEM_BITS_MODE      (_UPI_FALSE_)
 
+extern CELL_TABLE *ptrCellTable;
+extern CELL_PARAMETER *ptrCellParameter;
+extern GGBX_FILE_HEADER *ptrGgbBuf;
+
 /* data struct */
 typedef enum _GGSTATUS{
   UG_SUCCESS                    = 0x00,
@@ -510,7 +514,7 @@ EXPORTS int upiGG_SetCycleCount(char *pObj, _upi_u16_ value);
 
 EXPORTS void upiGG_ReverseCurrent(char *pObj, _upi_bool_ reverse);
 
-EXPORTS void upiGG_AdjustCellTable(char *pObj, _upi_u16_ designCap);
+EXPORTS void upiGG_AdjustCellTable(CapacityDataType *data);
 
 EXPORTS GGSTATUS upiGG_GetNtcStatus(char *pObj);
 

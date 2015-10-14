@@ -4548,6 +4548,7 @@ dhd_preinit_ioctls(dhd_pub_t *dhd)
 
 //CY+ ASUS packet filter
 #if 0
+	//white list
 	dhd->pktfilter_count = 6;
 	/* Setup filter to allow only unicast */
 	dhd->pktfilter[DHD_UNICAST_FILTER_NUM] = "100 0 0 0 0x01 0x00";
@@ -4559,14 +4560,29 @@ dhd_preinit_ioctls(dhd_pub_t *dhd)
 	/* apply APP pktfilter */
 	dhd->pktfilter[DHD_ARP_FILTER_NUM] = "105 0 0 12 0xFFFF 0x0806";
 #else
-	dhd->pktfilter_count = 2;
+	//black list
+	dhd->pktfilter_count = 11;
 
-	/* Disallow Broadcast/Multicast packet */
-	dhd->pktfilter[0] = "100 0 0 0 0x01 0x01";
+	//Disallow following packet
+	dhd->pktfilter[DHD_UNICAST_FILTER_NUM] = NULL;
+	dhd->pktfilter[DHD_BROADCAST_FILTER_NUM] = "101 0 0 0 0xFFFFFFFFFFFF 0xFFFFFFFFFFFF";	//Broadcast packet
+	dhd->pktfilter[DHD_MULTICAST4_FILTER_NUM] = "102 0 0 0 0xFFFFFF 0x01005E";			//IPv4 Multicast packet
+	dhd->pktfilter[DHD_MULTICAST6_FILTER_NUM] = "103 0 0 0 0xFFFF 0x3333";				//IPv6 Multicast packet
+	dhd->pktfilter[DHD_MDNS_FILTER_NUM] = NULL;
+	dhd->pktfilter[DHD_ARP_FILTER_NUM] = NULL;
+	dhd->pktfilter[DHD_NETBIOS_FILTER_NUM] = "106 0 0 23 0xff00000000000000000000ffffffff00000000000078 0x11b6e5c0a80105c0a8016400890089003a09db329a00";//NETBIOS name query
+
+	dhd->pktfilter[DHD_IGMPV3_MEMBERSHIP_REPORT_NUM] = "110 0 0 14 0xf0000000000000000000000000000000ff00000000000000ff 0x46c000280000400001024350c0a80001e00000169404000022"; //IGMPv3 membership report packet
+	dhd->pktfilter[DHD_IGMPV2_MEMBERSHIP_REPORT_NUM] = "111 0 0 14 0xf0000000000000000000000000000000ff00000000000000ff 0x4600002052cd000001022fd6c0a8008fe00000fd9404000016"; //IGMPv2 membership report packet	
+	dhd->pktfilter[DHD_ICMP_ROUTER_SOLICTITATION_NUM] = "114 0 0 14 0xf0000000000000000000000000000000000000000000000000000000000000000000000000000000ff 0x6000000000103afffe800000000000003a2c4afffe0bd7e2ff02000000000000000000000000000285"; //ICMP Router Solicitation packet
+	dhd->pktfilter[DHD_ICMPV6_MULTICAST_LISTENER_REPORT_NUM] = "112 0 0 14 0xf00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff 0x6000000000240001fe800000000000003a2c4afffe0bd7e2ff0200000000000000000000000000163a000502000001008f"; //ICMPv6 Multicast Listener Report packet
+
+        /* Disallow Broadcast/Multicast packet */
+//	dhd->pktfilter[0] = "100 0 0 0 0x01 0x01";
 //	dhd->pktfilter[0] = NULL;
 
 	/* Disallow NETBIOS name query */
-	dhd->pktfilter[1] = "101 0 0 23 0xff00000000000000000000ffffffff00000000000078 0x11b6e5c0a80105c0a8016400890089003a09db329a00";	
+//	dhd->pktfilter[1] = "101 0 0 23 0xff00000000000000000000ffffffff00000000000078 0x11b6e5c0a80105c0a8016400890089003a09db329a00";
 
 #endif
 //CY-
@@ -6172,16 +6188,7 @@ int net_os_send_hang_message(struct net_device *dev)
 
 //CY+ call cfg80211_new_sta() with mac=ff:ff:ff:ff:ff:ff when SoftAP hang
 		if(dhd->pub.op_mode == DHD_FLAG_HOSTAP_MODE){
-			u8 addr[6]={0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-			u8 data = 0;
-			struct station_info sinfo;
-			sinfo.filled = 0;
-			sinfo.filled = STATION_INFO_ASSOC_REQ_IES;
-			sinfo.assoc_req_ies = &data;
-			sinfo.assoc_req_ies_len = 1;
-
-			DHD_ERROR(("%s: FW HANG, DHD_FLAG_HOSTAP_MODE, call cfg80211_new_sta()\n", __FUNCTION__));
-			cfg80211_new_sta(dev, addr, &sinfo, GFP_ATOMIC);
+		dev_close(dev);
 		}
 		else
 //CY-

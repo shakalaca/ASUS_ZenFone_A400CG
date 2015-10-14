@@ -145,8 +145,8 @@ static void dump_meminfo()
         task_unlock(p);
         if (tasksize <= 0)
             continue;
-        lowmem_print(1, "PID:%d P_Name:%s PSS:%lu Adj:%d Size:%d KB\n"
-          ,p->pid, p->comm,get_mm_pss(p->mm), oom_score_adj, tasksize *4);
+        lowmem_print(1, "PID:%d P_Name:%s Adj:%d Size:%d KB\n"
+          ,p->pid, p->comm, oom_score_adj, tasksize *4);
     }
 }
 

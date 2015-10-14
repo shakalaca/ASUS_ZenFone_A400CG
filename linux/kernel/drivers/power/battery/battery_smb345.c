@@ -40,11 +40,11 @@ static bool is_pad_present();
 static void smb345_config_max_current(int usb_state);
 static bool g_disable_700 = true;
 static bool g_init_disable_aicl = true;
-#if defined(CONFIG_A400CG)
+#if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int a400cg_1200_1600 = 1600;
 static void check_battery_match_device();
 #endif
-#if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static void check_battery_id();
 #endif
 
@@ -372,7 +372,7 @@ static const unsigned int icl_tbl[] = {
 };
 
 /* AICL Results Table (mA) : 3Fh */
-#if defined(CONFIG_A400CG) || defined(CONFIG_ME175CG)
+#if defined(CONFIG_A400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_ZC400CG)
 static const unsigned int aicl_results[] = {
     300,
     500,
@@ -973,7 +973,7 @@ int smb345_soc_control_jeita(void)
     }
     #endif
 
-    #if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG)
+    #if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG)
     /* write 07h[1:0]="00" */
     ret = cancel_soft_hot_temp_limit(true);
     if (ret) {
@@ -1007,7 +1007,7 @@ int smb345_charger_control_jeita(void)
     ret = smb345_masked_write(smb345_dev->client,
         HARD_SOFT_LIMIT_CELL_TEMP_MONITOR_REG,
         HARD_LIMIT_HOT_CELL_TEMP_MASK,
-        #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ME175CG)
+        #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ME175CG) || defined(CONFIG_ZC400CG)
         BIT(4));
         #else
         0x00);
@@ -1029,7 +1029,7 @@ int smb345_charger_control_jeita(void)
         return ret;
     }
 
-    #if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG)
+    #if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG)
     /* write 07h[1:0]="10" */
     ret = cancel_soft_hot_temp_limit(false);
     if (ret) {
@@ -1133,7 +1133,7 @@ int smb345_soc_control_float_vol(int bat_temp)
     if (ret < 0)
         return ret;
 
-    #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ME175CG)
+    #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_ZC400CG)
     /* acquire battery voltage here */
     ret = get_battery_voltage(&batt_volt);
     if (ret) {
@@ -1205,7 +1205,7 @@ int smb345_soc_control_float_vol(int bat_temp)
                 FLOAT_VOLTAGE_MASK,
                 0x1E);
         }
-        #elif defined(CONFIG_A400CG)
+        #elif defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
         if (bat_temp < 450) {
             if (batt_volt < 4110) {
                 /* write 03h[5:0]="011110"*/
@@ -1482,7 +1482,7 @@ static int config_otg_regs(int toggle)
 
     return ret;
 }
-#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int config_otg_regs(int toggle)
 {
     int ret;
@@ -1747,7 +1747,7 @@ fail:
 }
 
 /* enable USB5 or USB9 and HC mode pin control function */
-#if !defined(CONFIG_PF400CG) && !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG)
+#if !defined(CONFIG_PF400CG) && !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG)
 static int smb345_USB9_HC_PIN_Control(bool on)
 {
     int ret;
@@ -1902,7 +1902,7 @@ static int smb346_set_pad_supply_dc_in_limits(int rsoc)
     return ret;
 }
 
-#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG)
+#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG)
 static int smb345_set_current_limits(int usb_state, bool is_twinsheaded)
 {
     int ret, index=-1;
@@ -2297,7 +2297,7 @@ static int smb358_pre_config()
 fail:
     return ret;
 }
-#elif defined(CONFIG_A400CG)
+#elif defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int smb358_pre_config()
 {
     int ret;
@@ -2310,7 +2310,7 @@ static int smb358_pre_config()
     if (is_battery_id_51k() || is_battery_id_100k()) {
         charging_curr = SMB358_FAST_CHG_CURRENT_VALUE_600mA;
     }
-    else if (is_battery_id_10k()) {
+    else if (is_battery_id_10k() || is_battery_id_0k()) {
         charging_curr = SMB358_FAST_CHG_CURRENT_VALUE_900mA;
     }
     else {
@@ -2335,7 +2335,7 @@ static int smb358_pre_config()
         return ret;
 
     /* set termination current: 80mA or 100mA */
-    if (is_battery_id_10k())
+    if (is_battery_id_10k() || is_battery_id_0k())
         term_curr = SMB358_TERMINATION_CURRENT_VALUE_100mA;
     ret = smb345_masked_write(smb345_dev->client,
         CHG_CURRENT_REG,
@@ -2472,7 +2472,7 @@ static void smb3xx_config_max_current(int usb_state)
 
     g_init_disable_aicl = false;
 }
-#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#elif defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static void smb3xx_config_max_current(int usb_state)
 {
     #if 0
@@ -2705,7 +2705,7 @@ static void smb3xx_config_max_current(int usb_state)
             return;
         }
 
-#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG)
+#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG)
         /* Set USB5/1/HC to register control - Write 06h[4]="0" */
         if (smb345_USB9_HC_PIN_Control(false) < 0) {
             dev_err(&smb345_dev->client->dev,
@@ -2725,7 +2725,7 @@ static void smb3xx_config_max_current(int usb_state)
 #endif
     }
     else if (usb_state == USB_IN) {
-#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG)
+#if !defined(CONFIG_ME175CG) && !defined(CONFIG_A400CG) && !defined(CONFIG_ZC400CG)
         /* Set I_USB_IN=500mA - Write 01h[3:0]="0001" */
         if (smb345_set_current_limits(USB_IN, false) < 0) {
             dev_err(&smb345_dev->client->dev,
@@ -3637,7 +3637,7 @@ static irqreturn_t smb345_inok_interrupt(int irq, void *data)
     return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_A400CG
+#if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int pcb_id11_gpio_init(struct smb345_charger *smb)
 {
     const struct smb345_charger_platform_data *pdata = smb->pdata;
@@ -3688,7 +3688,7 @@ bool is_A400CG_1600mA_device()
 EXPORT_SYMBOL(is_A400CG_1600mA_device);
 #endif
 
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int smb346_otg_gpio_init(struct smb345_charger *smb)
 {
     const struct smb345_charger_platform_data *pdata = smb->pdata;
@@ -4068,7 +4068,7 @@ static const struct file_operations smb345_debugfs_fops2 = {
 };
 #endif
 
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ZC400CG)
 static int smb346_routine_aicl_control()
 {
     BAT_DBG(" %s\n", __func__);
@@ -4160,7 +4160,7 @@ static inline int get_battery_rsoc(int *rsoc)
 }
 
 /* only smb348/smb358 support it */
-#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static int smb345_recharge_voltage(charger_jeita_state_t charger_jeita_state)
 {
     int ret;
@@ -4587,7 +4587,7 @@ static int smb345_probe(struct i2c_client *client,
     if (ret < 0)
         return ret;
 
-    #ifdef CONFIG_A400CG
+    #if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     /* A400CG GP_CORE_073 PCB_ID11 for 1200mA/1600mA board recognition */
     ret = pcb_id11_gpio_init(smb);
     if (ret < 0)
@@ -4624,7 +4624,7 @@ static int smb345_probe(struct i2c_client *client,
        We must invoke check_battery_id() before smb345_config_max_current()
        is invoked.
     */
-    #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG)
+    #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     check_battery_id();
     #endif
     /* Attention:
@@ -4633,7 +4633,7 @@ static int smb345_probe(struct i2c_client *client,
        check_battery_match_device() after pcb_id11_gpio_init() and
        check_battery_id() are invoked.
     */
-    #if defined(CONFIG_A400CG)
+    #if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     check_battery_match_device();
     #endif
     /* ME372CG charge current control algorithm:
@@ -4685,15 +4685,17 @@ static int smb345_probe(struct i2c_client *client,
 static bool check_valid_battery_id(valid_battery_id_t resistors)
 {
     struct sfi_table_simple *sb;
-    u8 batt_id_thres[6][2] = {0};
+    u8 batt_id_thres[8][2] = {0};
     int rett = 0;
     char *id_num_00;
     char *id_num_01;
     char *id_num_02;
+    char *id_num_03;
     char *ID_STR[] = {
         "00ICDK",
         "01ICDK",
-        "02ICDK"
+        "02ICDK",
+        "03ICDK"
     };
     int battery_id_resistor = resistors;
 
@@ -4841,6 +4843,49 @@ static bool check_valid_battery_id(valid_battery_id_t resistors)
         }
     }
 
+    id_num_03 = strstr(sb->header.oem_id, ID_STR[3]);
+    if (id_num_03) {
+        /* FW told that it match the threshold between B4IDMIN and B4IDMAX */
+        rett = intel_scu_ipc_read_mip(batt_id_thres[6], ID_BYTES, B4IDMIN, 1);
+        if (rett)
+            BAT_DBG_E("%s: *** failed to read MIP 0x%04X(%d) ***\n",
+                __func__,
+                B3IDMIN,
+                rett);
+        else
+            BAT_DBG("%s: B3IDMIN=0x%X,0x%X\n", __func__,
+                batt_id_thres[6][0], batt_id_thres[6][1]);
+
+        rett = intel_scu_ipc_read_mip(batt_id_thres[7], ID_BYTES, B4IDMAX, 1);
+        if (rett)
+            BAT_DBG_E("%s: *** failed to read MIP 0x%04X(%d) ***\n",
+                __func__,
+                B3IDMAX,
+                rett);
+        else
+            BAT_DBG("%s: B3IDMAX=0x%X,0x%X\n", __func__,
+                batt_id_thres[7][0], batt_id_thres[7][1]);
+
+        /* if battery_id_resistor satisfy the min/max range */
+        if (battery_id_resistor >= batt_id_thres[6][0] &&
+            battery_id_resistor <= batt_id_thres[7][0]) {
+            BAT_DBG("%s: battery_id_resistor(%dK) is in range[0x%02X, 0x%02X]\n",
+                __func__,
+                battery_id_resistor,
+                batt_id_thres[6][0],
+                batt_id_thres[7][0]);
+            return true;
+        }
+        else {
+            BAT_DBG("%s: battery_id_resistor(%dK) is out of range[0x%02X, 0x%02X]\n",
+                __func__,
+                battery_id_resistor,
+                batt_id_thres[6][0],
+                batt_id_thres[7][0]);
+            return false;
+        }
+    }
+
     BAT_DBG_E("%s: *** UNKNOWN BATTERY: what the hell are you? ***\n",
         __func__);
 
@@ -4849,21 +4894,24 @@ static bool check_valid_battery_id(valid_battery_id_t resistors)
 static bool id_51k = false;
 static bool id_100k = false;
 static bool id_10k = false;
+static bool id_0k = false;
 bool is_battery_id_51k() { return id_51k; }
 bool is_battery_id_100k() { return id_100k; }
 bool is_battery_id_10k() { return id_10k; }
+bool is_battery_id_0k() { return id_0k; }
 static void check_battery_id()
 {
 #if defined(CONFIG_PF400CG)
     id_51k = check_valid_battery_id(ID51K);
     id_100k = check_valid_battery_id(ID100K);
-#elif defined(CONFIG_A400CG)
+#elif defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     id_51k = check_valid_battery_id(ID51K);
     id_100k = check_valid_battery_id(ID100K);
     id_10k = check_valid_battery_id(ID10K);
+    id_0k = check_valid_battery_id(ID0K);
 #endif
 }
-#if defined(CONFIG_A400CG)
+#if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 static char* battery_match_device;
 static void check_battery_match_device()
 {
@@ -4877,7 +4925,7 @@ static void check_battery_match_device()
 
     /* PASS if 1600mAh battery insert into 1600 device */
     if (is_A400CG_1600mA_device()) {
-        if (id_10k) {
+        if (id_10k || id_0k) {
             battery_match_device = "PASS";
             return;
         }
@@ -4915,7 +4963,7 @@ static int smb345_shutdown(struct i2c_client *client)
 {
     dev_info(&client->dev, "%s\n", __func__);
 
-#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_PF400CG) || defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
     //cancel_delayed_work(&smb345_dev->aicl_dete_work);
 #endif
 
@@ -5049,7 +5097,7 @@ MODULE_DESCRIPTION("SMB345 battery charger driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("i2c:smb345");
 
-#if defined(CONFIG_A400CG)
+#if defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 module_param(a400cg_1200_1600, int, 0444);
 MODULE_PARM_DESC(a400cg_1200_1600, "Acquire the correct device for A400CG.");
 module_param(battery_match_device, charp, 0444);

@@ -80,17 +80,21 @@ int pmic_dump_registers(int dump_mask, struct seq_file *s);
 #define B2IDMAX     0x4A3
 #define B3IDMIN     0x4E2
 #define B3IDMAX     0x4E4
+#define B4IDMIN     0x523
+#define B4IDMAX     0x525
 int pmic_get_batt_id(void);
 
 typedef enum {
     ID51K = 51,
     ID100K = 100,
     ID10K = 10,
+    ID0K = 0,
 } valid_battery_id_t;
 
 bool is_battery_id_51k();
 bool is_battery_id_100k();
 bool is_battery_id_10k();
+bool is_battery_id_0k();
 
 /* To config hard/soft limit cell temperature
  * monitor for soc control JEITA function
@@ -131,7 +135,7 @@ int smb345_soc_control_float_vol(int bat_temp);
 #define STOP_CHARGING_LOW_TEMPERATURE   0
 #define STOP_CHARGING_HIGH_TEMPERATURE  550
 #define FLOAT_VOLTAGE_TEMPERATURE_THRESHOLD 500
-#elif defined(CONFIG_A400CG)
+#elif defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
 #define STOP_CHARGING_LOW_TEMPERATURE   0
 #define STOP_CHARGING_HIGH_TEMPERATURE  600
 #define FLOAT_VOLTAGE_TEMPERATURE_THRESHOLD 500
