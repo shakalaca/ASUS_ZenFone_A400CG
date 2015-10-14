@@ -5401,7 +5401,7 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 	reset_otg();
 	init_hsm();
 
-	if (Read_PROJ_ID()==PROJ_ID_PF400CG)
+	if (Read_PROJ_ID()==PROJ_ID_A400CG)
 		pnw->otg_state = false;  //disable otg function
 
 #ifdef CONFIG_HID_ASUS_PAD_EC
