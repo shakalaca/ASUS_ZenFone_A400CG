@@ -742,20 +742,7 @@ int rt5640_headset_detect(struct snd_soc_codec *codec, int jack_insert)
 			if ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0 || (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1000) != 0)
 				snd_soc_update_bits(codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, 0x0);
 		}
-
-/*		if (headphone_retry_time == 5 && (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1800) == 0 && dac_is_unmute == 1) {
-			printk("joe headphone retry, unmute mx61\n");
-			snd_soc_update_bits(codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1);
-			dac_is_unmute = 0;
-		} else {
-			// joe_cheng : Workaround for TT#331186, TT#333088
-			pr_debug("%s mute DAC1 earlier when headset insert\n", __func__);
-			printk("joe MX61 %x\n", snd_soc_read(codec, RT5640_PWR_DIG1));
-			if ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0)
-				dac_is_unmute = 1;
-			snd_soc_update_bits(codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, 0x0);
-		}
-*/	} else {
+	} else {
 		snd_soc_update_bits(codec, RT5640_MICBIAS,
 			RT5640_MIC1_OVCD_MASK,
 			RT5640_MIC1_OVCD_DIS);
@@ -3837,6 +3824,12 @@ static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 
 static void do_hp_amp(struct work_struct *work)
 {
+        pr_debug("%s MX-61h %x\n", __func__, snd_soc_read(rt5640_codec, RT5640_PWR_DIG1));
+        // joe_cheng : Workaround for TT#331186, TT#333088
+        if ((snd_soc_read(rt5640_codec, RT5640_PWR_DIG1) & 0x18c0) == 0) {
+                snd_soc_update_bits(rt5640_codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1);
+        }
+        //msleep(20);
 	snd_soc_update_bits(rt5640_codec, RT5640_DEPOP_M3,
 		RT5640_CP_FQ1_MASK | RT5640_CP_FQ2_MASK | RT5640_CP_FQ3_MASK,
 		(RT5640_CP_FQ_192_KHZ << RT5640_CP_FQ1_SFT) |
