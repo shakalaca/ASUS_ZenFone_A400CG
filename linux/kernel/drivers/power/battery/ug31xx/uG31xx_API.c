@@ -25,11 +25,11 @@ _upi_bool_ MPK_active = _UPI_FALSE_;
 
 #if defined (uG31xx_OS_WINDOWS)
 
-  #define UG31XX_API_VERSION      (_T("UG31XX API $Rev: 571 $"))
+  #define UG31XX_API_VERSION      (_T("UG31XX API $Rev: 605 $"))
 
 #else
 
-  #define UG31XX_API_VERSION      ("UG31XX API $Rev: 571 $")
+  #define UG31XX_API_VERSION      ("UG31XX API $Rev: 605 $")
 
 #endif
 
@@ -590,7 +590,9 @@ _upi_u32_ CountTotalTime(_upi_u32_ savedTimeTag)
 	} 				
   else
   {
-    totalTime = 0;
+    totalTime = 0xffffffff;
+    totalTime = totalTime - savedTimeTag;
+    totalTime = totalTime + currentTime;
   }
 	UG31_LOGE("[%s]current time/save Time/totalTime = %d/%d/%d \n",
 							__func__,
@@ -642,6 +644,7 @@ void CheckInitCapacityFromCC(struct ug31xx_data *pUg31xx)
 #else   ///< else of WAKEUP_TIME_THRD_1_HOUR
 #define MAX_DELTA_TIME_THRESHOLD_FOR_WAKEUP     (MS_IN_A_DAY)
 #endif  ///< end of WAKEUP_TIME_THRD_1_HOUR
+#define MAX_DELTA_CC_CNT_THRESHOLD_FOR_WAKEUP   (MAX_DELTA_TIME_THRESHOLD_FOR_WAKEUP/125)
 #define MAX_DELTA_RSOC_THRESHOLD_FOR_TABLE      (10)
 #define MIN_DELTA_RSOC_THRESHOLD_FOR_TABLE      (-10)
 
@@ -659,7 +662,8 @@ void CmpCapData(struct ug31xx_data *pUg31xx, _upi_bool_ initial)
   _upi_s16_ deltaQC;
   _upi_s32_ tmp32;
 
-  if(CountTotalTime(pUg31xx->sysData.timeTagFromIC) > MAX_DELTA_TIME_THRESHOLD_FOR_WAKEUP)
+  if((CountTotalTime(pUg31xx->sysData.timeTagFromIC) > MAX_DELTA_TIME_THRESHOLD_FOR_WAKEUP) ||
+     (pUg31xx->measData.lastCounter > MAX_DELTA_CC_CNT_THRESHOLD_FOR_WAKEUP))
   {
     /// [AT-PM] : Check the data accuracy ; 01/27/2013
     deltaQC = (_upi_s16_)pUg31xx->sysData.rsocFromIC;
@@ -1437,8 +1441,10 @@ void upiGG_ShellUpdateCC(char *pObj)
 void upiGG_ReadCapacity(char *pObj, GG_CAPACITY *pExtCapacity)
 {
   struct ug31xx_data *pUg31xx;
-  _upi_u8_ prevCapStsFC;
-  _upi_u8_ nowCapStsFC;
+  #ifndef UG31XX_SHELL_ALGORITHM
+    _upi_u8_ prevCapStsFC;
+    _upi_u8_ nowCapStsFC;
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
 
   pUg31xx = (struct ug31xx_data *)pObj;
 
@@ -4316,6 +4322,7 @@ int lkm_suspend(char dc_in)
 {
   GGSTATUS rtn;
 
+  rtn = 0;
   upiGG_BackupFileSwitch(_UPI_FALSE_);
 
   lkm_last_update_time_tag = GetSysTickCount();
@@ -4328,11 +4335,13 @@ int lkm_suspend(char dc_in)
     lkm_operation_mode = LKM_OPERATION_MODE_ENTER_SUSPEND;
     lkm_suspend_update_delay = 0;
     upiGG_InternalSuspendMode(lkm_gauge, _UPI_TRUE_);
+#ifndef FEATURE_DISABLE_SUSPEND_OPERATION
     rtn = upiGG_PreSuspend(lkm_gauge);
     rtn = lkm_check_fail_cnt((rtn == UG_READ_DEVICE_INFO_SUCCESS) ? _UPI_TRUE_ : _UPI_FALSE_);
     return (rtn);
+#endif  ///< end of FEATURE_DISABLE_SUSPEND_OPERATION
   }
-  return (0);
+  return (rtn);
 }
 
 /**
@@ -4442,6 +4451,7 @@ int lkm_resume(char user_space_response)
   GGSTATUS rtn;
   GG_DEVICE_INFO *devInfo;
 
+  rtn = 0;
   lkm_last_update_time_tag = GetSysTickCount();
 
   if(lkm_operation_mode == LKM_OPERATION_MODE_ENTER_SUSPEND)
@@ -4455,13 +4465,13 @@ int lkm_resume(char user_space_response)
     {
       return (-1);
     }
-    
+#ifndef FEATURE_DISABLE_SUSPEND_OPERATION
     rtn = upiGG_Wakeup(lkm_gauge, lkm_dc_in_before_suspend);
     if(rtn == UG_READ_DEVICE_INFO_SUCCESS)
     {
       rtn = upiGG_GetAlarmStatus(lkm_gauge, &lkm_alarm_status);
     }
-
+#endif  ///< end of FEATURE_DISABLE_SUSPEND_OPERATION
     upiGG_InternalSuspendMode(lkm_gauge, _UPI_FALSE_);
     
     if(rtn == UG_MEAS_FAIL_BATTERY_REMOVED)
@@ -5179,7 +5189,6 @@ int lkm_get_taper_current(void)
 int lkm_get_full_charge_status(void)
 {
   struct ug31xx_data *ug31xx;
-  _upi_bool_ fc_sts;
 
   ug31xx = (struct ug31xx_data *)lkm_gauge;
 
@@ -6263,7 +6272,7 @@ int lkm_shell_backup(void)
 unsigned char * lkm_shell_memory(int *mem_size)
 {
   *mem_size = (int)sizeof(struct ug31xx_data);
-  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, lkm_gauge[0], lkm_gauge, (*mem_size));
+  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, lkm_gauge[0], (unsigned int)lkm_gauge, (*mem_size));
   return (lkm_gauge);
 }
 
@@ -6282,7 +6291,7 @@ unsigned char * lkm_shell_backup_memory(int *mem_size)
   ug31xx = (struct ug31xx_data *)lkm_gauge;
   
   *mem_size = ug31xx->backupData.backupBufferSize;
-  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->backupData.backupBuffer[0], ug31xx->backupData.backupBuffer, (*mem_size));
+  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->backupData.backupBuffer[0], (unsigned int)ug31xx->backupData.backupBuffer, (*mem_size));
   return (ug31xx->backupData.backupBuffer);
 }
 
@@ -6301,7 +6310,7 @@ unsigned char * lkm_shell_table_memory(int *mem_size)
   ug31xx = (struct ug31xx_data *)lkm_gauge;
   
   *mem_size = ug31xx->capData.tableSize;
-  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->capData.encriptBuf[0], ug31xx->capData.encriptBuf, (*mem_size));
+  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->capData.encriptBuf[0], (unsigned int)ug31xx->capData.encriptBuf, (*mem_size));
   return (ug31xx->capData.encriptBuf);
 }
 
@@ -6320,7 +6329,7 @@ unsigned char * lkm_shell_table_buf_memory(int *mem_size)
   ug31xx = (struct ug31xx_data*)lkm_gauge;
   
   *mem_size = ug31xx->capData.tableSize;
-  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->capData.encriptBuf[0], ug31xx->capData.encriptBuf, (*mem_size));
+  UG31_LOGN("[%s]: memory[0] = %02x (%x-%d)\n", __func__, ug31xx->capData.encriptBuf[0], (unsigned int)ug31xx->capData.encriptBuf, (*mem_size));
   return (ug31xx->capData.encriptBuf);
 }
 
@@ -6333,7 +6342,6 @@ static GGBX_FILE_HEADER *sys_ggbXBuf;
 static CELL_PARAMETER *sys_ggbParameter;
 static CELL_TABLE *sys_ggbCellTable;
 static OtpDataType *sys_otpData;
-static CapacityDataType *backup_capData;
 static SystemDataType *backup_sysData;
 static MeasDataType *backup_measData;
 
@@ -6361,8 +6369,6 @@ int lkm_backup_pointer(void)
   sys_otpData = ug31xx->sysData.otpData;
   backup_sysData = ug31xx->backupData.sysData;
   backup_measData = ug31xx->backupData.measData;
-  UG31_LOGN("[%s]: cap_ggbParameter, cap_ggbTable, cap_measurement = %d, %d, %d\n", __func__, 
-            cap_ggbParameter, cap_ggbTable, cap_measurement);
   return (0);
 }
 
@@ -6390,8 +6396,6 @@ int lkm_restore_pointer(void)
   ug31xx->sysData.otpData = sys_otpData;
   ug31xx->backupData.sysData = backup_sysData;
   ug31xx->backupData.measData = backup_measData;
-  UG31_LOGN("[%s]: cap_ggbParameter, cap_ggbTable, cap_measurement = %d, %d, %d\n", __func__, 
-            ug31xx->capData.ggbParameter, ug31xx->capData.ggbTable, ug31xx->capData.measurement);
   return (0);
 }
 

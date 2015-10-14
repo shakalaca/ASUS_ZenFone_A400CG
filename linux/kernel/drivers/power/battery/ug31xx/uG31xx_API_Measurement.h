@@ -4,7 +4,7 @@
  *  Header for uG31xx measurement API
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 535 $
+ * @revision  $Revision: 81 $
  */
 
 typedef signed char       _meas_s8_;
@@ -92,6 +92,20 @@ typedef struct MeasDataST {
   _meas_u16_ codeInstExtTemperature;
   _meas_s32_ codeCharge;
 
+  /// [AT-PM] : ADC code filter ; 04/15/2014
+  _meas_u32_ filterSumBat1;
+  _meas_u32_ filterSumBat2;
+  _meas_u32_ filterSumBat3;
+  _meas_u32_ filterSumIntTemperature;
+  _meas_u8_ filterCntBat1;
+  _meas_u8_ filterCntBat2;
+  _meas_u8_ filterCntBat3;
+  _meas_u8_ filterCntIntTemperature;
+  _meas_u16_ filterBat1;
+  _meas_u16_ filterBat2;
+  _meas_u16_ filterBat3;
+  _meas_u16_ filterIntTemperature;
+  
   /// [AT-PM] : Coulomb counter offset ; 01/23/2013
   _meas_s16_ ccOffset;
   _meas_s8_ ccOffsetAdj;

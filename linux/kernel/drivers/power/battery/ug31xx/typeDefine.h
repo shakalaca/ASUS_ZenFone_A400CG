@@ -158,6 +158,7 @@ typedef struct ADC_CHECK
   _upi_u16_ failCounterCurrent;
   _upi_u16_ failCounterVoltage;
   _upi_bool_ decimateRst;
+  _upi_u32_ decimateRstTime;
 } ALIGNED_ATTRIBUTE ADC_CHECK;
 
 typedef struct USER_REGISTER

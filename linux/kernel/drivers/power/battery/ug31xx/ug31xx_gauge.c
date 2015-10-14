@@ -22,13 +22,13 @@
 #include <linux/sysfs.h>
 
 #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG)
-#include "ug31xx_ggb_data_PF400CG_PR2_20140306_131224.h"
-#include "ug31xx_ggb_data_PF400CG_2ND_20140306_131721.h"
-#include "ug31xx_ggb_data_A400CG_DEF_20140306_132212.h"
-#include "ug31xx_ggb_data_A400CG_3RD_20140408_153802.h"
+#include "ug31xx_ggb_data_PF400CG_PR2_20140506_125236.h"
+#include "ug31xx_ggb_data_PF400CG_2ND_20140506_125657.h"
+#include "ug31xx_ggb_data_A400CG_DEF_20140506_123742.h"
+#include "ug31xx_ggb_data_A400CG_3RD_20140506_124040.h"
 #else // ME175CG && A450CG
 #if defined(CONFIG_A450CG)
-#include "ug31xx_ggb_data_A450CG_DEF_20140326_110948.h"
+#include "ug31xx_ggb_data_A450CG_DEF_20140506_124636.h"
 #else // ME175CG
 #include "ug31xx_ggb_data_ME175CG_SANYO_20140310_171120.h"
 #endif
@@ -41,6 +41,9 @@
 #include <linux/miscdevice.h>
 #include <linux/proc_fs.h>
 #include <linux/version.h>
+
+#include <linux/timer.h>
+#include <linux/hrtimer.h>
 
 //#define	UPI_CALLBACK_FUNC	            ///< [AT-PM] : Used for removing callback function ; 04/15/2013
 #define	UG31XX_DYNAMIC_POLLING	      ///< [AT-PM] : Used for dynamic polling time ; 04/30/2013
@@ -81,13 +84,18 @@ extern bool is_A400CG_1600mA_device();
 struct switch_dev batt_dev;
 
 #define UG31XX_USER_DAEMON_VER_LENGTH   (16)
-#define	UG31XX_CALI_BO_FACTORY_DELAY	  (1)
+#define UG31XX_CALI_BO_FACTORY_DELAY	 (300)
+#define UG31XX_CALI_BO_CHARGER_OFF_DELAY (2000)
 #define UG31XX_CALI_BO_LOW_TEMP         (100)
 #define UG31XX_CALI_BO_HIGH_TEMP        (450)
 #define UG31XX_CALI_BO_LOOP             (5)
 #define UG31XX_RETRY_DELAY_TIME         (30) ///< [FC] : retry timer ; 03/11/2014
 #define UG31XX_RESET_DELAY_TIME         (5) ///< [FC] : reset timer ; 03/11/2014
 #define UG31XX_RETRY_TIME               (5) ///< [FC] : retry time ; 03/11/2014
+#define UG31XX_KBO_COUNT                (20)
+#define UG31XX_TIME_MSEC_TO_SEC         (1000)
+#define UG31XX_TIME_USEC_TO_SEC         (1000000)
+#define UG31XX_KBO_WAKE_LOCK_TIMEOUT    (10)
 
 struct ug31xx_gauge {
 #if defined(CONFIG_HAS_EARLYSUSPEND) && defined(UG31XX_EARLY_SUSPEND)
@@ -136,6 +144,7 @@ struct ug31xx_gauge {
 	char effective_board_offset[8];
 	char daemon_ver[UG31XX_USER_DAEMON_VER_LENGTH];
 	int daemon_uevent_count;
+    struct hrtimer kbo_timer;
 };
 
 static void batt_info_update_work_func(struct work_struct *work);
@@ -183,6 +192,10 @@ static void batt_info_update_work_func(struct work_struct *work);
 #define UG31XX_IOCTL_ALGORITHM_SET_DATA       _IO(UG31XX_IOC_MAGIC, 32)
 #define UG31XX_IOCTL_ALGORITHM_SET_DATA_RUN   _IOWR(UG31XX_IOC_MAGIC, 33, unsigned char *)
 #define UG31XX_IOCTL_ALGORITHM_SET_DATA_END   _IO(UG31XX_IOC_MAGIC, 34)
+#define UG31XX_IOCTL_KBO_START                _IO(UG31XX_IOC_MAGIC, 35)
+#define UG31XX_IOCTL_KBO_STOP                 _IO(UG31XX_IOC_MAGIC, 36)
+#define UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO    _IO(UG31XX_IOC_MAGIC, 37)
+#define UG31XX_IOCTL_CURRENT_NOW              _IOWR(UG31XX_IOC_MAGIC, 38, unsigned char *)
 
 #endif	///< end of UG31XX_MISC_DEV
 
@@ -259,10 +272,14 @@ static bool user_space_in_progress = false;
 static bool force_update_backup_file = false;
 static bool enable_board_offset_cali_at_eoc = false;
 static int kbo_result = 0;
+static int kbo_queue[UG31XX_KBO_COUNT];
 static bool kbo_file_exist = false;
+static bool kbo_auto_file_exist = false;
 static int board_offset_cali_loop = 0;
 static int board_offset_cali_avg = 0;
 static int board_offset_cali_init = 0;
+static int board_offset_cali_max = 0;
+static int board_offset_cali_min = 0;
 static bool board_offset_cali_finish = false;
 static int ggb_board_offset = 0;
 static int ntc_offset = 0;
@@ -275,6 +292,7 @@ static int ioctl_data_trans_size = 0;
 static unsigned char *ioctl_data_trans_ptr = NULL;
 static unsigned char ioctl_data_trans_buf[UG31XX_IOCTL_TRANS_DATA_SIZE];
 static int retry_cnt = 0;
+static int kbo_cnt = 0;
 static int op_actions = UG31XX_OP_NORMAL;
 static bool unknown_battery = false;
 bool get_unknown_battery() { return unknown_battery; }
@@ -360,7 +378,7 @@ static void set_project_config(void)
 	}
 	else if(hwid == HW_ID_MP || hwid == HW_ID_MP2)
 	{
-		ggb_board_offset = -7;
+		ggb_board_offset = -10;
 		ntc_offset = 29;
 		standby_current = 3;
 		ggb_board_gain = 954;
@@ -373,9 +391,19 @@ static void set_project_config(void)
 		ggb_board_gain = 953;
 	}
 #else	///< A400CG
-	if(hwid == HW_ID_PR || hwid == HW_ID_MP || hwid == HW_ID_MP2 || is_A400CG_1600mA_device())
+  if(is_A400CG_1600mA_device())
+  {
+		ggb_board_offset = -13;
+		ntc_offset = 29;
+		standby_current = 3;
+    if((hwid != HW_ID_PR) && (hwid != HW_ID_MP) && (hwid != HW_ID_MP2))
+    {
+      ggb_board_gain = 953;
+    }
+  }
+	else if(hwid == HW_ID_PR || hwid == HW_ID_MP || hwid == HW_ID_MP2)
 	{
-		ggb_board_offset = -15;
+		ggb_board_offset = -13;
 		ntc_offset = 29;
 		standby_current = 3;
 		ggb_board_gain = 953;
@@ -396,7 +424,7 @@ static void set_project_config(void)
 #endif
 #else	///< ME175CG & A450CG
 #if defined(CONFIG_A450CG)
-	ggb_board_offset = 10;
+	ggb_board_offset = 7;
 	ntc_offset = 12;
 	standby_current = 3;
 	ggb_board_gain = 915;
@@ -473,6 +501,46 @@ static bool is_charging(void)
   }
 }
 
+static void start_charging(void);
+static void stop_charging(void);
+
+static void kbo_start(void)
+{
+	kbo_cnt = 0;
+	memset(kbo_queue, 0, sizeof(kbo_queue));
+    cancel_delayed_work(&ug31->kbo_work);
+    hrtimer_cancel(&ug31->kbo_timer);
+	if(wake_lock_active(&ug31->batt_wake_lock) != 0)
+	{
+		wake_unlock(&ug31->batt_wake_lock);
+	}
+	wake_lock_timeout(&ug31->batt_wake_lock, UG31XX_KBO_WAKE_LOCK_TIMEOUT*HZ);
+
+	stop_charging();
+	mutex_lock(&ug31->info_update_lock);
+	ug31_module.set_board_offset(0, UG31XX_BOARD_OFFSET_NOT_FROM_UPI_BO);
+	mutex_unlock(&ug31->info_update_lock);
+
+	GAUGE_info("[%s] init kbo_result = %d.\n", __func__,
+		kbo_result);
+
+    hrtimer_start(&ug31->kbo_timer,  
+    ktime_set(UG31XX_CALI_BO_CHARGER_OFF_DELAY / UG31XX_TIME_MSEC_TO_SEC, 
+              (UG31XX_CALI_BO_CHARGER_OFF_DELAY % UG31XX_TIME_MSEC_TO_SEC) * UG31XX_TIME_USEC_TO_SEC),
+    HRTIMER_MODE_REL);
+	GAUGE_info("[%s] wait %d ms to kbo.\n", __func__,
+	   UG31XX_CALI_BO_CHARGER_OFF_DELAY);
+
+	GAUGE_info("[%s] end kbo_result = %d.\n", __func__,kbo_result);
+}
+
+static void kbo_stop(void)
+{
+	start_charging();
+
+	cancel_delayed_work_sync(&ug31->kbo_work);
+}
+ 
 #ifdef UG31XX_MISC_DEV
 
 static int ug31xx_misc_open(struct inode *inode, struct file *file)
@@ -764,7 +832,8 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       ug31->daemon_uevent_count = 0;
       kbo_file_exist = false;
-      schedule_delayed_work(&ug31->kbo_check_work, UG31XX_CALI_BO_FACTORY_DELAY*HZ);
+      kbo_auto_file_exist = false;
+      schedule_delayed_work(&ug31->kbo_check_work, (UG31XX_CALI_BO_FACTORY_DELAY + 1)*HZ);
       break;
 
     case UG31XX_IOCTL_ALGORITHM_LOCK:
@@ -875,6 +944,46 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       schedule_delayed_work(&ug31->shell_algorithm_work, 0*HZ);
       break;
       
+    case UG31XX_IOCTL_KBO_START:
+      UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_KBO_START\n", __func__);
+      kbo_start();
+      break;
+
+    case UG31XX_IOCTL_KBO_STOP:
+      UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_KBO_STOP\n", __func__);
+      kbo_stop();
+      break;
+
+    case UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO:
+      UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO\n", __func__);
+      kbo_file_exist = false;
+      kbo_auto_file_exist = true;
+      ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_COS);
+      break;
+
+    case UG31XX_IOCTL_CURRENT_NOW:
+      UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_CURRENT_NOW\n", __func__);
+  		mutex_lock(&ug31->info_update_lock);
+	  	backup_size = ug31_module.get_current_now();
+		  mutex_unlock(&ug31->info_update_lock);
+
+      if(backup_size < 0)
+      {
+        backup_size = backup_size + 65536;
+      }
+      val[0] = backup_size/256;
+      val[1] = backup_size%256;
+      UG31_LOGE("[%s] current = %d (%02x%02x)\n", __func__,
+                backup_size,
+                val[0],
+                val[1]);
+      if(copy_to_user((void __user *)arg, (void *)&val[0], sizeof(val)))
+      {
+        rc = -EINVAL;
+        UG31_LOGE("[%s] copy_to_user fail\n", __func__);
+      }
+      break;
+
     default:
       UG31_LOGE("[%s] invalid cmd %d\n", __func__, _IOC_NR(cmd));
       rc = -EINVAL;
@@ -957,6 +1066,7 @@ enum UG31XX_KOBJ_ENV {
   UG31XX_KOBJ_ENV_BACKUP_BO_CHECK,
   UG31XX_KOBJ_ENV_BACKUP_BO_WRITE,
   UG31XX_KOBJ_ENV_BACKUP_BO_INIT,
+  UG31XX_KOBJ_ENV_BACKUP_BO_AUTO_CHECK,
   UG31XX_KOBJ_ENV_COUNT,
 };
 
@@ -976,6 +1086,8 @@ static void change_ug31xx_kobj(void)
   char *cmd4[] = {"OP_NAME=backup_bo", "OP_ACTION=check", NULL};
   char *cmd5[] = {"OP_NAME=backup_bo", "OP_ACTION=write", NULL};
   char *cmd6[] = {"OP_NAME=backup_bo", "OP_ACTION=init", NULL};
+  char *cmd7[] = {"OP_NAME=backup_bo", "OP_ACTION=check_auto", NULL};
+
   if(ug31xx_drv_status == UG31XX_DRV_NOT_READY)
   {
     return;
@@ -1046,6 +1158,9 @@ static void change_ug31xx_kobj(void)
     case UG31XX_KOBJ_ENV_BACKUP_BO_INIT:
       kobject_uevent_env(&ug31_kobj->kobj, KOBJ_CHANGE, cmd6);
       break;      
+    case UG31XX_KOBJ_ENV_BACKUP_BO_AUTO_CHECK:
+      kobject_uevent_env(&ug31_kobj->kobj, KOBJ_CHANGE, cmd7);
+      break;
     default:
       break;
   }
@@ -1403,6 +1518,10 @@ static int ug31xx_update_psp(enum power_supply_property psp,
 		if(kbo_file_exist == true)
 		{
 			sprintf(ug31->effective_board_offset, "F%d", ug31->board_offset);
+		}
+		else if(kbo_auto_file_exist == true)
+		{
+			sprintf(ug31->effective_board_offset, "A%d", ug31->board_offset);
 		}
 		else if(board_offset_cali_finish == true)
 		{
@@ -1958,6 +2077,10 @@ static void batt_info_update_work_func(struct work_struct *work)
 		{
 			ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_BO);
 		}
+		if(kbo_auto_file_exist == true)
+		{
+			ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_COS);
+		}
 	}
 	op_options = op_options & (~LKM_OPTIONS_FORCE_RESET);
   
@@ -2084,7 +2207,8 @@ static void batt_info_update_work_func(struct work_struct *work)
 	   (enable_board_offset_cali_at_eoc == true) && 
 	   (cur_cable_status != UG31XX_PAD_POWER) &&
 	   (ug31_dev->batt_capacity == 100) &&
-	   (kbo_file_exist == false))
+	   (kbo_file_exist == false) &&
+       (kbo_auto_file_exist == false))
 	{
 		enable_board_offset_cali_at_eoc = false;
 		if((ug31_dev->batt_avg_temp >= UG31XX_CALI_BO_LOW_TEMP) && (ug31_dev->batt_avg_temp <= UG31XX_CALI_BO_HIGH_TEMP))
@@ -2105,7 +2229,7 @@ static void batt_info_update_work_func(struct work_struct *work)
 	}
 
   /// [AT-PM] : Check board offset calibration file exist ; 02/13/2014
-  if(kbo_file_exist == true)
+  if((kbo_file_exist == true) || (kbo_auto_file_exist == true))
   {
     schedule_delayed_work(&ug31->kbo_check_work, UG31XX_CALI_BO_FACTORY_DELAY*HZ);
   }
@@ -2241,16 +2365,7 @@ int ug31xx_get_proc_kbo_start(char *buf, char **start, off_t off, int count, int
 {
 	int len;
 
-	stop_charging();
-  
-	mutex_lock(&ug31->info_update_lock);
-	ug31_module.set_board_offset(0, UG31XX_BOARD_OFFSET_NOT_FROM_UPI_BO);
-	mutex_unlock(&ug31->info_update_lock);
-
-	GAUGE_info("[%s] init kbo_result = %d.\n", __func__,
-		   kbo_result);
-
-	schedule_delayed_work(&ug31->kbo_work, UG31XX_CALI_BO_FACTORY_DELAY*HZ);
+	kbo_start();
 
 	len = 0;
 	len += sprintf(buf + len, "Start board offset calibration.\n");
@@ -2273,9 +2388,7 @@ int ug31xx_get_proc_kbo_stop(char *buf, char **start, off_t off, int count, int 
 {
 	int len;
 
-	start_charging();
-  
-	cancel_delayed_work_sync(&ug31->kbo_work);
+	kbo_stop();
 
 	len = 0;
 	len += sprintf(buf + len, "Stop board offset calibration.\n");
@@ -2380,17 +2493,7 @@ static int ug31xx_get_proc_temp_open(struct inode *inode, struct file *file)
 }
 static int ug31xx_get_proc_kbo_start(struct seq_file *m, void *v)
 {
-    int value;
-
-    stop_charging();
-
-    mutex_lock(&ug31->info_update_lock);
-    ug31_module.set_board_offset(0, UG31XX_BOARD_OFFSET_NOT_FROM_UPI_BO);
-    mutex_unlock(&ug31->info_update_lock);
-
-    GAUGE_info("[%s] init kbo_result = %d.\n", __func__, kbo_result);
-
-    schedule_delayed_work(&ug31->kbo_work, UG31XX_CALI_BO_FACTORY_DELAY*HZ);
+    kbo_start();
 
     seq_printf(m, "Start board offset calibration.\n");
     return 0;
@@ -2413,9 +2516,7 @@ static int ug31xx_get_proc_kbo_result_open(struct inode *inode, struct file *fil
 }
 static int ug31xx_get_proc_kbo_stop(struct seq_file *m, void *v)
 {
-    start_charging();
-
-    cancel_delayed_work_sync(&ug31->kbo_work);
+    kbo_stop();
 
     seq_printf(m, "Stop board offset calibration.\n");
     return 0;
@@ -2448,21 +2549,17 @@ static void ug31xx_early_suspend(struct early_suspend *e)
 
 	charger_dc_in_before_suspend = is_charging();
 
+  mutex_lock(&ug31_dev->info_update_lock);
+  ug31_module.suspend((charger_dc_in_before_suspend == true) ? 1 : 0);
+  mutex_unlock(&ug31_dev->info_update_lock);
+
+  batt_info_update_work_func(&ug31_dev->batt_info_update_work.work);
+
 	mutex_lock(&ug31_dev->info_update_lock);
-	gg_status = ug31_module.suspend((charger_dc_in_before_suspend == true) ? 1 : 0);
-	if(gg_status == 0)
-	{
-		show_update_batt_status();
-	}
-	else
-	{
-		show_abnormal_batt_status();
-		GAUGE_err("[%s] Fail in early suspend.\n", __func__);
-	}
-	rsoc_before_suspend = ug31_module.get_relative_state_of_charge();
+  in_early_suspend = true;
+	ug31_module.set_capacity_suspend_mode(_UPI_TRUE_);
 	mutex_unlock(&ug31_dev->info_update_lock);
 
-	in_early_suspend = true;
 	delta_q_in_suspend = 0;
 	GAUGE_info("[%s] Driver early suspend.\n", __func__);
 }
@@ -2492,95 +2589,9 @@ static void ug31xx_late_resume(struct early_suspend *e)
 
 	charger_dc_in_after_resume = is_charging();
 
-	mutex_lock(&ug31_dev->info_update_lock);
-	prev_fc_sts = ug31_module.get_full_charge_status();
-	prev_rsoc = rsoc_before_suspend;	
-	gg_status = ug31_module.resume((user_space_algorithm_response == true) ? UG31XX_USER_SPACE_RESPONSE : UG31XX_USER_SPACE_NO_RESPONSE);  
-	delta_q_in_suspend = delta_q_in_suspend + ug31_module.get_delta_q();
-	now_fc_sts = ug31_module.get_full_charge_status();
-	if(gg_status == 0)
-	{
-		if(charger_detect_full == true)
-		{
-			charger_detect_full = false;
-			gg_status = ug31_module.set_charger_full(UG31XX_CHARGER_DETECTS_FULL_STEP);
-		}
-
-		#ifndef UG31XX_WAIT_CHARGER_FC
-
-		if(charger_dc_in_before_suspend == false)
-		{
-			GAUGE_info("[%s] Enter early suspend without charger\n", __func__);
-		}
-		else
-		{
-			GAUGE_info("[%s] Enter early suspend with charger\n", __func__);
-			if((prev_fc_sts == 0) && (now_fc_sts == 1))
-			{
-				gg_status = ug31_module.set_charger_full(UG31XX_CHARGER_DETECTS_FULL_STEP);
-				GAUGE_info("[%s] [FC] status changed (0->1)\n", __func__);
-			}
-			else
-			{
-				if(charger_dc_in_after_resume == false)
-				{
-					GAUGE_info("[%s] Exit early suspend without charger\n", __func__);         
-					prev_rsoc = (100 - prev_rsoc)*(ug31_module.get_design_capacity())/100;
-					if(delta_q_in_suspend > prev_rsoc)
-					{
-						GAUGE_info("[%s] Charged capacity is enouth to check full charged (%d) > (%d)\n", __func__, delta_q_in_suspend, prev_rsoc);
-
-						if(ug31_module.get_predict_rsoc() > 90)
-						{
-							gg_status = ug31_module.set_charger_full(UG31XX_CHARGER_DETECTS_FULL_STEP);
-							GAUGE_info("[%s] Set to full charge status\n", __func__);
-						}
-					}
-				}
-				else
-				{
-					GAUGE_info("[%s] Exit early suspend with charger\n", __func__);
-					if(curr_charger_full_status == true)
-					{
-						GAUGE_info("[%s] Charger detects full\n", __func__);
-						gg_status = ug31_module.set_charger_full(UG31XX_CHARGER_DETECTS_FULL_STEP);
-						GAUGE_info("[%s] Set to full charge status\n", __func__);
-					}
-					else
-					{
-						prev_rsoc = (100 - prev_rsoc)*(ug31_module.get_design_capacity())/100;
-						if(delta_q_in_suspend > prev_rsoc)
-						{
-							GAUGE_info("[%s] Charged capacity is enouth to check full charged (%d) > (%d)\n", __func__, delta_q_in_suspend, prev_rsoc);
-							if(ug31_module.get_predict_rsoc() > 95)
-							{
-								gg_status = ug31_module.set_charger_full(UG31XX_CHARGER_DETECTS_FULL_STEP);
-								GAUGE_info("[%s] Set to full charge status\n", __func__);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		#endif  ///< end of UG31XX_WAIT_CHARGER_FC
-
-		if(gg_status == 0)
-		{
-			show_update_batt_status();
-		}
-		else
-		{
-			show_abnormal_batt_status();
-			GAUGE_err("[%s] Fail to set charger full.\n", __func__);
-		}
-	}
-	else
-	{
-		show_abnormal_batt_status();
-		GAUGE_err("[%s] Fail to late resume.\n", __func__);
-	}
-	mutex_unlock(&ug31_dev->info_update_lock);
+  mutex_lock(&ug31_dev->info_update_lock);
+  ug31_module.resume((user_space_algorithm_response == true) ? UG31XX_USER_SPACE_RESPONSE : UG31XX_USER_SPACE_NO_RESPONSE);
+  mutex_unlock(&ug31_dev->info_update_lock);
 
 	batt_info_update_work_func(&ug31_dev->batt_info_update_work.work);
 
@@ -2612,6 +2623,15 @@ static void cal_avg_board_offset(void)
   {
     return;
   }
+
+  if((board_offset_cali_max - board_offset_cali_min) > 10)
+  {
+    GAUGE_err("[%s]: Over maximum difference %d - %d\n", __func__,
+              board_offset_cali_max,
+              board_offset_cali_min);
+    return;
+  }
+
   board_offset_cali_avg = board_offset_cali_avg/board_offset_cali_loop;
   GAUGE_info("[%s]: New board offset = %d\n", __func__, board_offset_cali_avg);
 
@@ -2620,6 +2640,40 @@ static void cal_avg_board_offset(void)
   board_offset_cali_avg = 0;
   board_offset_cali_loop = 0;
   board_offset_cali_finish = true;
+}
+
+/**
+ * @brief board_offset_cali_max_min
+ *
+ * Get maximum and minimum board offset
+ *
+ * @para  board_offset_now  current calibrated board offset
+ * @return  NULL
+ */
+static void board_offset_cali_max_min(int board_offset_now)
+{
+  /// [AT-PM] : Find maximum and minimum board offset ; 04/18/2014
+  if(board_offset_cali_loop == 0)
+  {
+    board_offset_cali_max = board_offset_now;
+    board_offset_cali_min = board_offset_now;
+  }
+  else
+  {
+    if(board_offset_now > board_offset_cali_max)
+    {
+      board_offset_cali_max = board_offset_now;
+    }
+    if(board_offset_now < board_offset_cali_min)
+    {
+      board_offset_cali_min = board_offset_now;
+    }
+  }
+  GAUGE_info("[%s]: board offset of auto calibration %d = %d (%d,%d)\n", __func__,
+             board_offset_cali_loop,
+             board_offset_now,
+             board_offset_cali_max,
+             board_offset_cali_min);
 }
 
 /**
@@ -2664,6 +2718,8 @@ static void board_offset_cali_work_func(struct work_struct *work)
 	board_offset_cali_now = ug31_module.get_board_offset();
 	ug31_module.set_board_offset(board_offset_cali_before, UG31XX_BOARD_OFFSET_NOT_FROM_UPI_BO);
 	mutex_unlock(&ug31->info_update_lock);
+
+  board_offset_cali_max_min(board_offset_cali_now);
 
 	/// [AT-PM] : Check chargig and cable status after calibration ; 02/14/2014
 	if((is_charging() == true) ||
@@ -2851,9 +2907,17 @@ static void batt_retry_work_func(struct work_struct *work)
 
   if(probe_with_cable == true)
   {
-    schedule_delayed_work(&ug31->batt_reinitial_work, UG31XX_PROBE_CHARGER_OFF_DELAY*HZ);
-    GAUGE_info("[%s] Wait %d seconds to register driver %s\n", __func__, UG31XX_PROBE_CHARGER_OFF_DELAY, ug31->client->name);
-    stop_charging();
+    if((cur_cable_status != UG31XX_AC_ADAPTER_CABLE) && (entry_mode == 4))
+    {
+      schedule_delayed_work(&ug31->batt_reinitial_work, 0*HZ);
+      GAUGE_info("[%s] No wait because AC is not connected\n", __func__);
+    }
+    else
+    {
+      schedule_delayed_work(&ug31->batt_reinitial_work, UG31XX_PROBE_CHARGER_OFF_DELAY*HZ);
+      GAUGE_info("[%s] Wait %d seconds to register driver %s\n", __func__, UG31XX_PROBE_CHARGER_OFF_DELAY, ug31->client->name);
+      stop_charging();
+    }
   }
   else
   {
@@ -2879,18 +2943,34 @@ static void batt_retry_work_func(struct work_struct *work)
 static void kbo_work_func(struct work_struct *work)
 {
 	int board_offset;
+    int idx;
+	int tmp32 = 0;
 
 	mutex_lock(&ug31->info_update_lock);
 	ug31_module.set_cable_out(UG31XX_CABLE_IN);
 	board_offset = ug31_module.get_current_now();
 	mutex_unlock(&ug31->info_update_lock);
 
-	kbo_result = (kbo_result + board_offset)/2;
-	GAUGE_info("[%s] new kbo_result = %d (%d).\n", __func__,
-		   kbo_result,
-		   board_offset);
+	if(kbo_cnt < UG31XX_KBO_COUNT)
+	{
+		kbo_queue[kbo_cnt] = board_offset;
+		for(idx = 0; idx < (kbo_cnt + 1); idx++)
+		{
+			tmp32 = tmp32 + kbo_queue[idx];
+		}
+		kbo_result = tmp32 / (kbo_cnt + 1);
+        GAUGE_info("[%s] temp kbo_queue[%d] = %d, temp kbo_result = %d\n", __func__,
+                   idx - 1, kbo_queue[idx - 1], kbo_result);
+	}
+	kbo_cnt++;
 
-	schedule_delayed_work(&ug31->kbo_work, UG31XX_CALI_BO_FACTORY_DELAY*HZ);
+	if(kbo_cnt < UG31XX_KBO_COUNT)
+	{
+      hrtimer_start(&ug31->kbo_timer,  
+      ktime_set(UG31XX_CALI_BO_FACTORY_DELAY / UG31XX_TIME_MSEC_TO_SEC, 
+                (UG31XX_CALI_BO_FACTORY_DELAY % UG31XX_TIME_MSEC_TO_SEC) * UG31XX_TIME_USEC_TO_SEC),
+      HRTIMER_MODE_REL);
+	}
 }
 
 /**
@@ -2907,11 +2987,29 @@ static void kbo_check_work_func(struct work_struct *work)
   {
     kobj_event_env = UG31XX_KOBJ_ENV_BACKUP_BO_CHECK;
   }
+	else if(kbo_auto_file_exist == true)
+	{
+		kobj_event_env = UG31XX_KOBJ_ENV_BACKUP_BO_AUTO_CHECK;
+	}
   else
   {
     kobj_event_env = UG31XX_KOBJ_ENV_BACKUP_BO_INIT;
   }
   change_ug31xx_kobj();
+}
+
+/**
+ * @brief kbo_timer_func
+ *
+ *  Board offset calibration timer handler
+ *
+ * @para  hrtimer
+ * @return  hrtimer_restart
+ */
+static enum hrtimer_restart kbo_timer_func(struct hrtimer *timer)
+{
+  schedule_delayed_work(&ug31->kbo_work, 0);
+  return HRTIMER_NORESTART;
 }
 
 /**
@@ -3266,7 +3364,8 @@ static void batt_probe_work_func(struct work_struct *work)
 		get_sw_charging_toggle() == false &&
 		external_power_source_present() &&
 		cur_cable_status == UG31XX_AC_ADAPTER_CABLE &&
-		kbo_file_exist == false)
+		kbo_file_exist == false &&
+		kbo_auto_file_exist == false)
 	{
 		board_offset_cali_loop = 0;
 		board_offset_cali_init = ug31_module.get_board_offset();
@@ -3285,6 +3384,8 @@ static void batt_probe_work_func(struct work_struct *work)
 			ug31_module.calibrate_offset(UG31XX_BOARD_OFFSET_CALI_FULL);
 			board_offset_cali_now = ug31_module.get_board_offset();
 			ug31_module.set_board_offset(board_offset_cali_before, UG31XX_BOARD_OFFSET_NOT_FROM_UPI_BO);
+
+      board_offset_cali_max_min(board_offset_cali_now);
 
 			/// [AT-PM] : Check cable status after calibration ; 02/12/2014
 			if(external_power_source_present() == false)
@@ -3367,6 +3468,8 @@ static int ug31xx_i2c_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&ug31->batt_probe_work, batt_probe_work_func);
 	INIT_DELAYED_WORK(&ug31->batt_retry_work, batt_retry_work_func);
 	INIT_DELAYED_WORK(&ug31->batt_reinitial_work, batt_reinitial_work_func);
+    hrtimer_init(&ug31->kbo_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    ug31->kbo_timer.function = kbo_timer_func;
 
 	get_ggb_array();
 	
@@ -3374,11 +3477,39 @@ static int ug31xx_i2c_probe(struct i2c_client *client,
 
 	probe_with_cable = is_charging();
 
+	/* acquired charger type from charger driver */
+	switch (get_charger_type()) {
+	case USB_IN:
+		cur_cable_status = UG31XX_USB_PC_CABLE;
+		GAUGE_err("[%s] UG31XX_USB_PC_CABLE\n", __func__);
+		break;
+	case AC_IN:
+		cur_cable_status = UG31XX_AC_ADAPTER_CABLE;
+		GAUGE_err("[%s] UG31XX_AC_ADAPTER_CABLE\n", __func__);
+		break;
+	case CABLE_OUT:
+		cur_cable_status = UG31XX_NO_CABLE;
+		GAUGE_err("[%s] UG31XX_NO_CABLE\n", __func__);
+		break;
+	case PAD_SUPPLY:
+		cur_cable_status = UG31XX_PAD_POWER;
+		GAUGE_err("[%s] UG31XX_PAD_POWER\n", __func__);
+		break;
+	}
+
 	if(probe_with_cable == true)
 	{
-		schedule_delayed_work(&ug31->batt_probe_work, UG31XX_PROBE_CHARGER_OFF_DELAY*HZ);
-		GAUGE_info("[%s] Wait %d seconds to register driver %s\n", __func__, UG31XX_PROBE_CHARGER_OFF_DELAY, ug31->client->name);
-		stop_charging();
+    if((cur_cable_status != UG31XX_AC_ADAPTER_CABLE) && (entry_mode == 4))
+    {
+  		schedule_delayed_work(&ug31->batt_probe_work, 0*HZ);
+	  	GAUGE_info("[%s] No wait because AC is not connected\n", __func__);
+    }
+    else
+    {
+  		schedule_delayed_work(&ug31->batt_probe_work, UG31XX_PROBE_CHARGER_OFF_DELAY*HZ);
+	  	GAUGE_info("[%s] Wait %d seconds to register driver %s\n", __func__, UG31XX_PROBE_CHARGER_OFF_DELAY, ug31->client->name);
+		  stop_charging();
+    }
 	}
 	else
 	{
@@ -3513,6 +3644,13 @@ static int ug31xx_i2c_suspend(struct i2c_client *client, pm_message_t mesg)
 	mutex_lock(&ug31->info_update_lock);
 	gg_status = ug31_module.set_capacity_suspend_mode(_UPI_TRUE_);
 	mutex_unlock(&ug31->info_update_lock);
+
+  #if defined(CONFIG_PF400CG)
+    if((charger_dc_in_before_suspend == false) && (is_charging() == true))
+    {
+      charger_dc_in_before_suspend = true;
+    }
+  #endif  ///< end of defined(CONFIG_PF400CG)
 
 	ug31xx_drv_status = UG31XX_DRV_SUSPEND;
 	GAUGE_info("[%s] ug31xx_i2c_suspend() end\n", __func__);

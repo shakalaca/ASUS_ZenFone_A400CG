@@ -4,7 +4,7 @@
  *  Define the platform for uG31xx driver
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 545 $
+ * @revision  $Revision: 81 $
  */
 
 #ifndef BUILD_UG31XX_LIB
@@ -26,6 +26,7 @@
 //#define UG31XX_CELL_REPLACE_TEST
 //#define UG31XX_2_PERCENT_1_MIN
 //#define UG31XX_ADC_NO_TEMP_COMPENSATION
+//#define FEATURE_DISABLE_SUSPEND_OPERATION
 
 /// [AT-PM] : Used for ANDROID boot code ; 09/08/2013
 //#define uG31xx_BOOT_LOADER  
