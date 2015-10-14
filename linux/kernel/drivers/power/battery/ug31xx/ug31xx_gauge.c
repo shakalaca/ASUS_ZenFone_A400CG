@@ -22,17 +22,19 @@
 #include <linux/sysfs.h>
 
 #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
-#include "ug31xx_ggb_data_PF400CG_PR2_20140515_160903.h"
-#include "ug31xx_ggb_data_PF400CG_2ND_20140515_161336.h"
-#include "ug31xx_ggb_data_A400CG_DEF_20140515_155210.h"
-#include "ug31xx_ggb_data_A400CG_3RD_20140515_154717.h"
-#include "ug31xx_ggb_data_A400CG_4TH_20140923_193832.h"
+#include "ug31xx_ggb_data_PF400CG_PR2_20141205_191819.h"
+#include "ug31xx_ggb_data_PF400CG_2ND_20141205_192016.h"
+#include "ug31xx_ggb_data_A400CG_DEF_20141205_192051.h" 
+#include "ug31xx_ggb_data_A400CG_3RD_20141205_192124.h" 
+#include "ug31xx_ggb_data_A400CG_4TH_20141205_192213.h" 
 #else // ME175CG && A450CG && FE170CSG
 #if defined(CONFIG_A450CG)
 #include "ug31xx_ggb_data_A450CG_DEF_20140515_155911.h"
-#else // ME175CG && FE170CSG
-#if defined(CONFIG_FE170CSG) || defined(CONFIG_FE171MG)
-#include "ug31xx_ggb_data_FE171MG_20140911_175423.h"
+#else // ME175CG && FE170CG
+#if defined(CONFIG_FE170CG)
+#include "ug31xx_ggb_data_FE171CG_20141114_174756.h"
+#elif defined(CONFIG_FE171MG)
+#include "ug31xx_ggb_data_FE171MG_20141024_101023.h"
 #else // ME175CG
 #include "ug31xx_ggb_data_ME175CG_SANYO_20140515_162109.h"
 #endif
@@ -532,8 +534,15 @@ static void set_project_config(void)
 	ggb_board_gain = 915;
 	charge_termination_current = 135;
 #else	///< ME175CG & FE170CSG
-#if defined(CONFIG_FE170CSG) || defined(CONFIG_FE171MG)
+#if defined(CONFIG_FE170CG)
 	standby_current = 3;
+#elif defined(CONFIG_FE171MG)
+	standby_current = 3;
+	if (hwid <= HW_ID_ER)
+		ggb_board_offset = 2;
+	else // PR, MP
+		ggb_board_offset = 5;
+
 #else ///< ME175CG
 	ggb_board_offset = 18;
 	standby_current = 3;
@@ -541,7 +550,10 @@ static void set_project_config(void)
 #endif
 #endif
 #endif
+
+#if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_ZC400CG)
   ggb_config = ggb_config | 0x00000800;
+#endif
 }
 
 static void update_project_config(void)
@@ -589,7 +601,7 @@ static void update_project_config(void)
                                   cc_chg_offset_100);
   }
 }
-#if !defined(CONFIG_FE170CSG) && !defined(CONFIG_FE171CG) && !defined(CONFIG_FE171MG)
+#if !defined(CONFIG_FE170CSG) && !defined(CONFIG_FE171MG)
 #define smb3xx_get_charger_type get_charger_type
 #endif
 
@@ -3503,10 +3515,6 @@ static void batt_probe_work_func(struct work_struct *work)
 #endif ///< for FEATRUE_K_BOARD_OFFSET
   INIT_DELAYED_WORK(&ug31->curr_check_work, curr_check_work_func);
 
-	if(ug31xx_powersupply_init(ug31->client))
-	{
-		goto pwr_supply_fail;
-	}
 	ug31xx_drv_status = UG31XX_DRV_INIT_OK;
 
 #ifdef	UPI_CALLBACK_FUNC
@@ -3953,6 +3961,7 @@ static int ug31xx_i2c_probe(struct i2c_client *client,
 
 #endif  ///< end of UG31XX_PROBE_CHARGER_OFF
 
+	ug31xx_powersupply_init(ug31->client);
 	return 0;
 }
 

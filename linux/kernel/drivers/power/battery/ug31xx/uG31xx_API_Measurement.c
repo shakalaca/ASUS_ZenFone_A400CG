@@ -1082,12 +1082,6 @@ void ConvertCharge(MeasDataInternalType *obj)
   /// [AT-PM] : Update capacity information ; 01/25/2013
   obj->info->deltaCap = (_meas_s16_)tmp32;
   obj->info->stepCap = obj->info->deltaCap - obj->info->lastDeltaCap;
-  if((MEAS_CABLE_OUT(obj->info->status) == _UPI_TRUE_) &&
-     (obj->info->stepCap > 0))
-  {
-    obj->info->stepCap = 0;
-    UG31_LOGI("[%s]: Force stepCap to 0\n", __func__);
-  }
   obj->info->lastDeltaCap = obj->info->deltaCap;
   UG31_LOGI("[%s]: Capacity = %d (%d)\n", __func__, obj->info->deltaCap, obj->info->stepCap);
   #ifdef	UPI_UBOOT_DEBUG_MSG
@@ -1962,6 +1956,9 @@ void CountCycleCount(MeasDataInternalType *obj)
   }
 }
 
+static _meas_bool_ cumuCapTmpAvail = _UPI_FALSE_;
+static _meas_s32_ cumuCapTmp = 0;
+
 /**
  * @brief CountCumuCap
  *
@@ -1972,7 +1969,31 @@ void CountCycleCount(MeasDataInternalType *obj)
  */
 void CountCumuCap(MeasDataInternalType *obj)
 {
-  obj->info->cumuCap = obj->info->cumuCap + obj->info->stepCap;
+  _meas_s32_ tmp32;
+
+  if(cumuCapTmpAvail == _UPI_TRUE_)
+  {
+    tmp32 = cumuCapTmp + obj->info->stepCap;
+  }
+  else
+  {
+    tmp32 = obj->info->cumuCap + obj->info->stepCap;
+  }
+
+  if((MEAS_CABLE_OUT(obj->info->status) == _UPI_TRUE_) &&
+     (tmp32 > obj->info->cumuCap))
+  {
+    cumuCapTmp = tmp32;
+    cumuCapTmpAvail = _UPI_TRUE_;
+    tmp32 = obj->info->cumuCap;
+    UG31_LOGI("[%s]: Force stepCap to 0\n", __func__);
+  }
+  else
+  {
+    cumuCapTmpAvail = _UPI_FALSE_;
+  }
+
+  obj->info->cumuCap = tmp32;
   UG31_LOGI("[%s]: Cumulative capacity = %d\n", __func__,
             (int)obj->info->cumuCap);
 }

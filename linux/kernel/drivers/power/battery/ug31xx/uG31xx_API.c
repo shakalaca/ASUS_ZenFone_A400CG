@@ -1101,7 +1101,14 @@ GGSTATUS upiGG_Initial(char **pObj, GGBX_FILE_HEADER *pGGBXBuf, unsigned char Fo
       #ifdef  UG31XX_CELL_REPLACE_TEST
         ForceReset = 0;
       #endif  ///< end of UG31XX_CELL_REPLACE_TEST
-      pUg31xx->backupData.icDataAvailable = (ForceReset == 0) ? BACKUP_BOOL_FALSE : BACKUP_BOOL_TRUE;
+      if(pUg31xx->cellParameter.NacLmdAdjustCfg & NAC_LMD_ADJUST_CFG_BACKUP_FILE_RESTORE_DISABLE)
+      {
+        pUg31xx->backupData.icDataAvailable = BACKUP_BOOL_TRUE;
+      }
+      else
+      {
+        pUg31xx->backupData.icDataAvailable = (ForceReset == 0) ? BACKUP_BOOL_FALSE : BACKUP_BOOL_TRUE;
+      }
       pUg31xx->backupData.backupFileSts = (ForceReset == 0) ? BACKUP_FILE_STS_CHECKING : BACKUP_FILE_STS_NOT_EXIST;
     #endif  ///< end of UG31XX_RESET_DATABASE
   }
