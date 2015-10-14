@@ -2926,6 +2926,12 @@ void himax_touch_information(void)
 	himax_read_flash( temp_buffer, 0x262, 1);
 	HX_BT_NUM = (temp_buffer[0] & 0x07);
 	#endif
+
+	#if defined(HX_EN_SEL_BUTTON) || defined(HX_EN_MUT_BUTTON)
+	if(HX_BT_NUM > HX_KEY_MAX_COUNT){
+		HX_BT_NUM = HX_KEY_MAX_COUNT;
+	}
+	#endif
 	
 	himax_read_flash( temp_buffer, 0x272, 6);
 	/*if((temp_buffer[0] & 0x04) == 0x04)

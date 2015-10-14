@@ -844,7 +844,7 @@ int smb345_soc_control_jeita(void)
         return 1;
     }
 
-    pr_info("%s:", __func__);
+    pr_info("%s:\n", __func__);
     ret = smb345_set_writable(smb345_dev, true);
     if (ret < 0)
         return ret;
@@ -896,7 +896,7 @@ int smb345_charger_control_jeita(void)
         return 1;
     }
 
-    pr_info("%s:", __func__);
+    pr_info("%s:\n", __func__);
     ret = smb345_set_writable(smb345_dev, true);
     if (ret < 0)
         return ret;
@@ -905,10 +905,8 @@ int smb345_charger_control_jeita(void)
     ret = smb345_masked_write(smb345_dev->client,
         HARD_SOFT_LIMIT_CELL_TEMP_MONITOR_REG,
         HARD_LIMIT_HOT_CELL_TEMP_MASK,
-        #if defined(CONFIG_PF400CG)
-        0x01);
-        #elif defined(CONFIG_A400CG)
-        0x01);
+        #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_ME175CG)
+        BIT(4));
         #else
         0x00);
         #endif
@@ -1795,7 +1793,6 @@ static void aicl_cur_control(int usb_state)
     else {
         dev_info(&smb345_dev->client->dev,
             "%s: execute AICL routine control work\n",
-            aicl_result,
             __func__);
     }
 
@@ -2142,7 +2139,7 @@ fail:
     return ret;
 }
 #else
-static int smb358_pre_config() { return; }
+static int smb358_pre_config() { return 0; }
 #endif
 
 
@@ -2258,7 +2255,7 @@ static void smb3xx_config_max_current(int usb_state)
 
     g_init_disable_aicl = false;
 }
-#elif defined(COMFIG_ME372CG) || defined(COMFIG_ME372CL)
+#elif defined(CONFIG_ME372CG) || defined(CONFIG_ME372CL)
 static void smb3xx_config_max_current(int usb_state)
 {
     /* USB Mode Detection (by SOC) */
@@ -4404,6 +4401,12 @@ static void smb345_complete(struct device *dev)
     struct smb345_charger *smb = dev_get_drvdata(dev);
 
     dev_info(&smb->client->dev, "smb345 resume\n");
+
+    /* JEITA function by soc protection */
+    mutex_lock(&g_usb_state_lock);
+    if (g_usb_state == AC_IN || g_usb_state == USB_IN || g_usb_state == PAD_SUPPLY)
+        smb345_soc_control_jeita();
+    mutex_unlock(&g_usb_state_lock);
 }
 #else
 #define smb345_prepare NULL
