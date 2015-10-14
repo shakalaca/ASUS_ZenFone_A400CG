@@ -378,9 +378,11 @@ int update_from_normal_mode(void)
                 "that both firmware config version are equal");
             return ret;
         }
+#ifdef CONFIG_FE380CG
     } else {
         BAT_DBG("battery cell type incorrect,ingore update fw\n");
         return ret;
+#endif
     }
 
     /* check update voltage first */
@@ -450,6 +452,11 @@ int bq27520_bat_upt_main_update_flow(void)
 {
     int ret = UPDATE_NONE;
 
+    #ifdef CONFIG_A450CG
+    /* Cancel update on A450CG device */
+    return UPDATE_NONE;
+    #endif
+    /* Do it only in MOS, COS. Not support in other conditions */
     if (entry_mode != 1 && entry_mode != 4)
         return UPDATE_NONE;
 
@@ -471,7 +478,7 @@ int bq27520_bat_upt_main_update_flow(void)
 int bq27520_bat_upt_main_update_flow(void) { return UPDATE_NONE; }
 #endif
 
-static int __devinit bq27520_bat_upt_i2c_probe(struct i2c_client *i2c,
+static int bq27520_bat_upt_i2c_probe(struct i2c_client *i2c,
                             const struct i2c_device_id *id)
 {
     dev_info(&i2c->dev, "%s done.", __func__);

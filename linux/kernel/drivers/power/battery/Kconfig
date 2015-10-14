@@ -40,13 +40,25 @@ menuconfig A400CG_BATTERY
 	  Say Y here. This option doesn't affect the kernel.
 	  If unsure, say Y.
 
+menuconfig A450CG_BATTERY
+        bool "A450CG Battery support"
+        help
+          Say Y here. This option doesn't affect the kernel.
+          If unsure, say Y.
+
 menuconfig ASUS_ENGINEER_MODE
 	bool "ME372xx Battery Engineer Mode"
 	help
 	  Say Y here. This option doesn't affect the kernel.
 	  If unsure, say Y.
 
-if ME302C_BATTERY || ME372CG_BATTERY || ME372CL_BATTERY || ME175CG_BATTERY || PF400CG_BATTERY || A400CG_BATTERY || FE380CG_BATTERY || A450CG_BATTERY
+menuconfig NEW_PROC_FS
+	bool "NEW PROC FS"
+	help
+	  Say N here. This option doesn't affect the kernel.
+	  If unsure, say N.
+
+if ME302C_BATTERY || ME372CG_BATTERY || ME372CL_BATTERY || ME175CG_BATTERY || PF400CG_BATTERY || A400CG_BATTERY || A450CG_BATTERY
 
 config ME372CG_BATTERY_SMB345
 	tristate "SMB345 battery charger driver"

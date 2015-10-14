@@ -32,6 +32,7 @@ typedef enum {
 
 typedef enum {
     LOW_TEMPR = 0,
+    MIDDLE_TEMPR,
     HIGH_TEMPR,
 } float_volt_tempr_threshold_t;
 
@@ -134,6 +135,10 @@ int smb345_soc_control_float_vol(int bat_temp);
 #define STOP_CHARGING_LOW_TEMPERATURE   0
 #define STOP_CHARGING_HIGH_TEMPERATURE  600
 #define FLOAT_VOLTAGE_TEMPERATURE_THRESHOLD 500
+#elif defined(CONFIG_A450CG)
+#define STOP_CHARGING_LOW_TEMPERATURE   0
+#define STOP_CHARGING_HIGH_TEMPERATURE  600
+#define FLOAT_VOLTAGE_TEMPERATURE_THRESHOLD 450
 #else
 #define STOP_CHARGING_LOW_TEMPERATURE   0
 #define STOP_CHARGING_HIGH_TEMPERATURE  550

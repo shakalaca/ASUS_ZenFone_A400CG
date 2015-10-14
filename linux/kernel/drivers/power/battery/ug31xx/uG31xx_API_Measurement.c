@@ -11,7 +11,7 @@
  *  guG31xx measurement API
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 590 $
+ * @revision  $Revision: 626 $
  */
 
 #include "stdafx.h"     //windows need this??
@@ -19,11 +19,11 @@
 
 #ifdef  uG31xx_OS_WINDOWS
 
-  #define MEASUREMENT_VERSION      (_T("Measurement $Rev: 590 $"))
+  #define MEASUREMENT_VERSION      (_T("Measurement $Rev: 626 $"))
 
 #else   ///< else of uG31xx_OS_WINDOWS
 
-  #define MEASUREMENT_VERSION      ("Measurement $Rev: 590 $")
+  #define MEASUREMENT_VERSION      ("Measurement $Rev: 626 $")
 
 #endif  ///< end of uG31xx_OS_WINDOWS
 
@@ -79,6 +79,12 @@ typedef struct MeasDataInternalST {
   _meas_u8_ reg9B;
   _meas_u8_ reg9E;
 } ALIGNED_ATTRIBUTE MeasDataInternalType;
+
+#ifndef UG31XX_SHELL_ALGORITHM
+
+static MeasDataInternalType measData;
+
+#endif  ///< end of UG31XX_SHELL_ALGORITHM
 
 typedef struct BoardFactorST {
   _meas_u16_ voltage_gain;
@@ -142,7 +148,11 @@ static AdcDeltaCodeMappingType AdcDeltaCodeMapping[] =
   { 0,      0,      0,     0    },     ///< Index = 31
 };
 
-#define ADC_TEMPERATURE_GAIN_CONST            (1000)
+#ifdef  UG31XX_ADC_NO_TEMP_COMPENSATION
+  #define ADC_TEMPERATURE_GAIN_CONST          (0)
+#else   ///< else of UG31XX_ADC_NO_TEMP_COMPENSATION
+  #define ADC_TEMPERATURE_GAIN_CONST          (1000)
+#endif  ///< end of UG31XX_ADC_NO_TEMP_COMPENSATION
 
 #define ADC1_CODE_100MV_NEGATIVE              (0xFF00)
 #define ADC1_CODE_200MV_NEGATIVE              (0xFE00)
@@ -1070,6 +1080,12 @@ void ConvertCharge(MeasDataInternalType *obj)
   /// [AT-PM] : Update capacity information ; 01/25/2013
   obj->info->deltaCap = (_meas_s16_)tmp32;
   obj->info->stepCap = obj->info->deltaCap - obj->info->lastDeltaCap;
+  if((MEAS_CABLE_OUT(obj->info->status) == _UPI_TRUE_) &&
+     (obj->info->stepCap > 0))
+  {
+    obj->info->stepCap = 0;
+    UG31_LOGI("[%s]: Force stepCap to 0\n", __func__);
+  }
   obj->info->lastDeltaCap = obj->info->deltaCap;
   UG31_LOGI("[%s]: Capacity = %d (%d)\n", __func__, obj->info->deltaCap, obj->info->stepCap);
   #ifdef	UPI_UBOOT_DEBUG_MSG
@@ -1093,8 +1109,12 @@ void TimeTick(MeasDataInternalType *obj)
     /// [AT-PM] : Prevent adc conversion count overflow ; 06/11/2013
     if(obj->codeCounter < obj->info->lastCounter)
     {
-      obj->info->deltaTime = (_meas_u32_)obj->codeCounter;
-      UG31_LOGE("[%s]: Counter overflow in internal suspend mode, counter = %d\n", __func__, 
+      obj->info->deltaTime = 0x10000;
+      obj->info->deltaTime = obj->info->deltaTime - obj->info->lastCounter;
+      obj->info->deltaTime = obj->info->deltaTime + obj->codeCounter;
+      UG31_LOGE("[%s]: Counter overflow in internal suspend mode, counter = %d (%d, %d)\n", __func__, 
+                (int)obj->info->deltaTime,
+                (int)obj->info->lastCounter,
                 (int)obj->codeCounter);
     }
     else
@@ -2105,7 +2125,11 @@ void UpiResetCoulombCounter(MeasDataType *data)
 {
   MeasDataInternalType *obj;
 
-  obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #else   ///< else of UG31XX_SHELL_ALGORITHM
+    obj = &measData;
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
   upi_memset(obj, 0x00, sizeof(MeasDataInternalType));
   
   obj->info = data;
@@ -2148,7 +2172,9 @@ void UpiResetCoulombCounter(MeasDataType *data)
   FetchAdcCode(obj);
   obj->info->lastCounter = obj->codeCounter;    
 
-  upi_free(obj);
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    upi_free(obj);
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
 }
 
 #define RESET_CC_CURRENT_MAGIC_NUMBER               (2)
@@ -2187,7 +2213,11 @@ MEAS_RTN_CODE UpiMeasurement(MeasDataType *data, MEAS_SEL_CODE select)
   
   UG31_LOGI("[%s]: %s\n", __func__, MEASUREMENT_VERSION);
 
-  obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #else   ///< else of UG31XX_SHELL_ALGORITHM
+    obj = &measData;
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
   upi_memset(obj, 0x00, sizeof(MeasDataInternalType));
   
   obj->info = data;
@@ -2223,7 +2253,9 @@ MEAS_RTN_CODE UpiMeasurement(MeasDataType *data, MEAS_SEL_CODE select)
   }
   if(rtn != MEAS_RTN_PASS)
   {
-    upi_free(obj);
+    #ifdef  UG31XX_SHELL_ALGORITHM
+      upi_free(obj);
+    #endif  ///< end of UG31XX_SHELL_ALGORITHM
     return (rtn);
   }
 
@@ -2391,11 +2423,18 @@ MEAS_RTN_CODE UpiMeasurement(MeasDataType *data, MEAS_SEL_CODE select)
     standbyLower = standbyUpper*(-1);
     if((obj->codeCharge > COULOMB_COUNTER_RESET_THRESHOLD_CHARGE_CHG) ||
        (obj->codeCharge < COULOMB_COUNTER_RESET_THREDHOLD_CHARGE_DSG) ||
+#ifdef  UG31XX_RESET_CC_IN_STANDBY
        ((obj->info->curr < standbyUpper) && 
         (obj->info->curr > standbyLower) && 
-        (obj->codeCounter > CONST_CONVERSION_COUNT_THRESHOLD*RESET_CC_CURRENT_MAGIC_NUMBER)) ||
+        (obj->info->deltaCap != 0)) ||
+#endif  ///< end of UG31XX_RESET_CC_IN_STANDBY
        (obj->info->deltaTime > RESET_CC_DELTA_TIME))
     {
+      UG31_LOGN("[%s]: Reset coulomb counter (%d - %d - %d - %d)\n", __func__,
+                obj->codeCharge,
+                obj->info->curr,
+                obj->info->deltaCap,
+                obj->info->deltaTime);
       ResetCoulombCounter(obj);
       data->lastDeltaCap = 0;
 
@@ -2407,7 +2446,9 @@ MEAS_RTN_CODE UpiMeasurement(MeasDataType *data, MEAS_SEL_CODE select)
 
   UG31_LOGI("[%s]: %d mV / %d mA / %d 0.1oC / %d 0.1oC / %d mAh\n", __func__,
             data->bat1Voltage, data->curr, data->intTemperature, data->extTemperature, data->deltaCap);
-  upi_free(obj);
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    upi_free(obj);
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
   return (rtn);
 }
 
@@ -2459,7 +2500,11 @@ MEAS_RTN_CODE UpiMeasReadCode(MeasDataType *data)
   MEAS_RTN_CODE rtn;
   MeasDataInternalType *obj;
 
-  obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    obj = (MeasDataInternalType *)upi_malloc(sizeof(MeasDataInternalType));
+  #else   ///< else of UG31XX_SHELL_ALGORITHM
+    obj = &measData;
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
   upi_memset(obj, 0x00, sizeof(MeasDataInternalType));
 
   obj->info = data;
@@ -2467,8 +2512,48 @@ MEAS_RTN_CODE UpiMeasReadCode(MeasDataType *data)
 
   rtn = FetchAdcCode(obj);
 
-  upi_free(obj);
+  #ifdef  UG31XX_SHELL_ALGORITHM
+    upi_free(obj);
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
   return (rtn);
+}
+
+/**
+ * @brief UpiGetMeasurementMemorySize
+ *
+ *  Get memory size used by measurement
+ *
+ * @return  memory size
+ */
+_meas_u32_ UpiGetMeasurementMemorySize(void)
+{
+  _meas_u32_ totalSize;
+
+  #ifndef UG31XX_SHELL_ALGORITHM
+
+  totalSize = (_meas_u32_)sizeof(measData);
+  UG31_LOGD("[%s]: memory size for measData = %d\n", __func__, (int)totalSize);
+
+  #else   ///< else of UG31XX_SHELL_ALGORITHM
+
+  totalSize = 0;
+  
+  #endif  ///< end of UG31XX_SHELL_ALGORITHM
+
+  return (totalSize);
+}
+
+/**
+ * @brief UpiPrintMeasurementVersion
+ *
+ *  Print measurement module version
+ *
+ * @return  NULL
+ */
+void UpiPrintMeasurementVersion(void)
+{
+  UG31_LOGE("[%s]: %s\n", __func__,
+            MEASUREMENT_VERSION);
 }
 
 

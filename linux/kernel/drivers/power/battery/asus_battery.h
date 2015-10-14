@@ -126,6 +126,7 @@ struct dev_func {
 struct chgr_dev_func {
     /* charger driver related */
     int (*soc_control_float_vol)(int bat_temp);
+    int (*get_soc_control_float_vol)(void);
     int (*charging_toggle)(charging_toggle_level_t level, bool on);
     int (*dump_registers)(struct seq_file *s);
 };

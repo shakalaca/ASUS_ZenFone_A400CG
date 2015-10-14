@@ -81,7 +81,7 @@
 
 #include <linux/hx8528_me372cl.h>
 
-#define DRIVER_VERSION	"1.1.9"		//Joe modify 
+#define DRIVER_VERSION	"2.0.4"		//Joe modify 
 
 //=============================================================================================================
 //
@@ -104,6 +104,7 @@
 //#define HX_LOADIN_CONFIG			// Support Common FW,load in config
 #define HX_PORTING_DEB_MSG			// Support Driver Porting Message		,default is close
 //#define HX_IREF_MODIFY			// Support IREF Modify Function			,default is close
+#define HX_VIRTUAL_KEY_DELAY // add by leo for virtual key issue
 
 //TODO END
 
@@ -312,11 +313,21 @@ struct himax_chip_data
 	int need_upgrade_fw;
 	bool is_suspend;
 	int msg_count;
+	
+	spinlock_t touch_spinlock;
+	
+#ifdef HX_VIRTUAL_KEY_DELAY
+	struct delayed_work virtual_key_delay_work;
+	struct workqueue_struct *virtual_key_delay_wq;
+#endif
 };
 
 static struct himax_chip_data *himax_chip;
 static int irq_count;
 
+#ifdef HX_VIRTUAL_KEY_DELAY
+static int virtual_key_delay=0;
+#endif
 //=============================================================================================================
 //
 //	Segment : Himax Variable/Pre Declation Function
@@ -505,7 +516,7 @@ static int self_test_delay_time = 3; //add by josh for init self_test delay time
 #ifdef HX_TP_SYS_DEBUG_LEVEL
 static uint8_t 	debug_log_level= 0;
 static bool	fw_update_complete = false;
-static bool irq_enable = false;
+static bool irq_enable;
 static int handshaking_result = 0;
 static unsigned char debug_level_cmd = 0;
 static unsigned char upgrade_fw[32*1024];
@@ -607,6 +618,8 @@ static int himax_a12_attach_function(struct work_struct *dat);
 static int himax_a12_detach_function(struct work_struct *dat);
 static int himax_a12_update_touch_progress(int update_progress);
 static int himax_a12_update_touch_result(int result);
+static int himax_a12_irq_disable(struct i2c_client *ts);
+static int himax_a12_irq_enable(struct i2c_client *ts);
 int himax_a12_cable_status(int status);
 
 #ifdef HX_TP_SYS_RESET
@@ -693,6 +706,16 @@ extern int Read_PROJ_ID(void);
 extern int Read_HW_ID();
 extern int check_cable_status(void);
 
+// add by josh for skip COS/POS ++
+/*
+ * entry_mode = 1; MOS
+ * entry_mode = 2; recovery
+ * entry_mode = 3; POS
+ * entry_mode = 4; COS
+*/
+extern int entry_mode;
+// add by josh for skip COS/POS --
+
 //add by josh dot attach +++
 static struct notifier_block mp_notifier = {
     .notifier_call = himax_a12_mp_event_report,    // callback function
@@ -761,14 +784,8 @@ static int himax_a12_ts_suspend(struct i2c_client *client, pm_message_t mesg)
 	//	himax_chip->is_suspend = false;
     	
     	flush_workqueue(himax_chip->flash_wq);
-    	if(himax_chip->irq_status == 1)
-    	{
-    		disable_irq(himax_chip->irq);
-    		if(debug_log){
-    			irq_count --;
-				printk("[Himax_A12] %s: %d: disable_irq irq_count = %d, irq_status = 0x%x. \n",__func__, __LINE__, irq_count, himax_chip->irq_status);
-			}
-    	}
+    	
+    	ret = himax_a12_irq_disable(himax_chip->client);
     	
 		#ifdef HX_TP_SYS_FLASH_DUMP
 		if(getFlashDumpGoing())
@@ -892,14 +909,7 @@ static int himax_a12_ts_resume(struct i2c_client *client)
 			queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
 		}	
 		
-		if(himax_chip->irq_status == 1)
-    	{
-    		enable_irq(himax_chip->irq);
-    		if(debug_log){
-    			irq_count ++;
-				printk("[Himax_A12] %s: %d: enable_irq irq_count = %d, irq_status = 0x%x. \n",__func__, __LINE__, irq_count, himax_chip->irq_status);
-			}
-    	}
+		ret = himax_a12_irq_enable(himax_chip->client);
 		
 		is_resume = true; //add by josh for attach/detach
 		himax_chip->is_suspend = false;
@@ -2362,24 +2372,26 @@ static void himax_a12_chip_reset_function(struct work_struct *dat)
 	
 	printk("[Himax_A12] %s: ++ \n",__func__);
 
-	wake_lock(&himax_chip->wake_lock);
+//	wake_lock(&himax_chip->wake_lock);
 	
-	err = himax_a12_hw_reset();
+//	err = himax_a12_hw_reset();
 	
-	err = himax_a12_ts_poweron(); 
-	if(err == 0){
-		printk("[Himax_A12] %s: touch power on. \n",__func__);
-	}else{
-		printk(KERN_ERR"[Himax_A12] %s: power on error = %d.\n",__func__, err);
-	}
-
-	enable_irq(himax_chip->irq);
-	if(debug_log){
-		irq_count ++;
-		printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-	}
+//	err = himax_a12_ts_poweron(); 
+//	if(err == 0){
+//		printk("[Himax_A12] %s: touch power on. \n",__func__);
+//	}else{
+//		printk(KERN_ERR"[Himax_A12] %s: power on error = %d.\n",__func__, err);
+//	}
+//
+//	enable_irq(himax_chip->irq);
+//	irq_enable = true;
+//	//if(debug_log)
+//	{
+//		irq_count ++;
+//		printk("[Himax_A12] %s: %d: enable_irq irq_count=%d, irq_enable =0x%x. \n",__func__, __LINE__, irq_count, irq_enable);
+//	}
 	
-	wake_unlock(&himax_chip->wake_lock);
+//	wake_unlock(&himax_chip->wake_lock);
 	
 	err = himax_a12_read_fw_ver(true);	
 	
@@ -2684,7 +2696,7 @@ static u8 himax_a12_read_fw_ver(bool hw_reset)
 	u16 i = 0;
 	u16 j = 0;	
 	u16 k = 0;
-	int err = 1;
+	int err = 1, ret = 0;
 	
 	fw_ver_maj_start_addr = FW_VER_MAJ_FLASH_ADDR / 4;		// start addr = 133 / 4 = 33 
 	fw_ver_maj_length = FW_VER_MAJ_FLASH_LENG;	// length = 1
@@ -2712,14 +2724,7 @@ static u8 himax_a12_read_fw_ver(bool hw_reset)
 	memset(himax_chip->tp_lens_version, 0, 8);
 	memset(himax_chip->config_firmware_version, 0, 8);
 	
-	if(himax_chip->irq_status == 1)
-	{
-		disable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count --;
-			printk("[Himax_A12] %s: %d: disable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	ret = himax_a12_irq_disable(himax_chip->client);
 	
 	#ifdef HX_RST_PIN_FUNC
 	if(hw_reset)
@@ -2966,15 +2971,8 @@ err_finish:
 	}else{
 		printk(KERN_ERR"[Himax_A12] %s: power on error = %d.\n",__func__, err);
 	}
-
-	if(himax_chip->irq_status == 1)
-	{
-		enable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count ++;
-			printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	
+	ret = himax_a12_irq_enable(himax_chip->client);
 
 	return 0;
 }
@@ -2997,6 +2995,12 @@ void himax_a12_touch_information(void)
 	himax_a12_read_flash( temp_buffer, 0x262, 1);
 	HX_BT_NUM = (temp_buffer[0] & 0x07);
 	#endif
+	
+#if defined(HX_EN_SEL_BUTTON) || defined(HX_EN_MUT_BUTTON)
+	if(HX_BT_NUM > HX_KEY_MAX_COUNT){
+	HX_BT_NUM = HX_KEY_MAX_COUNT;
+	}
+#endif
 	
 	himax_a12_read_flash( temp_buffer, 0x272, 6);
 	/*if((temp_buffer[0] & 0x04) == 0x04)
@@ -3062,6 +3066,8 @@ static ssize_t himax_a12_chip_check_running(struct device *dev, struct device_at
 
 static ssize_t himax_a12_chip_enable_irq(struct device *dev, struct device_attribute *attr, char *buf, size_t count)
 {	
+	int ret = 0;
+	
 	if (buf[0] == '0'){
 		if(irq_enable){
 			printk(KERN_INFO "[Himax_A12]: IRQ is enable\n");
@@ -3071,13 +3077,13 @@ static ssize_t himax_a12_chip_enable_irq(struct device *dev, struct device_attri
 	}
 	else if (buf[0] == '1'){
 		printk(KERN_INFO "[Himax_A12]: himax_chip_enable_irq \n");
-		enable_irq(himax_chip->irq);
-		irq_enable = true;
+		
+		ret = himax_a12_irq_enable(himax_chip->client);
 	}
 	else if (buf[0] == '2'){
 		printk(KERN_INFO "[Himax_A12]: himax_chip_disable_irq \n");
-		disable_irq(himax_chip->irq);
-		irq_enable = false;
+		
+		ret = himax_a12_irq_disable(himax_chip->client);
 	}
 	
 	return count;
@@ -3405,7 +3411,7 @@ static ssize_t himax_a12_register_store(struct device *dev,struct device_attribu
 }
 #endif
 
-static ssize_t himax_a12_chip_proc_register_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_a12_chip_proc_register_read(struct seq_file *buf, void *v)
 {
     int ret = 0;
 	int base = 0;
@@ -3466,19 +3472,19 @@ static ssize_t himax_a12_chip_proc_register_read(char *buf, char **start, off_t 
 			{
 				if(multi_cfg_bank[loop_i] == 1)
 				{
-					ret += sprintf(buf + ret, "Register: FE(%x)\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: FE(%x)\n", multi_register[loop_i]);
 				}
 				else
 				{
-					ret += sprintf(buf + ret, "Register: %x\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: %x\n", multi_register[loop_i]);
 				}
 		
 				for (loop_j = 0; loop_j < 128; loop_j++)
 				{
-					ret += sprintf(buf + ret, "0x%2.2X ", multi_value[base++]);
+					seq_printf(buf, "0x%2.2X ", multi_value[base++]);
 					if ((loop_j % 16) == 15)
 					{
-						ret += sprintf(buf + ret, "\n");
+						seq_printf(buf, "\n");
 					}
 				}
 			}
@@ -3519,23 +3525,23 @@ static ssize_t himax_a12_chip_proc_register_read(char *buf, char **start, off_t 
 	
 	if(config_bank_reg)
 	{
-		ret += sprintf(buf, "command: FE(%x)\n", register_command);
+		seq_printf(buf, "command: FE(%x)\n", register_command);
 	}
 	else
 	{
-		ret += sprintf(buf, "command: %x\n", register_command);
+		seq_printf(buf, "command: %x\n", register_command);
 	}
 
 	for (loop_i = 0; loop_i < 128; loop_i++) 
 	{
-		ret += sprintf(buf + ret, "0x%2.2X ", bufdata[loop_i]);
+		seq_printf(buf, "0x%2.2X ", bufdata[loop_i]);
 		if ((loop_i % 16) == 15)
 		{
-			ret += sprintf(buf + ret, "\n");
+			seq_printf(buf, "\n");
 		}
 	}
-	ret += sprintf(buf + ret, "\n");
-    return ret;
+	seq_printf(buf, "\n");
+    return 0;
 }
 static ssize_t himax_a12_chip_proc_register_write(struct file *filp, const char *buf, unsigned long len, void *data)
 {
@@ -3693,15 +3699,25 @@ static ssize_t himax_a12_chip_proc_register_write(struct file *filp, const char 
     return len;
 }
 
+static int himax_a12_chip_proc_register_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_a12_chip_proc_register_read, NULL);
+}
+
+static const struct file_operations register_fops = {
+	.owner = THIS_MODULE,
+	.open = himax_a12_chip_proc_register_open,
+	.read = seq_read,
+	.write = himax_a12_chip_proc_register_write,
+};
+
 static void himax_a12_chip_create_proc_register(void)
 {
-	himax_a12_proc_register = create_proc_entry(HIMAX_A12_PROC_REGISTER, 0666, NULL);
+	himax_a12_proc_register = proc_create(HIMAX_A12_PROC_REGISTER, 0666, NULL, &register_fops);
 	if(himax_a12_proc_register){
-		himax_a12_proc_register->read_proc = himax_a12_chip_proc_register_read;
-		himax_a12_proc_register->write_proc = himax_a12_chip_proc_register_write;
+	//	printk(KERN_ERR "[Himax_A12] %s: proc register file create sucessed!!\n", __func__);
 	}
 	else{
-		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
+		printk(KERN_ERR "[Himax_A12] %s: proc register file create failed!\n", __func__);
 	}
 }
 
@@ -4043,6 +4059,7 @@ static ssize_t himax_a12_debug_level_dump(struct device *dev,struct device_attri
 	mm_segment_t oldfs;
 	int result = 0;
 	char fileName[128];
+	int ret = 0;
 	
 	printk(KERN_ERR "[Himax_A12] %s ++ \n", __func__);
 	
@@ -4058,13 +4075,11 @@ static ssize_t himax_a12_debug_level_dump(struct device *dev,struct device_attri
 
 		if( buf[2] == '1') //enable irq	
 		{
-			enable_irq(himax_chip->irq);
-			irq_enable = true;
+			ret = himax_a12_irq_enable(himax_chip->client);
 		}
 		else if(buf[2] == '0') //disable irq
 		{
-			disable_irq(himax_chip->irq);
-			irq_enable = false;
+			ret = himax_a12_irq_disable(himax_chip->client);
 		}
 		else
 		{
@@ -4076,13 +4091,10 @@ static ssize_t himax_a12_debug_level_dump(struct device *dev,struct device_attri
 	if( buf[0] == 'h') //handshaking
 	{
 		debug_level_cmd = buf[0];
-
-		disable_irq(himax_chip->irq);
+		ret = himax_a12_irq_disable(himax_chip->client);
 
 		handshaking_result = himax_a12_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail 
-
-		enable_irq(himax_chip->irq);
-
+		ret = himax_a12_irq_enable(himax_chip->client);
 		return count;
 	}
 
@@ -4154,7 +4166,8 @@ static ssize_t himax_a12_debug_level_dump(struct device *dev,struct device_attri
 		if(result > 0)
 		{
 			// start to upgrade
-			disable_irq(himax_chip->irq);
+			ret = himax_a12_irq_disable(himax_chip->client);
+			 
 			if(fts_ctpm_fw_upgrade_with_sys_fs(upgrade_fw, result) == 0)
 			{
 				printk(KERN_INFO "[Himax_A12] %s: TP upgrade error, line: %d\n", __func__, __LINE__);
@@ -4165,7 +4178,9 @@ static ssize_t himax_a12_debug_level_dump(struct device *dev,struct device_attri
 				printk(KERN_INFO "[Himax_A12] %s: TP upgrade OK, line: %d\n", __func__, __LINE__);
 				fw_update_complete = true;
 			}
-			enable_irq(himax_chip->irq);
+			
+			ret = himax_a12_irq_enable(himax_chip->client);
+			
 			goto firmware_upgrade_done;
 			//return count;                    
 		}
@@ -4206,14 +4221,19 @@ static ssize_t himax_a12_chip_proc_debug_flag(struct file *filp, const char *buf
 	return len;
 }
 
+static const struct file_operations debug_flag_fops = {
+	.owner = THIS_MODULE,
+	.write =  himax_a12_chip_proc_debug_flag,
+};
+
 static void himax_a12_chip_create_proc_debug_flag(void)
 {
-	himax_a12_proc_debug_flag = create_proc_entry(HIMAX_A12_PROC_DEBUG_FLAG, 0666, NULL);
+	himax_a12_proc_debug_flag = proc_create(HIMAX_A12_PROC_DEBUG_FLAG, 0666, NULL, &debug_flag_fops);
 	if(himax_a12_proc_debug_flag){
-		himax_a12_proc_debug_flag->write_proc = himax_a12_chip_proc_debug_flag;
+	//	printk(KERN_ERR "[Himax_A12] %s: proc debug file create sucessed!\n", __func__);
 	}
 	else{
-		printk(KERN_ERR "[Himax_A12] %s: proc config file create failed!\n", __func__);
+		printk(KERN_ERR "[Himax_A12] %s: proc debug file create failed!\n", __func__);
 	}
 }
 
@@ -4580,7 +4600,7 @@ static ssize_t himax_a12_chip_raw_data_store(struct device *dev, struct device_a
 }
 #endif
 
-static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static ssize_t himax_a12_chip_proc_diag_read(struct seq_file *buf, void *v)
 {
 	size_t count = 0;
 	uint32_t loop_i;
@@ -4589,7 +4609,7 @@ static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off,
 	mutual_num 	= x_channel * y_channel;
 	self_num = x_channel + y_channel; //don't add KEY_COUNT
 	width = x_channel;
-	count += sprintf(buf + count, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
+	seq_printf(buf, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
 	
 	// start to show out the raw data in adb shell
 	if (diag_command >= 1 && diag_command <= 6) 
@@ -4598,27 +4618,27 @@ static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off,
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1)) 
 				{
-				count += sprintf(buf + count, " %3d\n", diag_self[width + loop_i/width]);
+				seq_printf(buf, " %3d\n", diag_self[width + loop_i/width]);
 				}
 			}
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < width; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 	
 			#ifdef HX_EN_SEL_BUTTON
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < HX_BT_NUM; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
+				seq_printf(buf, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
 			}
 			#endif                
 		} 
@@ -4626,10 +4646,10 @@ static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off,
 		{
 			for (loop_i = 0; loop_i < self_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i - mutual_num) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		} 
@@ -4637,15 +4657,15 @@ static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off,
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		}
-		count += sprintf(buf + count, "ChannelEnd");
-		count += sprintf(buf + count, "\n");
+		seq_printf(buf, "ChannelEnd");
+		seq_printf(buf, "\n");
 	}
 	else if (diag_command == 7)
 	{
@@ -4653,18 +4673,18 @@ static ssize_t himax_a12_chip_proc_diag_read(char *buf, char **start, off_t off,
 		{
 			if((loop_i % 16) == 0)
 			{
-				count += sprintf(buf + count, "LineStart:");
+				seq_printf(buf, "LineStart:");
 			}
 
-			count += sprintf(buf + count, "%4d", diag_coor[loop_i]);
+			seq_printf(buf, "%4d", diag_coor[loop_i]);
 			if((loop_i % 16) == 15)
 			{
-				count += sprintf(buf + count, "\n");
+				seq_printf(buf, "\n");
 			}
 		}
 	}
 	
-	return count;
+	return 0;
 }
 
 static ssize_t himax_a12_chip_proc_diag_write(struct file *filp, const char __user *buf, unsigned long len, void *data)
@@ -4785,15 +4805,48 @@ static ssize_t himax_a12_chip_proc_diag_write(struct file *filp, const char __us
 	return len;
 }
 
+static void *himax_a12_diag_seq_start(struct seq_file *s, loff_t *pos) 
+{
+	if (*pos>=1) return NULL;
+	return (void *)((unsigned long) *pos+1);
+} 
+
+static void *himax_a12_diag_seq_next(struct seq_file *s, void *v, loff_t *pos) 
+{
+	return NULL;
+}
+
+static void himax_a12_diag_seq_stop(struct seq_file *s, void *v) 
+{ 
+}
+
+static struct seq_operations himax_a12_diag_seq_ops = 
+{ 
+	.start 	= himax_a12_diag_seq_start,
+	.next 	= himax_a12_diag_seq_next,
+	.stop 	= himax_a12_diag_seq_stop,
+	.show 	= himax_a12_chip_proc_diag_read 
+};
+
+static int himax_a12_chip_proc_diag_open(struct inode *inode, struct  file *file) {
+  return seq_open(file, &himax_a12_diag_seq_ops);
+}
+
+static const struct file_operations diag_fops = {
+	.owner = THIS_MODULE,
+	.open = himax_a12_chip_proc_diag_open,
+	.read = seq_read,
+	.write = himax_a12_chip_proc_diag_write,
+};
+
 static void himax_a12_chip_create_proc_diag_file(void)
 {
-	himax_a12_proc_diag_file = create_proc_entry(HIMAX_A12_PROC_DIAG_FILE, 0666, NULL);
+	himax_a12_proc_diag_file = proc_create(HIMAX_A12_PROC_DIAG_FILE, 0666, NULL, &diag_fops);
 	if(himax_a12_proc_diag_file){
-		himax_a12_proc_diag_file->read_proc = himax_a12_chip_proc_diag_read;
-		himax_a12_proc_diag_file->write_proc = himax_a12_chip_proc_diag_write;
+	//	printk(KERN_ERR "[Himax_A12] %s: proc diag file create sucessed!\n", __func__);
 	}
 	else{
-		printk(KERN_ERR "[Himax] %s: proc diag file create failed!\n", __func__);
+		printk(KERN_ERR "[Himax_a12] %s: proc diag file create failed!\n", __func__);
 	}
 }
 
@@ -5142,14 +5195,8 @@ static void himax_a12_ts_flash_work_func(struct work_struct *work)
 	uint8_t x4D_command[2] = {0x4D,0x00};
 	/*uint8_t x59_command[2] = {0x59,0x00};*/
 	
-	if(himax_chip->irq_status == 1)
-	{
-		disable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count --;
-			printk("[Himax_A12] %s: %d: disable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	ret = himax_a12_irq_disable(himax_chip->client);
+	
 	setFlashDumpGoing(true);	
      
 	#ifdef HX_RST_PIN_FUNC
@@ -5644,15 +5691,8 @@ FLASH_END:
 			queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
 		}
 	#endif
-
-	if(himax_chip->irq_status == 1)
-	{
-		enable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count ++;
-			printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	
+	ret = himax_a12_irq_enable(himax_chip->client);
 	setFlashDumpGoing(false);
 
 	setFlashDumpComplete(1);
@@ -5668,14 +5708,7 @@ flash_dump_i2c_transfer_error:
 		}
 	#endif
 	
-	if(himax_chip->irq_status == 1)
-	{
-		enable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count ++;
-			printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	ret = himax_a12_irq_enable(himax_chip->client);
 	setFlashDumpGoing(false);
 	setFlashDumpComplete(0);
 	setFlashDumpFail(1);
@@ -6424,6 +6457,7 @@ static int himax_a12_firmware_upgrade(int path)
 	int i = 0, open_fail = 0;
 	int upgrade_status = 0;
 	int hw_id;
+	int ret = 0;
 		 
 	himax_a12_update_touch_progress(0);
 	//----[ENABLE_CHIP_STATUS_MONITOR]------------------------------------------------------------------start	
@@ -6618,14 +6652,8 @@ static int himax_a12_firmware_upgrade(int path)
 		{	
 			printk(KERN_INFO "[Himax_A12] start to upgrade.\n");
 			// start to upgrade
-			if(himax_chip->irq_status == 1)
-			{
-				disable_irq(himax_chip->irq);
-				if(debug_log){
-					irq_count --;
-					printk("[Himax_A12] %s: %d: disable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-				}
-			}
+			ret = himax_a12_irq_disable(himax_chip->client);
+			
 			if(fts_ctpm_fw_upgrade_with_sys_fs(upgrade_fw, result) == 0)
 			{
 				printk(KERN_INFO "[Himax_A12] %s: A12 Himax hx8528-D48 chip upgrade error.\n", __func__);
@@ -6685,6 +6713,15 @@ static int himax_a12_chip_self_firmware_upgrade(struct work_struct *dat)
 //	Segment : Himax Touch Work Function
 //
 //=============================================================================================================
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+static int virtual_key_delay_function(struct work_struct *work)	
+{
+	//printk("[Himax_A12] %s: ++\n",__func__);
+	virtual_key_delay = 0;
+	return 0;
+}
+#endif
 
 static void himax_a12_ts_work_func(struct work_struct *work)
 {
@@ -6966,7 +7003,13 @@ bypass_checksum_failed_packet:
 					input_report_abs(himax_chip->input_dev, ABS_MT_POSITION_Y, y);     // Y axis
 					
 					input_mt_sync(himax_chip->input_dev);
+
 					
+					#ifdef HX_VIRTUAL_KEY_DELAY
+					virtual_key_delay = 1;
+					cancel_delayed_work(&himax_chip->virtual_key_delay_work);
+					queue_delayed_work(himax_chip->virtual_key_delay_wq, &himax_chip->virtual_key_delay_work, 10);
+					#endif
 
 					#ifdef HX_PORTING_DEB_MSG
 					if(debug_log){
@@ -7009,7 +7052,11 @@ bypass_checksum_failed_packet:
 		//#endif
 		//----[HX_ESD_WORKAROUND]-----------------------------------------------------------------------------end
 	}
+#ifdef HX_VIRTUAL_KEY_DELAY
+	else if(hx_point_num == 0 && tpd_key != 0xFF && virtual_key_delay == 0) // add by leo for virtual 
+#else
 	else if(hx_point_num == 0 && tpd_key != 0xFF)
+#endif
 	{
 		temp_x[0] = 0xFFFF;
 		temp_y[0] = 0xFFFF; 
@@ -7092,33 +7139,19 @@ bypass_checksum_failed_packet:
 	mutex_unlock(&himax_chip->mutex_lock);
 	//Mutexlock Protect End
 	
-	if(himax_chip->irq_status == 1)
-	{
-		enable_irq(himax_chip->irq);
-		if(debug_log){
-			irq_count ++;
-			printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-		}
-	}
+	ret = himax_a12_irq_enable(himax_chip->client);
 		
 	return;
 	
 work_func_enable_irq:
 	
 	himax_chip->msg_count ++;
-	if(himax_chip->msg_count <= MSG_COUNT)
+	if((himax_chip->msg_count <= MSG_COUNT) || debug_log)
 	{
-		printk(KERN_ERR "[Himax_A12] %s:(%d) work_func_enable_irq: irq_status = 0x%x, msg_count = %d. \n",__func__, __LINE__, himax_chip->irq_status, himax_chip->msg_count);
-		if(himax_chip->irq_status == 1)
-		{
-			enable_irq(himax_chip->irq);
-			if(debug_log){
-				irq_count ++;
-				printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-			}
-		}	
+		printk(KERN_ERR "[Himax_A12] %s:(%d) work_func_enable_irq: irq_status=0x%x, msg_count=%d, irq_enable=0x%x. \n",__func__, __LINE__, himax_chip->irq_status, himax_chip->msg_count, irq_enable);
 	}
 	
+	ret = himax_a12_irq_enable(himax_chip->client);
 	return;
 }
 		
@@ -7217,14 +7250,15 @@ static ssize_t touch_switch_state(struct switch_dev *sdev, char *buf)
 //----[ interrupt ]---------------------------------------------------------------------------------------start
 static irqreturn_t himax_a12_ts_irq_handler(int irq, void *dev_id)
 {
-	if(debug_log){
-		printk("[Himax_A12] %s ++ . \n",__func__);
+	int ret = 0;
+		
+	if(debug_log)
+	{
+		printk("[Himax_A12] %s, irq_enable =0x%x ++ \n",__func__, irq_enable);
 	}
-	disable_irq_nosync(himax_chip->irq);
-	if(debug_log){
-		irq_count --;
-		printk("[Himax_A12] %s: %d: disable_irq_nosync irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-	}
+	
+	ret = himax_a12_irq_disable(himax_chip->client);
+	
 	queue_work(himax_chip->himax_wq, &himax_chip->work);
 	
 	return IRQ_HANDLED;
@@ -7238,12 +7272,9 @@ static int himax_a12_ts_register_interrupt(struct i2c_client *client)
 	{
 		free_irq(himax_chip->irq, himax_chip);
 		himax_chip->irq_status = 0;
+		irq_count = 0;
 	}
 	
-	//if(debug_log){
-		irq_count ++;
-		printk("[Himax_A12] %s: %d: request_irq irq_count = %d, irq_status = 0x%x. \n",__func__, __LINE__, irq_count, himax_chip->irq_status);
-	//}
 	if(HX_INT_IS_EDGE)	//edge trigger
 	{
 		err = request_irq(himax_chip->irq, himax_a12_ts_irq_handler, IRQF_TRIGGER_FALLING, himax_chip->client->name, himax_chip->client);
@@ -7255,10 +7286,22 @@ static int himax_a12_ts_register_interrupt(struct i2c_client *client)
 		printk("[Himax_A12] %s: request irq low trigger OK.\n",__func__);
 	}
 	himax_chip->irq_status = 1;
+	irq_enable = true;
+	if(debug_log)
+	{	
+		irq_count ++;
+		printk("[Himax_A12] %s: %d: request_irq irq_count = %d, irq_status = 0x%x, irq_enable=0x%x. \n",__func__, __LINE__, irq_count, himax_chip->irq_status, irq_enable);
+	}
 		
 	if(err)
 	{
 		himax_chip->irq_status = 0;
+		irq_enable = false;
+		if(debug_log)
+		{	
+			irq_count --;
+			printk("[Himax_A12] %s: %d: request_irq failed. irq_count = %d, irq_status = 0x%x, irq_enable=0x%x. \n",__func__, __LINE__, irq_count, himax_chip->irq_status, irq_enable);
+		}
 		printk("[Himax_A12] %s: request_irq %d failed. \n",__func__, himax_chip->irq);
 	}
 	return err;
@@ -7268,10 +7311,22 @@ static int himax_a12_ts_register_interrupt(struct i2c_client *client)
 //----[ i2c ]---------------------------------------------------------------------------------------------start
 static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_id *id)
 {
+		
 	struct himax_i2c_platform_data *pdata;
 	int err = 0, i = 0;
 
 	printk("[Himax_A12] %s ++ \n",__func__);
+	
+	// add by josh for skip COS/POS ++
+    if(entry_mode==4) {
+        printk("[Himax_A12] In COS, skip\n");
+        return;
+    }else if(entry_mode==3) {
+        printk("[Himax_A12] In POS, skip\n");
+        return;
+    }
+    //add by josh for skip COS/POS --
+
 	//*********************************************************************************************************
 	// Check i2c functionality
 	//*********************************************************************************************************
@@ -7364,7 +7419,7 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	//*********************************************************************************************************
 	//----[ HX_TP_SYS_FLASH_DUMP ]------------------------------------------------------------------------start
 	#ifdef  HX_TP_SYS_FLASH_DUMP
-	himax_chip->flash_wq = create_singlethread_workqueue("himax_flash_wq");
+	himax_chip->flash_wq = create_singlethread_workqueue("himax_a12_flash_wq");
 	if (!himax_chip->flash_wq) 
 	{
 		printk(KERN_ERR "[Himax_A12] %s: create himax_flash_wq workqueue failed\n", __func__);
@@ -7373,19 +7428,28 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	#endif
 	//----[ HX_TP_SYS_FLASH_DUMP ]--------------------------------------------------------------------------end
 	
-	himax_chip->himax_wq = create_singlethread_workqueue("himax_wq");
+	himax_chip->himax_wq = create_singlethread_workqueue("himax_a12_wq");
 	if (!himax_chip->himax_wq) 
 	{
 		printk(KERN_ERR "[Himax_A12] %s: create himax_wq workqueue failed\n", __func__);
 		goto err_create_wq_failed;
 	}
 	
-	himax_chip->attach_wq = create_singlethread_workqueue("attach_wq");
-	if (!himax_chip->himax_wq) 
+	himax_chip->attach_wq = create_singlethread_workqueue("attach_a12_wq");
+	if (!himax_chip->attach_wq) 
 	{
 		printk(KERN_ERR "[Himax_A12] %s: create attach_wq workqueue failed\n", __func__);
 		goto err_create_attach_wq_failed;
 	}	
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+	himax_chip->virtual_key_delay_wq = create_singlethread_workqueue("virtual_key_delay_wq");
+	if (!himax_chip->virtual_key_delay_wq){
+		printk(KERN_ERR "[Himax_A12] %s: create virtual_key_delay_wq failed\n", __func__);
+		goto err_create_flash_wq_failed;
+	}
+#endif
+	
 	printk("[Himax_A12] %s: Create Work Queue OK. \n",__func__);		
 	//*********************************************************************************************************
 	// Init work 
@@ -7415,6 +7479,10 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 
 	INIT_DELAYED_WORK(&himax_chip->station_attach_work, himax_a12_attach_function);
 	INIT_DELAYED_WORK(&himax_chip->station_detach_work, himax_a12_detach_function);
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+	INIT_DELAYED_WORK(&himax_chip->virtual_key_delay_work, virtual_key_delay_function);
+#endif
 
 	printk("[Himax_A12] %s:Init work function OK. \n",__func__);
 	//*********************************************************************************************************
@@ -7486,7 +7554,7 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	//Mutexlock Protect End
 	
 	//Wakelock Protect Start
-	wake_lock_init(&himax_chip->wake_lock, WAKE_LOCK_SUSPEND, "himax_touch_wake_lock");
+	wake_lock_init(&himax_chip->wake_lock, WAKE_LOCK_SUSPEND, "himax_a12_touch_wake_lock");
 	//Wakelock Protect End
 	
 	//*********************************************************************************************************
@@ -7532,6 +7600,10 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	}
 	printk("[Himax_A12] %s: Input Device Reigster OK. \n",__func__);
 	//*********************************************************************************************************
+	// spin lock init
+	//*********************************************************************************************************
+	spin_lock_init(&himax_chip->touch_spinlock);
+	//*********************************************************************************************************
 	// register switch device
 	//*********************************************************************************************************
 	himax_chip->touch_sdev.name = TOUCH_SDEV_NAME;
@@ -7547,6 +7619,16 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	if (err < 0) {
 		printk( "[Himax_A12] %s: could not register A12 touch misc device.\n",__func__);
 	}
+	
+	//*********************************************************************************************************
+	// register interrupt 
+	//*********************************************************************************************************
+	//TODO check the interrupt's API function by differrnt platform 
+	err = himax_a12_ts_register_interrupt(himax_chip->client);
+	if(err)
+	{
+		goto err_register_interrupt_failed;
+	}
 	//*********************************************************************************************************
 	// Himax Touch IC Power on
 	//*********************************************************************************************************
@@ -7556,32 +7638,21 @@ static int himax_a12_ts_probe(struct i2c_client *client,const struct i2c_device_
 	//add by josh for checking poweron 
 	if(err==0){
 		himax_chip->tp_status = 1;
+		printk("[Himax_A12] %s: Himax Power on OK. \n",__func__);
 	}else{
 		printk(KERN_ERR "[Himax_A12]: power on error=%d.\n",err);
 		himax_chip->tp_status = 0;
 		goto err_power_on_failed;
 	}
-	//PowerOn --	
-	//TODO check the interrupt's API function by differrnt platform 
-	err = himax_a12_ts_register_interrupt(himax_chip->client);
-	if(err)
-	{
-		goto err_register_interrupt_failed;
-	}
-	
-	if(!strncmp(himax_chip->himax_firmware_version, "0300", 4))
-	{
-		printk("[Himax_A12] %s: firmware version is D0300.(old version).\n", __func__);
-		if (gpio_get_value(himax_chip->intr_gpio) == 0) 
-		{
-			printk("[Himax_A12] %s: handle missed interrupt\n", __func__);
-			himax_a12_ts_irq_handler(himax_chip->irq, himax_chip);
-		}
-	}
-	printk("[Himax_A12] %s: Himax Power on OK. \n",__func__);
+	//PowerOn --
 	//*********************************************************************************************************
 	// Remain work of Probe
 	//*********************************************************************************************************
+	
+	#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
+	register_microp_notifier(&mp_notifier);
+	printk("[Himax_A12] %s: register microp notify OK! \n",__func__);
+	#endif	
 	
 	//----[CONFIG_HAS_EARLYSUSPEND]-----------------------------------------------------------------------start
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -7671,6 +7742,10 @@ err_set_mutual_buffer_fail:
 	cancel_delayed_work(&himax_chip->station_attach_work);
 	cancel_delayed_work(&himax_chip->station_detach_work);
 	
+#ifdef HX_VIRTUAL_KEY_DELAY
+	cancel_delayed_work(&himax_chip->virtual_key_delay_work);
+#endif
+	
 	if(himax_chip->attach_wq)
 		destroy_workqueue(himax_chip->attach_wq);
 err_create_attach_wq_failed:
@@ -7733,11 +7808,11 @@ static const struct i2c_device_id himax_ts_id[] =
 static struct i2c_driver himax_ts_driver = 
 {
 	.probe		= himax_a12_ts_probe,
-	.remove		= himax_a12_ts_remove,
-	#ifndef CONFIG_HAS_EARLYSUSPEND
-	.suspend	= himax_a12_ts_suspend,
-	.resume		= himax_a12_ts_resume,
-	#endif
+//	.remove		= himax_a12_ts_remove,
+//	#ifndef CONFIG_HAS_EARLYSUSPEND
+//	.suspend	= himax_a12_ts_suspend,
+//	.resume		= himax_a12_ts_resume,
+//	#endif
 	.id_table    = himax_ts_id,
 	.driver        = 
 	{
@@ -7745,7 +7820,7 @@ static struct i2c_driver himax_ts_driver =
 	},
 };
 
-static int __devinit himax_a12_ts_init(void)
+static int __init himax_a12_ts_init(void)
 {
 	//add by josh for VCC330 +++
 //	intel_scu_ipc_iowrite8(PS_MSIC_VCC330CNT, PS_VCC330_ON);
@@ -7771,10 +7846,11 @@ static void __exit himax_a12_ts_exit(void)
 	return;
 }
 
-module_init(himax_a12_ts_init);
-module_exit(himax_a12_ts_exit);
+module_i2c_driver(himax_ts_driver);
+//module_init(himax_a12_ts_init);
+//module_exit(himax_a12_ts_exit);
 
-MODULE_DESCRIPTION("Himax Touchscreen Driver");
+MODULE_DESCRIPTION("Himax PF400CG Touchscreen Driver");
 MODULE_LICENSE("GPL");
 //----[ i2c ]-----------------------------------------------------------------------------------------------end
 
@@ -7849,9 +7925,9 @@ static int himax_a12_attach_function(struct work_struct *dat)
 
 static int himax_a12_detach_function(struct work_struct *dat)
 {
-	int err = 1;
+	int err = 1, ret = 0;
 	
-	printk("[Himax_A12] %s: irq_status = 0x%x, irq_count = %d ++ \n", __func__, himax_chip->irq_status, irq_count);
+	printk("[Himax_A12] %s: irq_status = 0x%x ++ \n", __func__, himax_chip->irq_status);
 		
 	himax_chip->attach = 0;
 	is_resume = true; //add by josh for attach/detach
@@ -7863,14 +7939,7 @@ static int himax_a12_detach_function(struct work_struct *dat)
 	err = himax_a12_ts_poweron(); 
 	if(err == 0){
 		printk(KERN_ERR "[Himax_A12]: power on \n");
-		if(himax_chip->irq_status == 1)
-		{
-			enable_irq(himax_chip->irq);
-			if(debug_log){
-				irq_count ++;
-				printk("[Himax_A12] %s: %d: enable_irq irq_count = %d ++ . \n",__func__, __LINE__, irq_count);
-			}
-		}	
+		ret = himax_a12_irq_enable(himax_chip->client);
 		
 		return 0;
 	}else{
@@ -7899,3 +7968,59 @@ static int himax_a12_mp_event_report(struct notifier_block *this, unsigned long 
 		return 0;
 }
 //add by josh fot attach ---
+/*******************************************************
+Function:
+    Disable irq function
+Input:
+    ts: himax i2c_client private data
+Output:
+    None.
+*********************************************************/
+static int himax_a12_irq_disable(struct i2c_client *ts)
+{
+	unsigned long irqflags;
+	
+	spin_lock_irqsave(&himax_chip->touch_spinlock, irqflags);
+	if((himax_chip->irq_status == 1) && (irq_enable == true))
+	{
+		irq_enable = false;
+		disable_irq_nosync(himax_chip->irq);
+		
+		if(debug_log)
+		{
+			irq_count --;
+			printk("[Himax_A12] %s: %d: disable_irq_nosync irq_count=%d, irq_enable=0x%x. \n",__func__, __LINE__, irq_count, irq_enable);
+		}
+	}
+	spin_unlock_irqrestore(&himax_chip->touch_spinlock, irqflags);
+
+	return 0;
+}
+
+/*******************************************************
+Function:
+    Enable irq function
+Input:
+    ts: himax i2c_client private data
+Output:
+    None.
+*********************************************************/
+static int himax_a12_irq_enable(struct i2c_client *ts)
+{
+    unsigned long irqflags = 0;
+	    
+    spin_lock_irqsave(&himax_chip->touch_spinlock, irqflags);
+    if((himax_chip->irq_status == 1) && (irq_enable == false))
+	{
+		irq_enable = true;
+		enable_irq(himax_chip->irq);
+		if(debug_log)
+		{
+			irq_count ++;
+			printk("[Himax_A12] %s: %d: irq_count=%d, irq_enable =0x%x. \n",__func__, __LINE__, irq_count, irq_enable);
+		}
+	}	
+    spin_unlock_irqrestore(&himax_chip->touch_spinlock, irqflags);
+    
+    return 0;
+}

@@ -110,6 +110,10 @@ static inline int pb_clear_bits(u16 addr, u8 mask)
 	return intel_scu_ipc_update_register(addr, 0, mask);
 }
 
+#ifdef CONFIG_HID_ASUS_PAD_EC
+extern int ite_powerbtn_notify(void);
+#endif
+
 static irqreturn_t mid_pb_isr(int irq, void *dev_id)
 {
 	struct mid_pb_priv *priv = dev_id;
@@ -117,25 +121,29 @@ static irqreturn_t mid_pb_isr(int irq, void *dev_id)
 
 	pbstat = readb(priv->pb_stat);
 	dev_dbg(&priv->input->dev, "pbstat: 0x%x\n", pbstat);
-	
+
 	if (likely(!!probe_end))
 	{
 		input_event(priv->input, EV_KEY, KEY_POWER, !(pbstat & priv->pb_level));
 		input_sync(priv->input);
-	        if (pbstat & priv->pb_level)
-        	        pr_info("[%s] power button released\n", priv->input->name);
-	        else
-                	pr_info("[%s] power button pressed\n", priv->input->name);
-
+		if (pbstat & priv->pb_level)
+			pr_info("[%s] power button released\n", priv->input->name);
+		else
+		{
+#ifdef CONFIG_HID_ASUS_PAD_EC
+                        ite_powerbtn_notify();
+#endif
+			pr_info("[%s] power button pressed\n", priv->input->name);
+		}
 	}
 	else
 	{
-	        if (pbstat & priv->pb_level)
-	             	btn_pressed=0;  
-        	else
-                	btn_pressed=1;
-
+		if (pbstat & priv->pb_level)
+			btn_pressed=0;  
+		else
+			btn_pressed=1;
 	}
+
 	return IRQ_WAKE_THREAD;
 }
 
@@ -156,6 +164,7 @@ static int mid_pb_probe(struct platform_device *pdev)
 	int irq;
 	int ret;
 	struct intel_msic_power_btn_platform_data *pdata;
+
 	probe_end = 0;
 	if (pdev == NULL)
 		return -ENODEV;
@@ -213,8 +222,6 @@ static int mid_pb_probe(struct platform_device *pdev)
 	if (pdata->irq_ack) {
 		pdata->irq_ack(pdata);
 		priv->irq_ack = true;
-	} else {
-		priv->irq_ack = false;
 	}
 
 	ret = request_threaded_irq(priv->irq, mid_pb_isr, mid_pb_threaded_isr,
@@ -234,8 +241,8 @@ static int mid_pb_probe(struct platform_device *pdev)
 	 */
 	pb_clear_bits(priv->irq_lvl1_mask, MSIC_PWRBTNM);
 	if(btn_pressed)
-		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");	
-	probe_end = 1; 
+		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");  
+	probe_end = 1;
 	return 0;
 
 out_unregister_input:
@@ -247,9 +254,6 @@ fail:
 	platform_set_drvdata(pdev, NULL);
 	input_free_device(input);
 	kfree(priv);
-	if(btn_pressed)
-		pr_info("[mid_powerbtn] Abnormal power btn irq recorded. \n");
-	probe_end = 1;
 	return ret;
 }
 
@@ -359,11 +363,8 @@ static void __exit mid_pb_rpmsg_exit(void)
 	return unregister_rpmsg_driver(&mid_pb_rpmsg_driver);
 }
 
-#ifdef MODULE
-module_init(mid_pb_rpmsg_init);
-#else
-late_initcall_async(mid_pb_rpmsg_init);
-#endif
+late_initcall(mid_pb_rpmsg_init);
+
 module_exit(mid_pb_rpmsg_exit);
 
 MODULE_AUTHOR("Hong Liu <hong.liu@intel.com>");

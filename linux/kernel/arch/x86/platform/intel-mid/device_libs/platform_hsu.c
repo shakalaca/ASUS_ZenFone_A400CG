@@ -1,7 +1,7 @@
 /*
  * platform_hsu.c: hsu platform data initilization file
  *
- * (C) Copyright 2008-2013 Intel Corporation
+ * (C) Copyright 2008 Intel Corporation
  * Author:
  *
  * This program is free software; you can redistribute it and/or
@@ -18,8 +18,9 @@
 #include <linux/lnw_gpio.h>
 #include <linux/gpio.h>
 #include <asm/setup.h>
-#include <asm/intel_mid_hsu.h>
 #include <asm/intel-mid.h>
+#include <asm/intel_mid_hsu.h>
+
 #include "platform_hsu.h"
 
 #define TNG_CLOCK_CTL 0xFF00B830
@@ -81,10 +82,10 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 		[hsu_pid_rhb] = {
 			[hsu_port0] = {
 				.id = 0,
+#ifndef CONFIG_EEPROM_PADSTATION
 				.name = HSU_BT_PORT,
-                                #ifndef CONFIG_EEPROM_PADSTATION
-				.wake_gpio = 42,
-                                #endif
+#endif				
+			//	.wake_gpio = 42,
 				.rx_gpio = 96+26,
 				.rx_alt = 1,
 				.tx_gpio = 96+27,
@@ -97,7 +98,7 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 			[hsu_port1] = {
 				.id = 1,
 				.name = HSU_MODEM_PORT,
-				.wake_gpio = 64,
+				//.wake_gpio = 64,
 				.rx_gpio = 64,
 				.rx_alt = 1,
 				.tx_gpio = 65,
@@ -114,7 +115,7 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 				.rx_gpio = 67,
 				.rx_alt = 1,
 			},
-			[hsu_port_share] = {
+			/*[hsu_port_share] = {
 				.id = 1,
 				.name = HSU_GPS_PORT,
 				.wake_gpio = 96+30,
@@ -126,7 +127,7 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 				.cts_alt = 1,
 				.rts_gpio = 96+32,
 				.rts_alt = 2,
-			},
+			},*/
 		},
 		[hsu_pid_vtb_pro] = {
 			[hsu_port0] = {
@@ -484,6 +485,7 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.hw_set_alt = NULL,
 			.hw_set_rts = intel_mid_hsu_rts,
 			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_suspend_post = intel_mid_hsu_suspend_post,
 			.hw_resume = intel_mid_hsu_resume,
 			.hw_context_save = 1,
 		},
@@ -735,14 +737,13 @@ int intel_mid_hsu_func_to_port(unsigned int func)
 	case INTEL_MID_CPU_CHIP_ANNIEDALE:
 		tbl = &hsu_port_func_id_tlb[hsu_tng][0];
 		break;
-	case INTEL_MID_CPU_CHIP_VALLEYVIEW2:
+	case INTEL_MID_CPU_CHIP_PENWELL:
+		tbl = &hsu_port_func_id_tlb[hsu_pnw][0];
+		break;
+	default:
+		/* FIXME: VALLEYVIEW2? */
 		/* 1e.3 and 1e.4 */
 		tbl = &hsu_port_func_id_tlb[hsu_vlv2][0];
-		break;
-	case INTEL_MID_CPU_CHIP_LINCROFT:
-	case INTEL_MID_CPU_CHIP_PENWELL:
-	default:
-		tbl = &hsu_port_func_id_tlb[hsu_pnw][0];
 		break;
 	}
 
@@ -821,15 +822,14 @@ static void hsu_platform_clk(enum intel_mid_cpu_type cpu_type)
 		iounmap(clksc);
 		break;
 
-	case INTEL_MID_CPU_CHIP_VALLEYVIEW2:
-		clock = 100000;
-		break;
-
-	case INTEL_MID_CPU_CHIP_LINCROFT:
 	case INTEL_MID_CPU_CHIP_PENWELL:
 	case INTEL_MID_CPU_CHIP_CLOVERVIEW:
-	default:
 		clock = 50000;
+		break;
+	default:
+		/* FIXME: VALLEYVIEW2? */
+		clock = 100000;
+		break;
 	}
 
 	pr_info("hsu core clock %u M\n", clock / 1000);
@@ -850,11 +850,6 @@ static __init int hsu_dev_platform_data(void)
 			hsu_port_gpio_mux =
 				&hsu_port_pin_cfgs[hsu_clv][hsu_pid_rhb][0];
 		break;
-	case INTEL_MID_CPU_CHIP_VALLEYVIEW2:
-		platform_hsu_info = &hsu_port_cfgs[hsu_vlv2][0];
-		hsu_port_gpio_mux =
-			&hsu_port_pin_cfgs[hsu_vlv2][hsu_pid_def][0];
-		break;
 
 	case INTEL_MID_CPU_CHIP_TANGIER:
 	case INTEL_MID_CPU_CHIP_ANNIEDALE:
@@ -862,11 +857,15 @@ static __init int hsu_dev_platform_data(void)
 		hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_tng][hsu_pid_def][0];
 		break;
 
-	case INTEL_MID_CPU_CHIP_LINCROFT:
 	case INTEL_MID_CPU_CHIP_PENWELL:
-	default:
 		platform_hsu_info = &hsu_port_cfgs[hsu_pnw][0];
 		hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_pnw][hsu_pid_def][0];
+		break;
+	default:
+		/* FIXME: VALLEYVIEW2? */
+		platform_hsu_info = &hsu_port_cfgs[hsu_vlv2][0];
+		hsu_port_gpio_mux =
+			&hsu_port_pin_cfgs[hsu_vlv2][hsu_pid_def][0];
 		break;
 	}
 

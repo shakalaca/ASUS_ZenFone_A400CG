@@ -40,11 +40,9 @@
 #else
 #include <linux/i2c/gt927.h>
 #endif
-#include <linux/microp_api.h> 
-#include <linux/microp_pin_def.h>
-#include <linux/microp_notify.h>
 #include <linux/HWVersion.h> 
 // add by leo --
+#include <linux/slab.h>
 
 #if GTP_ICS_SLOT_REPORT
     #include <linux/input/mt.h>
@@ -1569,6 +1567,10 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
         GTP_ERROR("GTP request input dev failed");
     }
 
+    spin_lock_init(&touch_chip->irq_lock);
+    //ts->irq_lock = SPIN_LOCK_UNLOCKED; // mark by leo
+    touch_chip->irq_lock = gt927_spin_lock; // add by leo
+
     printk("////////////////////		%s:[%d]: gtp_request_irq \n", __func__, __LINE__); // add by leo
     ret = gtp_request_irq(touch_chip); 
     if (ret < 0)
@@ -1587,9 +1589,6 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
     {
         GTP_ERROR("Read version failed.");
     }
-    spin_lock_init(&touch_chip->irq_lock);
-    //ts->irq_lock = SPIN_LOCK_UNLOCKED; // mark by leo
-    touch_chip->irq_lock = gt927_spin_lock; // add by leo
 
     printk("////////////////////		%s:[%d]: gtp_reset_guitar \n", __func__, __LINE__); // add by leo
 
@@ -1905,7 +1904,7 @@ Input:
 Output:
     Executive Outcomes. 0---succeed.
 ********************************************************/
-static int __devinit goodix_ts_init(void)
+static int goodix_ts_init(void)
 {
     s32 ret;
 

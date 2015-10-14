@@ -66,6 +66,7 @@
 #include <linux/buffer_head.h>
 #include <linux/kthread.h>
 
+
 //=============================================================================================================
 //
 //	Segment : Himax Define Options 
@@ -253,6 +254,7 @@ struct himax_ts_data
 	//----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end	
 	
 	int tp_status;
+	char himax_firmware_version[8];
 };
 
 static struct himax_ts_data *himax_chip;
@@ -552,11 +554,14 @@ static void setFlashDumpGoing(bool going);
 static ssize_t himax_get_touch_status(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t hx8528_chip_self_test_function(struct device *dev, struct device_attribute *attr, char *buf); 
 static ssize_t hx8528_self_test_setting(struct device *dev,struct device_attribute *attr, const char *buf, size_t count);
+static ssize_t himax_get_fw_version(struct device *dev, struct device_attribute *attr, char *buf);
 
 static DEVICE_ATTR(touch_status, (S_IWUSR|S_IRUGO), himax_get_touch_status, NULL);
 static DEVICE_ATTR(tp_self_test, (S_IWUSR|S_IRUGO), hx8528_chip_self_test_function, hx8528_self_test_setting);
+static DEVICE_ATTR(tp_fw_version,(S_IWUSR|S_IRUGO), himax_get_fw_version, NULL);
 
 static struct attribute *himax_attr[] = {
+	&dev_attr_tp_fw_version.attr,
 	&dev_attr_touch_status.attr,
 	&dev_attr_tp_self_test.attr,
 	NULL
@@ -3068,7 +3073,9 @@ static int self_test_delay_time = 3; //add by josh for init self_test delay time
 			for(i=0; i<12; i++)
 				printk(" %d ,",CFG_VER_MAJ_buff[i]);
 			printk("\n");
-	  	
+			
+			sprintf(himax_chip->himax_firmware_version, "%2.2X%2.2X",FW_VER_MAJ_buff[0], FW_VER_MIN_buff[0]);
+			
 			printk("CFG_VER_MIN_buff : ");			
 			for(i=0; i<12; i++)
 				printk(" %d ,",CFG_VER_MIN_buff[i]);
@@ -3255,8 +3262,8 @@ static int self_test_delay_time = 3; //add by josh for init self_test delay time
 		else if(IC_TYPE == HX_85XX_E_SERIES_PWON)
 		{
 			//For ME380
-			HX_RX_NUM				= 22;
-			HX_TX_NUM				= 36;
+			HX_RX_NUM				= 21;
+			HX_TX_NUM				= 35;
 			HX_BT_NUM				= 0;
 			HX_X_RES				= 800;
 			HX_Y_RES				= 1280;
@@ -3495,6 +3502,21 @@ static int self_test_delay_time = 3; //add by josh for init self_test delay time
 //	Segment : Asus debug attr function
 //  add by josh
 //=============================================================================================================
+
+static ssize_t himax_get_fw_version(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	/*himax_read_FW_ver(true);
+	printk(KERN_INFO "[Himax]: D%s\n",himax_chip->himax_firmware_version);
+ 	return sprintf(buf, "D%s ", himax_chip->himax_firmware_version);*/
+	char tmpstr[8];
+	
+	himax_read_FW_ver(true);
+    sprintf(tmpstr, "%2.2X%2.2X \n",FW_VER_MAJ_buff[0],FW_VER_MIN_buff[0]);
+	strncat(buf,tmpstr,strlen(tmpstr));
+	
+	return strlen(buf);
+	
+}
 
 static ssize_t himax_get_touch_status(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -3826,7 +3848,7 @@ static int hx8528_chip_self_test(uint8_t *data)
 
 	//----[HX_TP_PROC_REGISTER]------------------------------------------------------------------------------start
 		#ifdef HX_TP_PROC_REGISTER
-		static ssize_t himax_register_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+		static ssize_t himax_register_read(struct seq_file *buf, void *v)
 		{
 			int ret = 0;
 			int base = 0;
@@ -4303,7 +4325,7 @@ static int hx8528_chip_self_test(uint8_t *data)
 			return 0;
 		}
 		
-		static ssize_t himax_debug_level_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+		static ssize_t himax_debug_level_read(struct seq_file *buf, void *v)
 		{
 			int ret = 0;
 			int i = 0;
@@ -4436,7 +4458,8 @@ static int hx8528_chip_self_test(uint8_t *data)
 			{
 				ret += sprintf(buf, "%d\n", debug_log_level);
 			}
-			return ret;
+			//return ret;
+			return 0;
 		}
 		
 		static ssize_t himax_debug_level_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
@@ -4634,6 +4657,11 @@ static int hx8528_chip_self_test(uint8_t *data)
 			return len;
 		}
 		
+		
+		static int proc_debug_open(struct inode *inode, struct file *file)
+		{
+			return single_open(file,himax_debug_level_read,NULL);
+		}
 		
 		#endif
 	//----[HX_TP_PROC_DEBUG_LEVEL]-----------------------------------------------------------------------------end
@@ -6299,11 +6327,15 @@ static ssize_t self_test_setting(const char *buf)
 		
 		//----[HX_TP_PROC_REGISTER]----------------------------------------------------------------------------start
 		#ifdef HX_TP_PROC_REGISTER
-			himax_proc_register_file = create_proc_entry(HIMAX_PROC_REGISTER_FILE, 0666, NULL);
+			static const struct file_operations register_fops = {
+				.owner = THIS_MODULE,
+				.read = himax_register_read,
+				.write = himax_register_write,
+			};
+			
+			himax_proc_register_file = proc_create(HIMAX_PROC_REGISTER_FILE, 0666, NULL, &register_fops);
 			if(himax_proc_register_file)
 			{
-				himax_proc_register_file->read_proc 	= himax_register_read;
-				himax_proc_register_file->write_proc = himax_register_write;
 			}
 			else
 			{
@@ -6312,10 +6344,10 @@ static ssize_t self_test_setting(const char *buf)
 		#endif
 		
 		#ifdef HX_TP_PROC_DIAG
-			himax_proc_diag_file = create_proc_entry(HIMAX_PROC_DIAG_FILE, 0666, NULL);
+			
+			himax_proc_diag_file = proc_create(HIMAX_PROC_DIAG_FILE, 0666, NULL, &himax_diag_ops);
 			if(himax_proc_diag_file)
 			{
-				himax_proc_diag_file->proc_fops = &himax_diag_ops;
 			}
 			else
 			{
@@ -6324,11 +6356,19 @@ static ssize_t self_test_setting(const char *buf)
 		#endif
 		
 		#ifdef HX_TP_PROC_DEBUG_LEVEL
-			himax_proc_debug_file = create_proc_entry(HIMAX_PROC_DEBUG_FILE, 0666, NULL);
+		
+
+
+			static const struct file_operations debug_fops = {
+				.owner = THIS_MODULE,
+				.open = proc_debug_open,
+				.read = seq_read,
+				.write = himax_debug_level_write,
+			};
+		
+			himax_proc_debug_file = proc_create(HIMAX_PROC_DEBUG_FILE, 0666, NULL, &debug_fops);
 			if(himax_proc_debug_file)
 			{
-				himax_proc_debug_file->read_proc 	= himax_debug_level_read;
-				himax_proc_debug_file->write_proc = himax_debug_level_write;
 			}
 			else
 			{
@@ -6337,11 +6377,15 @@ static ssize_t self_test_setting(const char *buf)
 		#endif
 		
 		#ifdef HX_TP_PROC_FLASH_DUMP
-			himax_proc_flash_file = create_proc_entry(HIMAX_PROC_FLASH_FILE, 0666, NULL);
+			static const struct file_operations flash_fops = {
+				.owner = THIS_MODULE,
+				.read = himax_flash_read,
+				//.write = himax_flash_write,
+			};
+			
+			himax_proc_flash_file = proc_create(HIMAX_PROC_FLASH_FILE, 0666, NULL, &flash_fops);
 			if(himax_proc_flash_file)
 			{
-				himax_proc_flash_file->read_proc = himax_flash_read;
-				//himax_proc_flash_file->write_proc = himax_flash_write;
 			}
 			else
 			{
@@ -6350,11 +6394,14 @@ static ssize_t self_test_setting(const char *buf)
 		#endif
 		
 		#ifdef HX_TP_PROC_SELF_TEST
-			himax_proc_selftest_file = create_proc_entry(HIMAX_PROC_SELFTEST_FILE, 0666, NULL);
+			static const struct file_operations selftest_fops = {
+				.owner = THIS_MODULE,
+				.read = himax_flash_read,
+			};
+			
+			himax_proc_selftest_file = proc_create(HIMAX_PROC_SELFTEST_FILE, 0666, NULL, &selftest_fops);
 			if(himax_proc_selftest_file)
 			{
-				himax_proc_selftest_file->read_proc 	= himax_self_test_read;
-				himax_proc_selftest_file->write_proc 	= himax_self_test_setting;
 			}
 			else
 			{
@@ -6363,11 +6410,15 @@ static ssize_t self_test_setting(const char *buf)
 		#endif
 
 		#ifdef HX_TP_PROC_RESET
-			himax_proc_reset_file = create_proc_entry(HIMAX_PROC_RESET_FILE, 0666, NULL);
+			static const struct file_operations reset_fops = {
+				.owner = THIS_MODULE,
+				.write = himax_reset_write,
+			};
+
+			himax_proc_reset_file = proc_create(HIMAX_PROC_RESET_FILE, 0666, NULL, &reset_fops);
 			if(himax_proc_reset_file)
 			{
 				//himax_proc_reset_file->read_proc 	= himax_reset_read;
-				himax_proc_reset_file->write_proc = himax_reset_write;
 			}
 			else
 			{
@@ -6392,111 +6443,12 @@ static int himax_touch_sysfs_init(void)
 		ret = -ENOMEM;
 		return ret;
 	}
-	/*
-#ifdef HX_TP_SYS_DEBUG_LEVEL
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_debug_level.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: create_file debug_level failed\n");
-		return ret;
-	}
-#endif
-	
-#ifdef HX_TP_SYS_REGISTER
-	register_command = 0;
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_register.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: create_file register failed\n");
-		return ret;
-	}
-#endif
-	
-#ifdef HX_TP_SYS_DIAG
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_diag.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: sysfs_create_file failed\n");
-		return ret;
-	}
-#endif
-	
-#ifdef HX_TP_SYS_SELF_TEST
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_self_test.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_self_test failed\n");
-		return ret;
-	}
-#endif
-	
-#ifdef HX_TP_SYS_DIAG
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_output_raw_data.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_output_raw_data failed\n");
-		return ret;
-	}    
-#endif
-	
-#ifdef HX_TP_SYS_FLASH_DUMP
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_flash_dump.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: sysfs_create_file failed\n");
-		return ret;
-	}
-#endif
-
-#ifdef HX_TP_SYS_HITOUCH
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_hitouch.attr);
-	if (ret) 
-	{
-		printk(KERN_ERR "[Himax]: sysfs_create_file failed\n");
-		return ret;
-	}
-#endif
-
-#ifdef HX_TP_SYS_RESET
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_reset.attr);
-       if (ret)
-       {
-           printk(KERN_ERR "[Himax]: sysfs_create_file failed\n");
-           return ret;
-       }
-#endif
-	//add by Josh ++++++
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_touch_status.attr);
-	if (ret)
-	{
-	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_touch_status failed\n");
-	    return ret;
-	}
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_check_running.attr);
-	if (ret)
-	{
-	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_check_running failed\n");
-	    return ret;
-	}
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_touch_irq.attr);
-	if (ret)
-	{
-	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_touch_irq failed\n");
-	    return ret;
-	}
 	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_fw_version.attr);
 	if (ret)
 	{
 	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_fw_version failed\n");
 	    return ret;
 	}
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_debug_log.attr);
-	if (ret)
-	{
-	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_debug_log failed\n");
-	    return ret;
-	}
-	//add by Josh -------*/
 	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_self_test.attr);
 	if (ret) 
 	{
@@ -7439,8 +7391,7 @@ static void himax_touch_sysfs_deinit(void)
 			//Wakelock Protect Start
 			wake_lock_init(&himax_chip->wake_lock, WAKE_LOCK_SUSPEND, "himax_touch_wake_lock");
 			//Wakelock Protect End
-			
-			
+
 			//*********************************************************************************************************
 			// Himax Information / Initial, I2C must be ready
 			//*********************************************************************************************************
@@ -7494,7 +7445,11 @@ static void himax_touch_sysfs_deinit(void)
 			{
 				goto err_himax_touch_sysfs_create_group_fail;
 			}
-		  
+			
+			//add by josh for init  +++
+			memset(himax_chip->himax_firmware_version, 0, 8);
+			//add by josh for init  ---
+			
 			himax_chip->attrs.attrs = himax_attr;
 			err = sysfs_create_group(&himax_chip->client->dev.kobj, &himax_chip->attrs);
 			if (err) {
@@ -7805,7 +7760,7 @@ static void himax_touch_sysfs_deinit(void)
 		}	
 	
 		
-		static int __devinit himax_ts_init(void)
+		static int himax_ts_init(void)
 		{
 			printk(KERN_INFO "[himax] %s\n", __func__);
 			return i2c_add_driver(&himax_ts_driver);
@@ -7852,14 +7807,3 @@ int himax_cable_status(int status)
     return 0;
 }
 EXPORT_SYMBOL(himax_cable_status);
-
-
-
-
-
-
-
-
-
-
-

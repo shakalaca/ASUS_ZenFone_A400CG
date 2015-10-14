@@ -34,6 +34,8 @@ enum {
 static struct i2c_pin_cfg dw_i2c_pin_cfgs[][10] = {
 	[BOARD_NONE] =  {},
 	[BOARD_VTB] =  {
+		[0] = {25, 1, 24, 1},
+		[2] = {29, 1, 28, 1},
 		[1] = {27, 1, 26, 1},
 		[5] = {41, 1, 40, 1},
 	},

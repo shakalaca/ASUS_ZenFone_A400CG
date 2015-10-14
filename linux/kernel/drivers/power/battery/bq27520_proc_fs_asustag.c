@@ -551,6 +551,7 @@ int bq27520_register_proc_fs_test(void)
     tmp_dev_info = bq27520_dev_info;
     mutex_unlock(&bq27520_dev_info_mutex);
 
+#ifndef CONFIG_NEW_PROC_FS
     entry = create_proc_entry("bq27520_test_proc_protocol", 0644, NULL);
     if (!entry) {
         BAT_DBG_E("Unable to create bq27520_test_proc_protocol\n");
@@ -574,6 +575,7 @@ int bq27520_register_proc_fs_test(void)
     }
     entry->read_proc = bq27520_proc_test_case_read;
     entry->write_proc = bq27520_proc_test_case_write;
+#endif
 
     return 0;
 }

@@ -56,7 +56,6 @@ static int HW_ID;
 extern int Read_HW_ID(void);
 static int PROJ_ID;
 extern int Read_PROJ_ID(void);
-static int OutputDevice = 0;
 #ifdef CONFIG_EEPROM_PADSTATION
 extern void mid_dock_report(int state);
 static int mp_event_report(struct notifier_block *this, unsigned long event, void *ptr);
@@ -81,6 +80,9 @@ inline void *ctp_get_rhb_ops(void)
 	return &ctp_rhb_ops;
 }
 EXPORT_SYMBOL(ctp_get_rhb_ops);
+
+static int OutputDevice = 0;
+
 #ifdef CONFIG_EEPROM_PADSTATION
 static int mp_event_report(struct notifier_block *this, unsigned long event, void *ptr)
 {
@@ -96,15 +98,24 @@ static int lineout_spk_amp_event(struct snd_soc_dapm_widget *w, struct snd_kcont
 {
 	pr_debug("%s : device %x\n", __func__, OutputDevice);
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
-		if (OutputDevice == 0x2 || OutputDevice == 0x6) {
+//		if (OutputDevice == 0x2 || OutputDevice == 0x6) {
 			pr_info("%s : Enable Dock SPK AMP device %x\n", __func__, OutputDevice);
-			AX_MicroP_setSPK_EN(1);
-			AX_MicroP_setRCV_EN(0);
-		} else
-			pr_err("%s : not correct device %x\n", __func__, OutputDevice);
+//			AX_MicroP_setSPK_EN(1);
+//			AX_MicroP_setRCV_EN(0);
+			if (AX_MicroP_getHWID() == 3 || AX_MicroP_getHWID() == 2) { // MP:3, PR:2
+				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 0);
+				AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
+			} else {
+				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
+				AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 0);
+			}
+//		} else
+//			pr_err("%s : not correct device %x\n", __func__, OutputDevice);
 	} else {
 		if (OutputDevice == 0x2 || OutputDevice == 0x6) {
-			AX_MicroP_setSPK_EN(0);
+//			AX_MicroP_setSPK_EN(0);
+			AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
+			AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
 			pr_info("%s : disable lineout SPK amp\n", __func__);
 		}
 	}
@@ -116,15 +127,24 @@ static int lineout_rcv_amp_event(struct snd_soc_dapm_widget *w, struct snd_kcont
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
 		if (OutputDevice == 0x1) {
 			pr_info("%s : Enable Dock Receiver AMP device %x\n", __func__, OutputDevice);
-			AX_MicroP_setRCV_EN(1);
-			AX_MicroP_setSPK_EN(0);
+	//		AX_MicroP_setRCV_EN(1);
+	//		AX_MicroP_setSPK_EN(0);
+			if (AX_MicroP_getHWID() == 3 || AX_MicroP_getHWID() == 2) { // MP:3, PR:2
+				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
+				AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 0);
+			} else {
+				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 0);
+				AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
+			}
 		}
 		else
 			pr_err("%s : not correct device %x\n", __func__, OutputDevice);
 	} else {
 		if (OutputDevice == 0x1) {
-			AX_MicroP_setRCV_EN(0);
-			pr_info("%s : disable lineout amp\n", __func__);
+	//		AX_MicroP_setRCV_EN(0);
+			AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
+			AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
+			pr_info("%s : disable lineout RCV amp\n", __func__);
 		}
 	}
 	return 1;
@@ -764,13 +784,29 @@ int ctp_init(struct snd_soc_pcm_runtime *runtime)
 	suspend. Mark the end points ignore_suspend */
 	snd_soc_dapm_ignore_suspend(dapm, "HPOL");
 	snd_soc_dapm_ignore_suspend(dapm, "HPOR");
-
-//	snd_soc_dapm_disable_pin(dapm, "MIC2");
-//	snd_soc_dapm_disable_pin(dapm, "SPKLINEOUT");
 	snd_soc_dapm_ignore_suspend(dapm, "SPOLP");
 	snd_soc_dapm_ignore_suspend(dapm, "SPOLN");
 	snd_soc_dapm_ignore_suspend(dapm, "SPORP");
 	snd_soc_dapm_ignore_suspend(dapm, "SPORN");
+
+        snd_soc_dapm_ignore_suspend(dapm, "AIF1 Playback");
+        snd_soc_dapm_ignore_suspend(dapm, "AIF1 Capture");
+        snd_soc_dapm_ignore_suspend(dapm, "AIF2 Playback");
+        snd_soc_dapm_ignore_suspend(dapm, "AIF2 Capture");	
+
+        snd_soc_dapm_ignore_suspend(dapm, "IN1P");
+        snd_soc_dapm_ignore_suspend(dapm, "IN1N");
+        snd_soc_dapm_ignore_suspend(dapm, "IN2P");
+        snd_soc_dapm_ignore_suspend(dapm, "IN2N");	
+	
+	snd_soc_dapm_ignore_suspend(dapm, "Headset Mic");
+	snd_soc_dapm_ignore_suspend(dapm, "Headphone");
+	snd_soc_dapm_ignore_suspend(dapm, "Ext Spk L");
+	snd_soc_dapm_ignore_suspend(dapm, "Ext Spk R");
+	snd_soc_dapm_ignore_suspend(dapm, "Int Mic");
+#ifdef CONFIG_EEPROM_PADSTATION
+	snd_soc_dapm_ignore_suspend(dapm, "Dock Mic");
+#endif	
 	
 	snd_soc_dapm_enable_pin(dapm, "Headset Mic");
 	snd_soc_dapm_enable_pin(dapm, "Headphone");
@@ -779,6 +815,7 @@ int ctp_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_enable_pin(dapm, "Int Mic");
 #ifdef CONFIG_EEPROM_PADSTATION
 	snd_soc_dapm_enable_pin(dapm, "Dock Mic");
+
 #endif	
 	snd_soc_dapm_enable_pin(dapm, "Receiver");
 	snd_soc_dapm_nc_pin(dapm, "MonoP");

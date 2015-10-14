@@ -232,6 +232,14 @@ static int proc_calibration_result =0;
 static int check_fw_version(const unsigned char*firmware, unsigned int size,int fw_id , int fw_version, int fw_test_version);
 static int elan_ktf3k_ts_get_power_state(struct i2c_client *client);
 static int EKTH3374AY_get_fw_bootcode_version(void); //add by leo for return touch FW version to AP
+static ssize_t fw_check_ProcFile_read(struct seq_file *buf, void *v);
+static ssize_t fw_check_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data);
+static ssize_t fw_update_ProcFile_read(struct seq_file *buf, void *v);
+static ssize_t fw_update_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data);
+static ssize_t calibration_ProcFile_read(struct seq_file *buf, void *v);
+static ssize_t calibration_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data);
+static int ektf_proc_read(struct seq_file *buf, void *v);
+static int ektf_proc_write(struct file *file, const char *buffer, unsigned long count, void *data);
 
 /* Debug levels */
 #define NO_DEBUG       0
@@ -1719,18 +1727,12 @@ static ssize_t elan_touch_switch_state(struct switch_dev *sdev, char *buf)
 }
 
 #ifdef _ENABLE_DBG_LEVEL
-static int ektf_proc_read(char *buffer, char **buffer_location, off_t offset, int buffer_length, int *eof, void *data )
-{
-	int ret;
-	
+static int ektf_proc_read(struct seq_file *buf, void *v)
+{	
 	touch_debug(DEBUG_MESSAGES, "call proc_read\n");
 	
-	if(offset > 0)  /* we have finished to read, return 0 */
-		ret  = 0;
-	else 
-		ret = sprintf(buffer, "Debug Level: Release Date: %s\n","2011/10/05");
-
-	return ret;
+	seq_printf(buf, "Debug Level: Release Date: %s\n","2011/10/05");
+	return 0;
 }
 
 static int ektf_proc_write(struct file *file, const char *buffer, unsigned long count, void *data)
@@ -2023,10 +2025,48 @@ static struct file_operations stress_fops = {
 #endif
 */
 
-// add by leo for AP firmware update bar ++
-static ssize_t fw_check_ProcFile_read(char *buf, char **start, off_t off, int count, int *eof, void *data){
+static int ektf_proc_open(struct inode *inode, struct  file *file) {
+  return single_open(file, ektf_proc_read, NULL);
+}
+static int fw_check_ProcFile_open(struct inode *inode, struct  file *file) {
+  return single_open(file, fw_check_ProcFile_read, NULL);
+}
+static int  fw_update_ProcFile_open(struct inode *inode, struct  file *file) {
+  return single_open(file, fw_update_ProcFile_read, NULL);
+}
+static int calibration_ProcFile_open(struct inode *inode, struct  file *file) {
+  return single_open(file, calibration_ProcFile_read, NULL);
+}
 
-	return sprintf(buf, "%d\n",proc_fw_check_result);
+static const struct file_operations ProcFile_fops = {
+	.owner = THIS_MODULE,
+	.open = ektf_proc_open,
+	.read = seq_read,
+	.write = ektf_proc_write,
+};
+static const struct file_operations fw_check_ProcFile_fops = {
+	.owner = THIS_MODULE,
+	.open = fw_check_ProcFile_open,
+	.read = seq_read,
+	.write = fw_check_ProcFile_write,
+};
+static const struct file_operations  fw_update_ProcFile_fops = {
+	.owner = THIS_MODULE,
+	.open = fw_update_ProcFile_open,
+	.read = seq_read,
+	.write = fw_update_ProcFile_write,
+};
+static const struct file_operations calibration_ProcFile_fops = {
+	.owner = THIS_MODULE,
+	.open = calibration_ProcFile_open,
+	.read = seq_read,
+	.write = calibration_ProcFile_write,
+};
+
+// add by leo for AP firmware update bar ++
+static ssize_t fw_check_ProcFile_read(struct seq_file *buf, void *v){
+
+	return seq_printf(buf, "%d\n",proc_fw_check_result);
 }
 static ssize_t fw_check_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data){
 
@@ -2070,9 +2110,9 @@ static ssize_t fw_check_ProcFile_write(struct file *filp, const char __user *buf
 	return len;
 }
 
-static ssize_t fw_update_ProcFile_read(char *buf, char **start, off_t off, int count, int *eof, void *data){
+static ssize_t fw_update_ProcFile_read(struct seq_file *buf, void *v){
 
-	return sprintf(buf, "%d\n",proc_fw_update_result);
+	return seq_printf(buf, "%d\n",proc_fw_update_result);
 }
 static ssize_t fw_update_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data){
 
@@ -2110,14 +2150,14 @@ static ssize_t fw_update_ProcFile_write(struct file *filp, const char __user *bu
 	return len;
 }
 
-static ssize_t calibration_ProcFile_read(char *buf, char **start, off_t off, int count, int *eof, void *data){
+static ssize_t calibration_ProcFile_read(struct seq_file *buf, void *v){
 
-	return sprintf(buf, "%d\n",proc_calibration_result);
+	return seq_printf(buf, "%d\n",proc_calibration_result);
 }
 static ssize_t calibration_ProcFile_write(struct file *filp, const char __user *buff, unsigned long len, void *data){
 
 	char messages[80] = {0};
-			
+
 	if (len >= 80) {
 		printk(KERN_INFO "%s: no command exceeds 80 chars.\n", __func__);
 		return -EFAULT;
@@ -2145,30 +2185,27 @@ void EKTH3374AY_create_proc_file(void){
 	printk("[Elan] %s: \n",__func__);
 	
 	// check fw version
-	fw_check_ProcFile = create_proc_entry(EKTH3374AY_PROC_FW_CHECK_NAME, 0666, NULL);
+	fw_check_ProcFile = proc_create(EKTH3374AY_PROC_FW_CHECK_NAME, 0666, NULL, &fw_check_ProcFile_fops);
 	if(fw_check_ProcFile){
-		fw_check_ProcFile->read_proc = fw_check_ProcFile_read;
-		fw_check_ProcFile->write_proc = fw_check_ProcFile_write;
+		printk("[Elan] %s: fw_check_ProcFile create sucessed!\n",__func__);
 	}
 	else{
 		printk("[Elan] %s: fw_check_ProcFile create failed!\n",__func__);
 	}
 
 	// fw update
-	fw_update_ProcFile = create_proc_entry(EKTH3374AY_PROC_FW_UPDATE_NAME, 0666, NULL);
+	fw_update_ProcFile = proc_create(EKTH3374AY_PROC_FW_UPDATE_NAME, 0666, NULL, &fw_update_ProcFile_fops);
 	if(fw_update_ProcFile){
-		fw_update_ProcFile->read_proc = fw_update_ProcFile_read;
-		fw_update_ProcFile->write_proc = fw_update_ProcFile_write;
+		printk("[Elan] %s: fw_update_ProcFile create sucessed!\n",__func__);
 	}
 	else{
 		printk("[Elan] %s: fw_update_ProcFile create failed!\n",__func__);
 	}
 
 	//calibration
-	calibration_ProcFile = create_proc_entry(EKTH3374AY_PROC_CALIBRATION_NAME, 0666, NULL);
+	calibration_ProcFile = proc_create(EKTH3374AY_PROC_CALIBRATION_NAME, 0666, NULL, &calibration_ProcFile_fops);
 	if(calibration_ProcFile){
-		calibration_ProcFile->read_proc = calibration_ProcFile_read;
-		calibration_ProcFile->write_proc = calibration_ProcFile_write;
+		printk("[Elan] %s: calibration_ProcFile create sucessed!\n",__func__);
 	}
 	else{
 		printk("[Elan] %s: calibration_ProcFile create failed!\n",__func__);
@@ -2307,7 +2344,7 @@ static int elan_ktf3k_ts_probe(struct i2c_client *client,
 	touch_chip->abs_y_min =	 pdata->abs_y_min;
 	printk("[Elan] %s:[%d]: Max X=%d, Max Y=%d, Min_X=%d, Min_Y=%d \n", __func__, __LINE__, touch_chip->abs_x_max, touch_chip->abs_y_max, touch_chip->abs_x_min, touch_chip->abs_y_min);
 
-	input_mt_init_slots(touch_chip->input_dev, FINGER_NUM);
+	input_mt_init_slots(touch_chip->input_dev, FINGER_NUM,0);
 //	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, pdata->abs_y_min,  pdata->abs_y_max, 0, 0); // for 800 * 1280 
 //	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, pdata->abs_x_min,  pdata->abs_x_max, 0, 0);// for 800 * 1280 
 	input_set_abs_params(touch_chip->input_dev, ABS_MT_POSITION_X, touch_chip->abs_x_min,  touch_chip->abs_x_max, 0, 0);
@@ -2385,7 +2422,7 @@ static int elan_ktf3k_ts_probe(struct i2c_client *client,
 	}
 	
 #ifdef _ENABLE_DBG_LEVEL
-	dbgProcFile = create_proc_entry(PROC_FS_NAME, 0600, NULL);
+	dbgProcFile = proc_create(PROC_FS_NAME, 0600, NULL, &ProcFile_fops);
 	if (dbgProcFile == NULL) 
 	{
 		remove_proc_entry(PROC_FS_NAME, NULL);
@@ -2393,8 +2430,6 @@ static int elan_ktf3k_ts_probe(struct i2c_client *client,
 	}
 	else
 	{
-		dbgProcFile->read_proc = ektf_proc_read;
-		dbgProcFile->write_proc = ektf_proc_write;
 		printk("[Elan] %s: /proc/%s created \n", __func__, PROC_FS_NAME);
 	}
 #endif // #ifdef _ENABLE_DBG_LEVEL
@@ -2633,7 +2668,7 @@ static struct i2c_driver ektf3k_ts_driver = {
 	},
 };
 
-static int __devinit elan_ktf3k_ts_init(void)
+static int elan_ktf3k_ts_init(void)
 {
 	printk("[Elan]: elan_ktf3k_ts_init ++ \n");
 	return i2c_add_driver(&ektf3k_ts_driver);

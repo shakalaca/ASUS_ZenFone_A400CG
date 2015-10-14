@@ -130,6 +130,7 @@ extern int unregister_dock_attach_notifier(struct notifier_block *nb);
 
 extern int ite_touchpad_switch(SYSTEM_OWNER mode);
 extern int Read_HW_ID(void);
+extern int ite_read_touch_pad_power(void);
 
 //static function -------------------------------------------------------------------------------------------------
 static int elan_i2c_switch_to_windows_notify(struct notifier_block *this,unsigned long code, void *data);
@@ -324,6 +325,14 @@ int elan_i2c_bus_enable(int enable)
 	return 0;
 }
 EXPORT_SYMBOL(elan_i2c_bus_enable);
+
+int elan_init_touchpad_driver()
+{	
+	printk("[Touchpad] %s: Initialize Touch Pad Driver from EC.  \n", __func__);
+	queue_delayed_work(elan_tp_data->touchpad_wq, &elan_tp_data->elan_init_work, 0);	
+	return 0;
+}
+EXPORT_SYMBOL(elan_init_touchpad_driver);
 
 static int elan_i2c_initialize(struct i2c_client *client)
 {
@@ -630,7 +639,7 @@ static int elan_i2c_input_dev_create(struct elan_i2c_data *data)
 	input_set_abs_params(elan_tp_data->input, ABS_PRESSURE, 0, 255, 0, 0);
 	input_set_abs_params(elan_tp_data->input, ABS_TOOL_WIDTH, 0, 15, 0, 0);
 
-	input_mt_init_slots(elan_tp_data->input, ETP_MAX_FINGERS);
+	input_mt_init_slots(elan_tp_data->input, ETP_MAX_FINGERS, 0);
 	input_set_abs_params(elan_tp_data->input, ABS_MT_POSITION_X, 0, elan_tp_data->max_x, 0, 0);
 	input_set_abs_params(elan_tp_data->input, ABS_MT_POSITION_Y, 0, elan_tp_data->max_y, 0, 0);
 	input_abs_set_res(elan_tp_data->input, ABS_MT_POSITION_X, x_res);
@@ -691,7 +700,7 @@ static int elan_i2c_register_irq(void)
 	}
 	if(elan_tp_data->tp_enable == 1)
 	{
-		ret = request_threaded_irq(elan_tp_data->irq, NULL, elan_i2c_isr, IRQF_TRIGGER_FALLING,
+		ret = request_threaded_irq(elan_tp_data->irq, NULL, elan_i2c_isr, IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 									elan_tp_data->client->name, elan_tp_data);
 		elan_tp_data->irq_status = 1;
 	}
@@ -715,10 +724,10 @@ static int elan_i2c_init_function(struct work_struct *dat)
 	mutex_lock(&elan_tp_data->mutex_lock);
 	
 	elan_i2c_bus_enable(1);
-	if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
-	{
-		ite_touchpad_switch(SYSTEM_ANDROID);
-	}
+	//if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
+	//{
+	//	ite_touchpad_switch(SYSTEM_ANDROID);
+	//}
 	msleep(10);
 	
 	ret = elan_i2c_initialize(elan_tp_data->client);
@@ -774,30 +783,33 @@ static int elan_i2c_resume_function(struct work_struct *dat)
 	int ret = 0;
 	
 	printk("[Touchpad]: %s \n", __func__);
-	ret = elan_i2c_initialize(elan_tp_data->client);
-	if (ret < 0)
-	{
-		printk(KERN_ERR "[Touchpad] %s: elan_i2c_initialize fail!\n", __func__);
-		goto err;
-	}
-	ret = elan_i2c_enable_absolute_mode(elan_tp_data->client);
-	if (ret < 0)
-	{
-		printk(KERN_ERR "[Touchpad] %s: elan_i2c_enable_absolute_mode fail!\n", __func__);
-		goto err;
-	}
-	ret = elan_i2c_wake_up(elan_tp_data->client);
-	if (ret < 0)
-	{
-		printk("[Touchpad]: resume active power failed, %d\n", ret);
-		goto err;
-	}
-	else
-		printk("[Touchpad]: Elan tp wakeup.\n");
-	
-	if(elan_tp_data->irq_status == 1)
-		enable_irq(elan_tp_data->irq);
+	/*
+		ret = elan_i2c_initialize(elan_tp_data->client);
+		if (ret < 0)
+		{
+			printk(KERN_ERR "[Touchpad] %s: elan_i2c_initialize fail!\n", __func__);
+			goto err;
+		}
+		ret = elan_i2c_enable_absolute_mode(elan_tp_data->client);
+		if (ret < 0)
+		{
+			printk(KERN_ERR "[Touchpad] %s: elan_i2c_enable_absolute_mode fail!\n", __func__);
+			goto err;
+		}
+		ret = elan_i2c_wake_up(elan_tp_data->client);
+		if (ret < 0)
+		{
+			printk("[Touchpad]: resume active power failed, %d\n", ret);
+			goto err;
+		}
+		else
+			printk("[Touchpad]: Elan tp wakeup.\n");
 
+		
+		printk("[Touchpad]: irq_status : %d , enable_irq(%d)\n",elan_tp_data->irq_status,elan_tp_data->irq);
+		if(elan_tp_data->irq_status == 1)
+			enable_irq(elan_tp_data->irq);
+	*/
 	return 0;
 	
 err:
@@ -821,10 +833,10 @@ static int elan_i2c_switch_to_windows_notify(struct notifier_block *this, unsign
 			elan_tp_data->irq_status = 0;
 		}
 		elan_i2c_bus_enable(0);
-		if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
-		{
-			ite_touchpad_switch(SYSTEM_WINDOWS);
-		}
+		//if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
+		//{
+		//	ite_touchpad_switch(SYSTEM_WINDOWS);
+		//}
 		mutex_unlock(&elan_tp_data->mutex_lock);
 	}
 	
@@ -843,7 +855,7 @@ static int elan_i2c_attach_notify(struct notifier_block *this, unsigned long own
 	{	
 		printk("[Touchpad]: %s:  owner is android. \n", __func__);
 		elan_tp_data->panel_owner = SYSTEM_ANDROID;
-		queue_delayed_work(elan_tp_data->touchpad_wq, &elan_tp_data->elan_init_work, 1.2*HZ);
+		//queue_delayed_work(elan_tp_data->touchpad_wq, &elan_tp_data->elan_init_work, 1.2*HZ); // Marked by Tom 
 	}
 	return 1;
 }
@@ -859,10 +871,10 @@ static int elan_i2c_detach_notify(struct notifier_block *this, unsigned long own
 		elan_tp_data->irq_status = 0;
 	}
 	elan_i2c_bus_enable(0);
-	if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
-	{
-		ite_touchpad_switch(SYSTEM_WINDOWS);
-	}
+	//if((elan_tp_data->hw_id == HW_ID_ER)||(elan_tp_data->hw_id == HW_ID_ER2)||(elan_tp_data->hw_id == HW_ID_SR1)||(elan_tp_data->hw_id == HW_ID_SR2))
+	//{
+	//	ite_touchpad_switch(SYSTEM_WINDOWS);
+	//}
 	mutex_unlock(&elan_tp_data->mutex_lock);
 	queue_delayed_work(elan_tp_data->touchpad_wq, &elan_tp_data->elan_destroy_work, 0);
 	
@@ -968,7 +980,7 @@ static void elan_i2c_late_resume(struct early_suspend *h)
 }
 #endif
 
-static int __devinit elan_i2c_probe(struct i2c_client *client,
+static int elan_i2c_probe(struct i2c_client *client,
 				    const struct i2c_device_id *dev_id)
 {
 
@@ -1071,7 +1083,7 @@ static int __devinit elan_i2c_probe(struct i2c_client *client,
     elan_tp_data->early_suspend.suspend = elan_i2c_early_suspend;
     elan_tp_data->early_suspend.resume = elan_i2c_late_resume;
     register_early_suspend(&elan_tp_data->early_suspend);
-#endif
+	#endif
 	
 	printk("[Touchpad]: Elan Touchpad Driver ver:%s . \n", DRIVER_VERSION);
 
@@ -1106,7 +1118,7 @@ probe_err_check_functionality_failed:
 	return ret;
 }
  
-static int __devexit elan_i2c_remove(struct i2c_client *client)
+static int elan_i2c_remove(struct i2c_client *client)
 {
 //	struct elan_i2c_data *data = i2c_get_clientdata(client);
 
@@ -1150,7 +1162,7 @@ static struct i2c_driver elan_i2c_driver = {
 		.pm	= &elan_i2c_pm_ops,
 	},
 	.probe		= elan_i2c_probe,
-	.remove		= __devexit_p(elan_i2c_remove),
+	.remove		= elan_i2c_remove,
 	.id_table	= elan_i2c_id,
 };
 

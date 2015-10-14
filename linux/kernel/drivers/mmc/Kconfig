@@ -19,6 +19,14 @@ config MMC_DEBUG
 	  This is an option for use by developers; most people should
 	  say N here.  This enables MMC core and driver debugging.
 
+config MMC_SUM_SECTORS_CHANGE
+	bool "MMC summation total chaged sectors"
+	depends on MMC != n
+	help
+	  This is an option to sum the totally changed sectors
+	  from uptime.
+	  Usually say N here.
+
 if MMC
 
 source "drivers/mmc/core/Kconfig"

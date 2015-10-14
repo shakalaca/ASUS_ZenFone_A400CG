@@ -74,7 +74,7 @@
 
 #include <linux/hx8528_me372cl.h>
 
-#define DRIVER_VERSION	"1.1.11"		//Joe modify 
+#define DRIVER_VERSION	"1.1.15"
 
 //=============================================================================================================
 //
@@ -97,6 +97,8 @@
 //#define HX_LOADIN_CONFIG			// Support Common FW,load in config
 #define HX_PORTING_DEB_MSG			// Support Driver Porting Message		,default is close
 //#define HX_IREF_MODIFY			// Support IREF Modify Function			,default is close
+#define HX_VIRTUAL_KEY_DELAY // add by leo for virtual key issue
+#define HX_FLASH_TEST
 
 //TODO END
 
@@ -156,10 +158,10 @@
 #define INPUT_DEV_NAME	"himax-touchscreen"	
 
 //----- Flash dump file
-#define FLASH_DUMP_FILE "/data/log/A400_Touch_Flash_Dump.bin"
-#define TOUCH_DC_DUMP_FILE "/data/log/touch/A400_touch_dc.txt"
-#define TOUCH_IIR_DUMP_FILE "/data/log/touch/A400_touch_iir.txt"
-#define TOUCH_BANK_DUMP_FILE "/data/log/touch/A400_touch_bank.txt"
+#define FLASH_DUMP_FILE "/data/log/A400CG_Touch_Flash_Dump.bin"
+#define TOUCH_DC_DUMP_FILE "/data/log/touch/A400CG_touch_dc.txt"
+#define TOUCH_IIR_DUMP_FILE "/data/log/touch/A400CG_touch_iir.txt"
+#define TOUCH_BANK_DUMP_FILE "/data/log/touch/A400CG_touch_bank.txt"
 
 //----- Diag Coordinate dump file
 #define DIAG_COORDINATE_FILE "/sdcard/Coordinate_Dump.csv"
@@ -210,6 +212,56 @@
 #define PS_VCC330_OFF                0x24 
 #define PS_VCC330_ON                 0x37
 //add by josh for VCC330CNT  ---
+
+#ifdef HX_FLASH_TEST
+//----------------------------------------------------------------------
+//Iref trimming table
+//----------------------------------------------------------------------
+//1uA
+static unsigned char IrefTable_1[16][2] = { {0x18,0x07},	{0x18,0x17},	{0x18,0x27},	{0x18,0x37},
+            															 {0x18,0x47},	{0x18,0x57},	{0x18,0x67},	{0x18,0x77},
+																					 {0x18,0x87},	{0x18,0x97},	{0x18,0xA7},	{0x18,0xB7},
+            															 {0x18,0xC7},	{0x18,0xD7},	{0x18,0xE7},	{0x18,0xF7}};
+
+//2uA
+static unsigned char IrefTable_2[16][2] = { {0x98,0x06},	{0x98,0x16},	{0x98,0x26},	{0x98,0x36},
+            															 {0x98,0x46},	{0x98,0x56},	{0x98,0x66},	{0x98,0x76},
+																					 {0x98,0x86},	{0x98,0x96},	{0x98,0xA6},	{0x98,0xB6},
+            															 {0x98,0xC6},	{0x98,0xD6},	{0x98,0xE6},	{0x98,0xF6}};            										
+
+//3uA
+static unsigned char IrefTable_3[16][2] = { {0x18,0x06},	{0x18,0x16},	{0x18,0x26},	{0x18,0x36},
+            															 {0x18,0x46},	{0x18,0x56},	{0x18,0x66},	{0x18,0x76},
+																					 {0x18,0x86},	{0x18,0x96},	{0x18,0xA6},	{0x18,0xB6},
+            															 {0x18,0xC6},	{0x18,0xD6},	{0x18,0xE6},	{0x18,0xF6}};           
+        
+//4uA
+static unsigned char IrefTable_4[16][2] = { {0x98,0x05},	{0x98,0x15},	{0x98,0x25},	{0x98,0x35},
+            															 {0x98,0x45},	{0x98,0x55},	{0x98,0x65},	{0x98,0x75},
+																					 {0x98,0x85},	{0x98,0x95},	{0x98,0xA5},	{0x98,0xB5},
+            															 {0x98,0xC5},	{0x98,0xD5},	{0x98,0xE5},	{0x98,0xF5}};    
+            													
+//5uA
+static unsigned char IrefTable_5[16][2] = { {0x18,0x05},	{0x18,0x15},	{0x18,0x25},	{0x18,0x35},
+            															 {0x18,0x45},	{0x18,0x55},	{0x18,0x65},	{0x18,0x75},
+																					 {0x18,0x85},	{0x18,0x95},	{0x18,0xA5},	{0x18,0xB5},
+            															 {0x18,0xC5},	{0x18,0xD5},	{0x18,0xE5},	{0x18,0xF5}};    
+            													
+//6uA
+static unsigned char IrefTable_6[16][2] = { {0x98,0x04},	{0x98,0x14},	{0x98,0x24},	{0x98,0x34},
+            															 {0x98,0x44},	{0x98,0x54},	{0x98,0x64},	{0x98,0x74},
+																					 {0x98,0x84},	{0x98,0x94},	{0x98,0xA4},	{0x98,0xB4},
+            															 {0x98,0xC4},	{0x98,0xD4},	{0x98,0xE4},	{0x98,0xF4}};    
+            													
+//7uA
+static unsigned char IrefTable_7[16][2] = { {0x18,0x04},	{0x18,0x14},	{0x18,0x24},	{0x18,0x34},
+            															 {0x18,0x44},	{0x18,0x54},	{0x18,0x64},	{0x18,0x74},
+																					 {0x18,0x84},	{0x18,0x94},	{0x18,0xA4},	{0x18,0xB4},
+            															 {0x18,0xC4},	{0x18,0xD4},	{0x18,0xE4},	{0x18,0xF4}};    
+static int iref_number = 11;
+static bool iref_found = false;
+static bool flash_checksum_pass = true;		// Vince @ 20140825		Uses to show the status of flash.
+#endif
 
 //=============================================================================================================
 //
@@ -274,10 +326,10 @@ struct himax_chip_data
 //----[ENABLE_CHIP_RESET_MACHINE]-----------------------------------------------------------------------end
 	
 //----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-#ifdef ENABLE_CHIP_STATUS_MONITOR
-	struct delayed_work himax_chip_monitor;
+//#ifdef ENABLE_CHIP_STATUS_MONITOR
+	//struct delayed_work himax_chip_monitor;
 	int running_status;
-#endif
+//#endif
 //----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end	
 	
 //firmware upgrade by Josh +++
@@ -297,13 +349,25 @@ struct himax_chip_data
 	int AP_progress;
 	int tp_firmware_upgrade_proceed;
 	int msg_count;
-	
+
+	int TP_ID; // add by leo for TP_ID
+	int tp_lens_version_checksum;
+	int is_key_down; // add by leo for google ui issue ++
+
 	spinlock_t touch_spinlock;
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+	struct delayed_work virtual_key_delay_work;
+	struct workqueue_struct *virtual_key_delay_wq;
+#endif
 };
 
 static struct himax_chip_data *himax_chip;
 static int irq_count;
 
+#ifdef HX_VIRTUAL_KEY_DELAY
+static int virtual_key_delay=0;
+#endif
 //=============================================================================================================
 //
 //	Segment : Himax Variable/Pre Declation Function
@@ -508,8 +572,8 @@ static uint8_t multi_cfg_bank[8] = {0x00};
 static uint8_t multi_value[1024] = {0x00};
 static bool config_bank_reg = false;
 #endif
-#define	HIMAX_PROC_REGISTER	"a400_register"
-static struct proc_dir_entry *himax_proc_register;
+#define	HIMAX_PROC_REGISTER_FILE	"a400cg_register"
+static struct proc_dir_entry *himax_proc_register_file;
 //----[HX_TP_SYS_REGISTER]--------------------------------------------------------------------------------end
 
 //----[HX_TP_SYS_DIAG]----------------------------------------------------------------------------------start
@@ -535,7 +599,7 @@ static void setYChannel(uint8_t y);
 static uint8_t coordinate_dump_enable = 0;
 struct file	*coordinate_fn;
 #endif
-#define	HIMAX_PROC_DIAG_FILE	"a400_diag"
+#define	HIMAX_PROC_DIAG_FILE	"a400cg_diag"
 static struct proc_dir_entry *himax_proc_diag_file;
 //----[HX_TP_SYS_DIAG]------------------------------------------------------------------------------------end
 
@@ -589,8 +653,9 @@ static int himax_update_touch_progress(int update_progress);
 static int himax_update_touch_result(int result);
 static int himax_irq_disable(struct i2c_client *ts);
 static int himax_irq_enable(struct i2c_client *ts);
-int himax_cable_status(int status);
+int himax_a400cg_cable_status(int status);
 static int himax_CRC_check(void);
+static int himax_get_tp_id(void);
 
 #ifdef HX_TP_SYS_RESET
 static ssize_t himax_reset_set(struct device *dev,struct device_attribute *attr, const char *buf, size_t count);
@@ -623,6 +688,7 @@ static ssize_t himax_real_time_read_version(struct device *dev, struct device_at
 static ssize_t himax_get_fw_version(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t himax_debug_log(struct device *dev, struct device_attribute *attr, char *buf, size_t count);
 static ssize_t himax_fw_checksum(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t himax_tp_id(struct device *dev, struct device_attribute *attr, char *buf); // add by leo for TP_ID
 
 #ifdef HX_TP_SYS_SELF_TEST 
 static DEVICE_ATTR(tp_self_test, (S_IWUSR|S_IRUGO), himax_chip_self_test_function, himax_self_test_setting);
@@ -652,6 +718,7 @@ static DEVICE_ATTR(touch_irq, (S_IWUSR|S_IRUGO), NULL, himax_chip_enable_irq);
 static DEVICE_ATTR(tp_fw_version, (S_IWUSR|S_IRUGO), himax_get_fw_version, himax_real_time_read_version);
 static DEVICE_ATTR(debug_log, (S_IWUSR|S_IRUGO), NULL, himax_debug_log);
 static DEVICE_ATTR(tp_crc_check, (S_IWUSR|S_IRUGO), himax_fw_checksum, NULL);
+static DEVICE_ATTR(tp_id, (S_IWUSR|S_IRUGO), himax_tp_id, NULL); // add by leo for TP_ID
 
 static struct attribute *himax_attr[] = {
 #ifdef HX_TP_SYS_REGISTER
@@ -672,12 +739,23 @@ static struct attribute *himax_attr[] = {
 	&dev_attr_touch_irq.attr,
 	&dev_attr_tp_check_running.attr,
 	&dev_attr_tp_crc_check.attr,
+	&dev_attr_tp_id.attr, // add by leo for TP_ID
 	NULL
 };	
 
 extern int Read_PROJ_ID(void);
 extern int Read_HW_ID();
 extern int check_cable_status(void);
+
+// add by josh for skip COS/POS ++
+/*
+ * entry_mode = 1; MOS
+ * entry_mode = 2; recovery
+ * entry_mode = 3; POS
+ * entry_mode = 4; COS
+*/
+extern int entry_mode;
+// add by josh for skip COS/POS --
 
 typedef enum {
 	SELF,
@@ -831,20 +909,23 @@ static int himax_ts_resume(struct i2c_client *client)
 		if(ret < 0) 
 		{
 			printk(KERN_ERR "[Himax] %s: HX_CMD_TSSLPOUT failed addr = 0x%x\n",__func__, himax_chip->client->addr);
-		} 	
+		}
 		msleep(150);
-		
+
+		ret = himax_irq_enable(himax_chip->client);
+
 		mutex_unlock(&himax_chip->mutex_lock);
 		wake_unlock(&himax_chip->wake_lock);
-		
-		ret = himax_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail
-		if(ret != 0)
+
+		if(himax_chip->running_status == 0)
 		{
-			queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
-		}	
-		
-		ret = himax_irq_enable(himax_chip->client);
-		
+			msleep(200);
+			ret = himax_hang_shaking(); //0:Running, 1:Stop, 2:I2C Fail
+			if(ret != 0)
+			{
+				queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_reset_work, 0);
+			}
+		}
 	}
 	return 0;
 }
@@ -1920,6 +2001,194 @@ static int himax_unlock_flash(void)
 	/* unlock sequence stop */
 }
 
+#ifdef HX_FLASH_TEST
+static void himax_changeIref(int selected_iref)
+{
+	unsigned char temp_iref[16][2] = {{0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00},
+									{0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}, {0x00,0x00}};										
+ 	uint8_t cmd[10];
+  
+	int i = 0;
+ 	int j = 0;
+
+  	for(i=0; i<16; i++)
+  	{
+  		for(j=0; j<2; j++)
+  		{
+  			if(selected_iref == 1)
+  			{
+  				temp_iref[i][j] = IrefTable_1[i][j];
+  			}
+  			else if(selected_iref == 2)
+  			{
+  				temp_iref[i][j] = IrefTable_2[i][j];
+  			}
+  			else if(selected_iref == 3)
+  			{
+  				temp_iref[i][j] = IrefTable_3[i][j];
+  			}
+  			else if(selected_iref == 4)
+  			{
+  				temp_iref[i][j] = IrefTable_4[i][j];
+  			}
+  			else if(selected_iref == 5)
+  			{
+  				temp_iref[i][j] = IrefTable_5[i][j];
+  			}
+  			else if(selected_iref == 6)
+  			{
+  				temp_iref[i][j] = IrefTable_6[i][j];
+  			}
+  			else if(selected_iref == 7)
+  			{
+  				temp_iref[i][j] = IrefTable_7[i][j];
+  			}
+  		}
+  	} 
+
+  	if(!iref_found)
+  	{
+  		//Read Iref
+  		//Register 0x43
+  		cmd[0] = 0x01;
+  		cmd[1] = 0x00;
+  		cmd[2] = 0x0A;
+		if( i2c_himax_write(himax_chip->client, 0x43 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+		{
+			printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+			return;
+		}
+		
+		//Register 0x44
+		cmd[0] = 0x00;
+		cmd[1] = 0x00;
+		cmd[2] = 0x00;
+		if( i2c_himax_write(himax_chip->client, 0x44 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+		{
+			printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+			return ;
+		}    													
+  	 
+  		//Register 0x46
+  		if( i2c_himax_write(himax_chip->client, 0x46 ,&cmd[0], 0, DEFAULT_RETRY_CNT) < 0)
+		{
+			printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+			return ;
+		}  
+		
+		//Register 0x59
+		if( i2c_himax_read(himax_chip->client, 0x59, cmd, 4, DEFAULT_RETRY_CNT) < 0)
+		{
+		  printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+			return ;
+		}
+		
+		//find iref group , default is iref 3
+		for (i = 0; i < 16; i++)
+  		{
+  	  		if ((cmd[0] == IrefTable_3[i][0]) && (cmd[1] == IrefTable_3[i][1]))
+  	  		{
+  	  			iref_number = i;
+				iref_found = true;
+				break;
+			}
+		}
+		
+		if(!iref_found )
+		{
+			printk(KERN_ERR "[TP] %s: Can't find iref number!\n", __func__);
+			return ;
+		}
+		else
+		{
+			printk("[TP] %s: iref_number=%d, cmd[0]=0x%x, cmd[1]=0x%x\n", __func__, iref_number, cmd[0], cmd[1]);
+		}
+	}
+
+	mdelay(5);
+	//iref write
+	//Register 0x43
+  	cmd[0] = 0x01;
+  	cmd[1] = 0x00;
+  	cmd[2] = 0x06;
+	if( i2c_himax_write(himax_chip->client, 0x43 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	}  
+	
+	//Register 0x44
+  	cmd[0] = 0x00;
+  	cmd[1] = 0x00;
+  	cmd[2] = 0x00;
+	if( i2c_himax_write(himax_chip->client, 0x44 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	}  
+	
+	//Register 0x45
+  	cmd[0] = temp_iref[iref_number][0];
+  	cmd[1] = temp_iref[iref_number][1];
+  	cmd[2] = 0x27;
+  	cmd[3] = 0x27;
+	if( i2c_himax_write(himax_chip->client, 0x45 ,&cmd[0], 4, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	}  
+	
+	//Register 0x4A
+	if( i2c_himax_write(himax_chip->client, 0x4A ,&cmd[0], 0, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	}  
+
+	//Read SFR to check the result
+	//Register 0x43
+  	cmd[0] = 0x01;
+  	cmd[1] = 0x00;
+  	cmd[2] = 0x0A;
+	if( i2c_himax_write(himax_chip->client, 0x43 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	} 
+	
+	//Register 0x44
+  	cmd[0] = 0x00;
+  	cmd[1] = 0x00;
+  	cmd[2] = 0x00;
+	if( i2c_himax_write(himax_chip->client, 0x44 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	} 
+	
+	//Register 0x46
+	if( i2c_himax_write(himax_chip->client, 0x46 ,&cmd[0], 0, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	} 
+	
+	//Register 0x59
+	if( i2c_himax_read(himax_chip->client, 0x59, cmd, 4, DEFAULT_RETRY_CNT) < 0)
+	{
+	  printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+		return ;
+	}
+
+	//printk("%s, cmd[0]=0x%x, cmd[1]=0x%x, temp_iref[iref_number][0]=0x%x, temp_iref[iref_number][1]=0x%x\n", __func__, cmd[0], cmd[1], temp_iref[iref_number][0], temp_iref[iref_number][1]);
+	if(cmd[0] != temp_iref[iref_number][0] || cmd[1] != temp_iref[iref_number][1])
+	{
+		printk(KERN_ERR "[TP] %s: IREF Read Back is not match.\n", __func__);
+		printk(KERN_ERR "[TP] %s: Iref [0]=%d,[1]=%d\n", __func__,cmd[0],cmd[1]);
+	}
+}
+#endif
+
 static uint8_t himax_calculateChecksum(char *ImageBuffer, int fullLength)//, int address, int RST)
 {
 	printk(KERN_ERR "[Himax] %s: IC_CHECKSUM = %d.\n", __func__, IC_CHECKSUM);
@@ -2141,7 +2410,18 @@ static uint8_t himax_calculateChecksum(char *ImageBuffer, int fullLength)//, int
 		}
 		
 		//Enable Flash
-		himax_FlashMode(1);
+#ifdef HX_FLASH_TEST
+					cmd[0] = 0x01;
+					cmd[1] = 0x00;
+					cmd[2] = 0x02;
+					if (i2c_himax_write(himax_chip->client, 0x43 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+					{
+						printk(KERN_ERR "[TP] %s: i2c access fail!\n", __func__);
+						return 0;
+					} 
+#else
+					himax_FlashMode(1);
+#endif
 		
 		//Select CRC Mode
 		cmd[0] = 0x05;
@@ -2304,16 +2584,16 @@ static void himax_chip_reset_function(struct work_struct *dat)
 	
 	printk("[Himax] %s: ++ \n",__func__);
 
-//	wake_lock(&himax_chip->wake_lock);
+	wake_lock(&himax_chip->wake_lock);
 	
-//	err = himax_hw_reset();
-	
-//	err = himax_ts_poweron(); 
-//	if(err == 0){
-//		printk("[Himax] %s: touch power on. \n",__func__);
-//	}else{
-//		printk(KERN_ERR"[Himax] %s: power on error = %d.\n",__func__, err);
-//	}
+	err = himax_hw_reset();
+
+	err = himax_ts_poweron();
+	if(err == 0){
+		printk("[Himax] %s: touch power on. \n",__func__);
+	}else{
+		printk(KERN_ERR "[Himax] %s: power on error = %d.\n",__func__, err);
+	}
 
 //	enable_irq(himax_chip->irq);
 //	irq_enable = true;	
@@ -2321,10 +2601,10 @@ static void himax_chip_reset_function(struct work_struct *dat)
 //	if(debug_log){		
 //		printk("[Himax] %s: %d: enable_irq irq_count=%d, irq_enable =0x%x. \n",__func__, __LINE__, irq_count, irq_enable); 
 //	}
-	
-//	wake_unlock(&himax_chip->wake_lock);
-	
-	err = himax_read_fw_ver(true);	
+	himax_irq_enable(himax_chip->client);
+	wake_unlock(&himax_chip->wake_lock);
+
+	//err = himax_read_fw_ver(true);
 	
 	printk("[Himax] %s: -- \n",__func__);
 }
@@ -2882,9 +3162,16 @@ static u8 himax_read_fw_ver(bool hw_reset)
 	himax_chip->firmware_version_checksum = ((himax_chip->himax_firmware_version[0] << 24) | (himax_chip->himax_firmware_version[1] << 16) | (himax_chip->himax_firmware_version[2] << 8) | himax_chip->himax_firmware_version[3]);
 	printk("[Himax]: Himax firmware version: %s. \n",himax_chip->himax_firmware_version);
 	printk("[Himax]: Himax firmware version checksum: %d. \n",himax_chip->firmware_version_checksum);
+
+	// add by leo for TP_ID ++
+	sprintf(himax_chip->tp_lens_version, "%2.2X",CFG_VER_MAJ_buff[11]);
+	himax_chip->tp_lens_version_checksum = ((himax_chip->tp_lens_version[0] << 8) | himax_chip->tp_lens_version[1]);
+	printk("[Himax] ////////////////////		TP Lens version: %s. \n",himax_chip->tp_lens_version);
+	printk("[Himax] ////////////////////		TP Lens version checksum: %d. \n",himax_chip->tp_lens_version_checksum);
 	
-	sprintf(himax_chip->tp_lens_version, "%2.2X",CFG_VER_MAJ_buff[0]);
-	printk("[Himax]: TP Lens version: %s. \n",himax_chip->tp_lens_version);
+	//sprintf(himax_chip->tp_lens_version, "%2.2X",CFG_VER_MAJ_buff[0]);
+	//printk("[Himax]: TP Lens version: %s. \n",himax_chip->tp_lens_version);	
+	// add by leo for TP_ID --
 	
 	sprintf(himax_chip->config_firmware_version, "%2.2X",CFG_VER_MIN_buff[11]);
 	himax_chip->config_version_checksum = ((himax_chip->config_firmware_version[0] << 8) | himax_chip->config_firmware_version[1]);
@@ -2932,7 +3219,7 @@ void himax_touch_information(void)
 		HX_BT_NUM = HX_KEY_MAX_COUNT;
 	}
 	#endif
-	
+
 	himax_read_flash( temp_buffer, 0x272, 6);
 	/*if((temp_buffer[0] & 0x04) == 0x04)
 	{
@@ -3053,6 +3340,12 @@ static ssize_t himax_fw_checksum(struct device *dev, struct device_attribute *at
 	printk(KERN_ERR "[Himax] %s: crc_check_result = %d\n", __func__,crc_check_result);
 
 	return sprintf(buf,"%d\n",crc_check_result==1?1:0);
+}
+
+static ssize_t himax_tp_id(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	himax_get_tp_id();
+	return sprintf(buf,"%d\n",himax_chip->TP_ID);
 }
 // add by leo --
 
@@ -3354,7 +3647,7 @@ static ssize_t himax_register_store(struct device *dev,struct device_attribute *
 }
 #endif
 
-static ssize_t himax_chip_proc_register_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_register_read(struct seq_file *buf, void *v)
 {
     int ret = 0;
 	int base = 0;
@@ -3415,19 +3708,19 @@ static ssize_t himax_chip_proc_register_read(char *buf, char **start, off_t off,
 			{
 				if(multi_cfg_bank[loop_i] == 1)
 				{
-					ret += sprintf(buf + ret, "Register: FE(%x)\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: FE(%x)\n", multi_register[loop_i]);
 				}
 				else
 				{
-					ret += sprintf(buf + ret, "Register: %x\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: %x\n", multi_register[loop_i]);
 				}
 		
 				for (loop_j = 0; loop_j < 128; loop_j++)
 				{
-					ret += sprintf(buf + ret, "0x%2.2X ", multi_value[base++]);
+					seq_printf(buf, "0x%2.2X ", multi_value[base++]);
 					if ((loop_j % 16) == 15)
 					{
-						ret += sprintf(buf + ret, "\n");
+						seq_printf(buf, "\n");
 					}
 				}
 			}
@@ -3468,23 +3761,23 @@ static ssize_t himax_chip_proc_register_read(char *buf, char **start, off_t off,
 	
 	if(config_bank_reg)
 	{
-		ret += sprintf(buf, "command: FE(%x)\n", register_command);
+		seq_printf(buf, "command: FE(%x)\n", register_command);
 	}
 	else
 	{
-		ret += sprintf(buf, "command: %x\n", register_command);
+		seq_printf(buf, "command: %x\n", register_command);
 	}
 
 	for (loop_i = 0; loop_i < 128; loop_i++) 
 	{
-		ret += sprintf(buf + ret, "0x%2.2X ", bufdata[loop_i]);
+		seq_printf(buf, "0x%2.2X ", bufdata[loop_i]);
 		if ((loop_i % 16) == 15)
 		{
-			ret += sprintf(buf + ret, "\n");
+			seq_printf(buf, "\n");
 		}
 	}
-	ret += sprintf(buf + ret, "\n");
-    return ret;
+	seq_printf(buf, "\n");
+    return 0;
 }
 static ssize_t himax_chip_proc_register_write(struct file *filp, const char *buf, unsigned long len, void *data)
 {
@@ -3642,14 +3935,23 @@ static ssize_t himax_chip_proc_register_write(struct file *filp, const char *buf
     return len;
 }
 
+static int himax_chip_proc_register_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_register_read, NULL);
+}
+
+static const struct file_operations register_fops = {
+	.owner = THIS_MODULE,
+	.open = himax_chip_proc_register_open,
+	.read = seq_read,
+	.write = himax_chip_proc_register_write,
+};
+
 static void himax_chip_create_proc_register(void)
 {
-	himax_proc_register = create_proc_entry(HIMAX_PROC_REGISTER, 0666, NULL);
-	if(himax_proc_register){
-		himax_proc_register->read_proc = himax_chip_proc_register_read;
-		himax_proc_register->write_proc = himax_chip_proc_register_write;
-	}
-	else{
+	himax_proc_register_file = proc_create(HIMAX_PROC_REGISTER_FILE, 0666, NULL, &register_fops);
+	if(himax_proc_register_file){
+		printk(KERN_ERR "[Himax] %s: proc config file create sucessed!!\n", __func__);
+	}else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
 	}
 }
@@ -3658,7 +3960,7 @@ static void himax_chip_remove_proc_register(void)
 {
     extern struct proc_dir_entry proc_root;
     printk(KERN_ERR "[Himax]:himax_chip_remove_proc_register\n");
-    remove_proc_entry(HIMAX_PROC_REGISTER, &proc_root);
+    remove_proc_entry(HIMAX_PROC_REGISTER_FILE, &proc_root);
 }
 //----[HX_TP_SYS_REGISTER]--------------------------------------------------------------------------------end
 
@@ -3672,6 +3974,7 @@ static uint8_t getDebugLevel(void)
 
 static int fts_ctpm_fw_upgrade_with_sys_fs(unsigned char *fw, int len)
 {
+	unsigned char* ImageBuffer = fw;//CTPM_FW;
 	int fullFileLength = len;//sizeof(CTPM_FW); //Paul Check
 	int i, j;
 	uint8_t cmd[5], last_byte, prePage;
@@ -3831,7 +4134,27 @@ static int fts_ctpm_fw_upgrade_with_sys_fs(unsigned char *fw, int len)
 				{
 					himax_FlashMode(0);
 					himax_ManualMode(0);
-					checksumResult = himax_calculateChecksum(upgrade_fw, fullFileLength);//, address, RST);
+#ifdef HX_FLASH_TEST
+					//3uA
+					himax_changeIref(3);
+					checksumResult = himax_calculateChecksum(ImageBuffer, fullFileLength);//, address, RST);
+					
+					if(checksumResult == 1)
+					{
+						//5uA
+						himax_changeIref(5);
+						checksumResult = himax_calculateChecksum(ImageBuffer, fullFileLength);//, address, RST);
+						
+						if(checksumResult == 1)
+						{
+							//2uA
+							himax_changeIref(2);
+							checksumResult = himax_calculateChecksum(ImageBuffer, fullFileLength);//, address, RST);
+						}
+					}
+#else
+					checksumResult = himax_calculateChecksum(ImageBuffer, fullFileLength);//, address, RST);
+#endif
 					//himax_ManualMode(0);
 					himax_lock_flash();
 					
@@ -3843,8 +4166,13 @@ static int fts_ctpm_fw_upgrade_with_sys_fs(unsigned char *fw, int len)
 					} 
 					else //Fail
 					{
-						printk(KERN_ERR "[Himax] %s: checksum Result fail!\n", __func__);
-						return 0;
+#ifdef HX_FLASH_TEST
+								printk(KERN_ERR "[Himax] %s: checksum calculate fail , retry j = %d !\n", __func__, j);
+								flash_checksum_pass = false;
+								//tp_version_strcat("flash-broken");		// Vince @ 20140825	Add flash status to tp version.
+#else
+								return 0;
+#endif
 					} 
 				}
 			}
@@ -3986,7 +4314,7 @@ static ssize_t himax_debug_level_show(struct device *dev,struct device_attribute
 	return count;
 }
 
-static ssize_t himax_debug_level_dump(struct device *dev,struct device_attribute *attr, const char *buf, size_t count) 
+static ssize_t himax_debug_level_dump(struct device *dev,struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct file* filp = NULL;
 	mm_segment_t oldfs;
@@ -4119,6 +4447,16 @@ static ssize_t himax_debug_level_dump(struct device *dev,struct device_attribute
 		}
 	}
 
+	// add by leo for exchange RX & TX ++
+	if (buf[0] == 'f') { 
+		HX_RX_NUM = (buf[2] - '0')*10 + buf[3] - '0'; 
+		HX_TX_NUM = (buf[5] - '0')*10 + buf[6] - '0'; 
+		setXChannel(HX_RX_NUM); 
+		setYChannel(HX_TX_NUM); 
+		return count; 
+	} 
+	// add by leo for exchange RX & TX --
+
 firmware_upgrade_done:
 		
 	mutex_unlock(&himax_chip->mutex_lock);
@@ -4154,13 +4492,17 @@ static ssize_t himax_chip_proc_debug_flag(struct file *filp, const char *buf, un
 	return len;
 }
 
+static const struct file_operations debug_flag_fops = {
+	.owner = THIS_MODULE,
+	.write =  himax_chip_proc_debug_flag,
+};
+
 static void himax_chip_create_proc_debug_flag(void)
 {
-	himax_proc_debug_flag = create_proc_entry(HIMAX_PROC_DEBUG_FLAG, 0666, NULL);
+	himax_proc_debug_flag = proc_create(HIMAX_PROC_DEBUG_FLAG, 0666, NULL, &debug_flag_fops);
 	if(himax_proc_debug_flag){
-		himax_proc_debug_flag->write_proc = himax_chip_proc_debug_flag;
-	}
-	else{
+		printk(KERN_ERR "[Himax] %s: proc config file create sucessed!\n", __func__);
+	}else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
 	}
 }
@@ -4435,7 +4777,7 @@ static ssize_t himax_chip_raw_data_store(struct device *dev, struct device_attri
 		filp = filp_open(TOUCH_DC_DUMP_FILE, O_RDWR|O_CREAT,S_IRUSR);
 		if(IS_ERR(filp)) 
 		{
-			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400_touch_dc.txt failed\n", __func__);
+			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400cg_touch_dc.txt failed\n", __func__);
 			return 0;
 		}
 		oldfs = get_fs();
@@ -4446,7 +4788,7 @@ static ssize_t himax_chip_raw_data_store(struct device *dev, struct device_attri
 		filp = filp_open(TOUCH_IIR_DUMP_FILE, O_RDWR|O_CREAT,S_IRUSR);
 		if(IS_ERR(filp)) 
 		{
-			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400_touch_iir.txt failed\n", __func__);
+			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400cg_touch_iir.txt failed\n", __func__);
 			return 0;
 		}
 		oldfs = get_fs();
@@ -4457,7 +4799,7 @@ static ssize_t himax_chip_raw_data_store(struct device *dev, struct device_attri
 		filp = filp_open(TOUCH_BANK_DUMP_FILE, O_RDWR|O_CREAT,S_IRUSR);
 		if(IS_ERR(filp)) 
 		{
-			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400_touch_bank.txt failed\n", __func__);
+			printk(KERN_ERR "[Himax] %s: open /data/log/touch/a400cg_touch_bank.txt failed\n", __func__);
 			return 0;
 		}
 		oldfs = get_fs();
@@ -4528,7 +4870,7 @@ static ssize_t himax_chip_raw_data_store(struct device *dev, struct device_attri
 }
 #endif
 
-static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static ssize_t himax_chip_proc_diag_read(struct seq_file *buf, void *v)
 {
 	size_t count = 0;
 	uint32_t loop_i;
@@ -4537,7 +4879,7 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
 	mutual_num 	= x_channel * y_channel;
 	self_num = x_channel + y_channel; //don't add KEY_COUNT
 	width = x_channel;
-	count += sprintf(buf + count, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
+	seq_printf(buf, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
 	
 	// start to show out the raw data in adb shell
 	if (diag_command >= 1 && diag_command <= 6) 
@@ -4546,27 +4888,27 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1)) 
 				{
-				count += sprintf(buf + count, " %3d\n", diag_self[width + loop_i/width]);
+				seq_printf(buf, " %3d\n", diag_self[width + loop_i/width]);
 				}
 			}
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < width; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 	
 			#ifdef HX_EN_SEL_BUTTON
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < HX_BT_NUM; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
+				seq_printf(buf, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
 			}
 			#endif                
 		} 
@@ -4574,10 +4916,10 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
 		{
 			for (loop_i = 0; loop_i < self_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i - mutual_num) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		} 
@@ -4585,15 +4927,15 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		}
-		count += sprintf(buf + count, "ChannelEnd");
-		count += sprintf(buf + count, "\n");
+		seq_printf(buf, "ChannelEnd");
+		seq_printf(buf, "\n");
 	}
 	else if (diag_command == 7)
 	{
@@ -4601,18 +4943,18 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
 		{
 			if((loop_i % 16) == 0)
 			{
-				count += sprintf(buf + count, "LineStart:");
+				seq_printf(buf, "LineStart:");
 			}
 
-			count += sprintf(buf + count, "%4d", diag_coor[loop_i]);
+			seq_printf(buf, "%4d", diag_coor[loop_i]);
 			if((loop_i % 16) == 15)
 			{
-				count += sprintf(buf + count, "\n");
+				seq_printf(buf, "\n");
 			}
 		}
 	}
 	
-	return count;
+	return 0;
 }
 
 static ssize_t himax_chip_proc_diag_write(struct file *filp, const char __user *buf, unsigned long len, void *data)
@@ -4733,14 +5075,23 @@ static ssize_t himax_chip_proc_diag_write(struct file *filp, const char __user *
 	return len;
 }
 
+static int himax_chip_proc_diag_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_diag_read, NULL);
+}
+
+static const struct file_operations diag_fops = {
+	.owner = THIS_MODULE,
+	.open = himax_chip_proc_diag_open,
+	.read = seq_read,
+	.write = himax_chip_proc_diag_write,
+};
+
 static void himax_chip_create_proc_diag_file(void)
 {
-	himax_proc_diag_file = create_proc_entry(HIMAX_PROC_DIAG_FILE, 0666, NULL);
+	himax_proc_diag_file = proc_create(HIMAX_PROC_DIAG_FILE, 0666, NULL, &diag_fops);
 	if(himax_proc_diag_file){
-		himax_proc_diag_file->read_proc = himax_chip_proc_diag_read;
-		himax_proc_diag_file->write_proc = himax_chip_proc_diag_write;
-	}
-	else{
+		printk(KERN_ERR "[Himax] %s: proc diag file create sucessed!\n", __func__);
+	}else{
 		printk(KERN_ERR "[Himax] %s: proc diag file create failed!\n", __func__);
 	}
 }
@@ -5698,6 +6049,14 @@ static int himax_chip_self_test(uint8_t *data)
 	uint8_t cmdbuf[11];
 	uint8_t valuebuf[16];
 	int i=0, pf_value=0x00, err = 1;
+
+#ifdef HX_FLASH_TEST
+			if (flash_checksum_pass == false)
+			{
+				printk("%s, firmware checksum failed!\n", __func__);
+				return -1;
+			}
+#endif
 		
 //----[HX_RST_PIN_FUNC]-----------------------------------------------------------------------------start
 #ifdef HX_RST_PIN_FUNC
@@ -6101,6 +6460,14 @@ static int himax_touch_sysfs_init(void)
 	    return ret;
 	}
 	//add by Josh -------
+	// add by leo for TP_ID ++
+	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_id.attr);
+	if (ret)
+	{
+	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_id failed\n");
+	    return ret;
+	}
+	// add by leo for TP_ID --
 	return 0 ;
 }
 
@@ -6141,7 +6508,9 @@ static void himax_touch_sysfs_deinit(void)
 	
 	sysfs_remove_file(android_touch_kobj, &dev_attr_debug_log.attr);
 	//add by Josh -------
-	
+	// add by leo for TP_ID ++
+	sysfs_remove_file(android_touch_kobj, &dev_attr_tp_id.attr);
+	// add by leo for TP_ID ++
 	kobject_del(android_touch_kobj);
 }
 	
@@ -6228,11 +6597,30 @@ static int himax_firmware_check(void)
     char upgrade_config_ver[8];
     int upgrade_config_checksum = 0;
     int i = 0, open_fail = 1;
-            
+    int upgrade_tp_len_version_checksum=0; // add by leo for TP_ID ++
+
 	for(i = 1; i <= 3; i++)
-	{		
-		printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_d48.bin. \n",__func__);
-		filp = filp_open("/system/etc/firmware/touch_fw_d48.bin", O_RDONLY, 0);
+	{
+		// add by leo for TP_ID ++
+		himax_get_tp_id();
+		if(himax_chip->TP_ID==0){
+			upgrade_tp_len_version_checksum=12336;
+			printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_ofilm.bin. \n",__func__);
+			filp = filp_open("/system/etc/firmware/touch_fw_ofilm.bin", O_RDONLY, 0);
+		}else if(himax_chip->TP_ID==3){
+			upgrade_tp_len_version_checksum=12339;
+			printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_lce.bin. \n",__func__);
+			filp = filp_open("/system/etc/firmware/touch_fw_lce.bin", O_RDONLY, 0);
+		}else if(himax_chip->TP_ID==1){
+			upgrade_tp_len_version_checksum=12337;
+			printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_wintek.bin. \n",__func__);
+			filp = filp_open("/system/etc/firmware/touch_fw_wintek.bin", O_RDONLY, 0);
+		}else{
+			upgrade_tp_len_version_checksum=12336;
+			printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_ofilm.bin. \n",__func__);
+			filp = filp_open("/system/etc/firmware/touch_fw_ofilm.bin", O_RDONLY, 0);
+		}
+		// add by leo for TP_ID --
 				
     	if(!IS_ERR_OR_NULL(filp))
     	{
@@ -6284,6 +6672,15 @@ static int himax_firmware_check(void)
 	upgrade_config_checksum = ((upgrade_config_ver[0] << 8) | upgrade_config_ver[1]);
 	printk("[Himax]: bin file config verison = %s.\n",upgrade_config_ver);
 	printk("[Himax]: bin file config verison checksum = %d.\n",upgrade_config_checksum);
+
+	// add by leo for TP_ID ++
+	printk("[Himax] IC tp_len_version_checksum (%d), TP tp_lens_version_checksum (%d)\n",himax_chip->tp_lens_version_checksum,upgrade_tp_len_version_checksum);
+	if(himax_chip->tp_lens_version_checksum!=upgrade_tp_len_version_checksum)
+	{
+		printk("[Himax] different TP, need upgrade touch firmware and config.\n");
+		return 0; // need to update FW
+	}
+	// add by leo for TP_ID --
 		
 	if(upgrade_firmware_checksum > himax_chip->firmware_version_checksum)
 	{
@@ -6310,6 +6707,38 @@ static int himax_firmware_check(void)
 	}
 
 }
+
+// add by leo for TP_ID ++
+static int himax_get_tp_id(void)
+{
+	himax_chip->TP_ID=0;
+
+	printk("[Himax] %s: (TP_ID0 , TP_ID1) = (%d , %d)\n",__func__,gpio_get_value(TPID0_GPIO)>0?1:0,gpio_get_value(TPID1_GPIO)>0?1:0);
+	if((!gpio_get_value(TPID0_GPIO)) && (!gpio_get_value(TPID1_GPIO)))
+	{
+		himax_chip->TP_ID=0;
+		printk("[Himax] %s: O-film TP Lens. (0,0)\n",__func__);
+	}
+	else if(gpio_get_value(TPID0_GPIO) && gpio_get_value(TPID1_GPIO))
+	{
+		himax_chip->TP_ID=3;
+		printk("[Himax] %s: LCE TP Lens. (1,1)\n",__func__);
+	}
+	else if((!gpio_get_value(TPID0_GPIO)) && gpio_get_value(TPID1_GPIO))
+	{
+		himax_chip->TP_ID=1;
+		printk("[Himax] %s: Wintek TP Lens. (0,1)\n",__func__);
+	}
+	else
+	{
+		himax_chip->TP_ID=2;
+		printk("[Himax] %s: Unknow TP Lens. (%d,%d)\n",__func__,gpio_get_value(TPID0_GPIO),gpio_get_value(TPID1_GPIO));
+	}
+	
+	printk("[Himax] %s: himax_chip->TP_ID = %d\n",__func__,himax_chip->TP_ID);
+	return himax_chip->TP_ID;
+}
+// add by leo for TP_ID --
 
 //add by leo ++
 static int himax_CRC_check(void)
@@ -6466,8 +6895,20 @@ static int himax_firmware_upgrade(int path)
 	{		
 		for(i = 1; i <= 3; i++)
 		{		
-			printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_d48.bin. \n",__func__);
-			filp = filp_open("/system/etc/firmware/touch_fw_d48.bin", O_RDONLY, 0);
+			if(himax_chip->TP_ID==0){
+				printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_ofilm.bin. \n",__func__);
+				filp = filp_open("/system/etc/firmware/touch_fw_ofilm.bin", O_RDONLY, 0);
+			}else if(himax_chip->TP_ID==3){
+				printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_lce.bin. \n",__func__);
+				filp = filp_open("/system/etc/firmware/touch_fw_lce.bin", O_RDONLY, 0);
+			}else if(himax_chip->TP_ID==1){
+				printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_wintek.bin. \n",__func__);
+				filp = filp_open("/system/etc/firmware/touch_fw_wintek.bin", O_RDONLY, 0);
+			}else if(himax_chip->TP_ID==2){
+				printk("[Himax] %s: TP_ID Unknow !!! Use Default TP FW \n",__func__);
+				printk("[Himax] %s: file open:/system/etc/firmware/touch_fw_ofilm.bin. \n",__func__);
+				filp = filp_open("/system/etc/firmware/touch_fw_ofilm.bin", O_RDONLY, 0);
+			}
 						
     		if(!IS_ERR_OR_NULL(filp))
     		{
@@ -6654,6 +7095,9 @@ firmware_upgrade_finish:
 	queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_monitor, 10*HZ);
 	#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------end	
+
+	msleep(2000); // add by leo for kernel panic after FW update issue
+	himax_read_fw_ver(true); // add by leo for kernel panic after FW update issue
 	
 	return 0;
 }
@@ -6671,6 +7115,22 @@ static int himax_chip_self_firmware_upgrade(struct work_struct *dat)
 //	Segment : Himax Touch Work Function
 //
 //=============================================================================================================
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+static int virtual_key_delay_function(struct work_struct *work)	
+{
+	//printk("[Himax] %s: ++\n",__func__);
+
+	// add by leo for google ui issue ++
+	input_report_key(himax_chip->input_dev, BTN_TOUCH, 0);  // touch up
+	input_mt_sync(himax_chip->input_dev);
+	input_sync(himax_chip->input_dev);
+	// add by leo for google ui issue --
+
+	virtual_key_delay = 0;
+	return 0;
+}
+#endif
 
 static void himax_ts_work_func(struct work_struct *work)
 {
@@ -6718,11 +7178,11 @@ static void himax_ts_work_func(struct work_struct *work)
 		hx_touch_info_size = (HX_MAX_PT+raw_cnt_max+1)*4;
 	}
 	
-	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-	#ifdef ENABLE_CHIP_STATUS_MONITOR
+	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start
+	//#ifdef ENABLE_CHIP_STATUS_MONITOR
 		himax_chip->running_status = 1;
-		cancel_delayed_work_sync(&himax_chip->himax_chip_monitor);
-	#endif
+		//cancel_delayed_work_sync(&himax_chip->himax_chip_monitor);
+	//#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end	
 	
 	start_reg = HX_CMD_RAE;
@@ -6917,6 +7377,16 @@ bypass_checksum_failed_packet:
 	{
 		hx_point_num= buf[HX_TOUCH_INFO_POINT_CNT] & 0x0f;
 	}   
+
+	// add by leo for google ui issue ++
+	if(himax_chip->is_key_down==1){
+		printk("[Himax] %s: Key UP.\n",__func__);
+		input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
+		input_mt_sync(himax_chip->input_dev);
+		input_sync(himax_chip->input_dev);
+		himax_chip->is_key_down=0;
+	}
+	// add by leo for google ui issue --
 	
 	// Touch Point information
 	if(hx_point_num != 0 && tpd_key == 0xFF)
@@ -6953,6 +7423,11 @@ bypass_checksum_failed_packet:
 					
 					input_mt_sync(himax_chip->input_dev);
 					
+					#ifdef HX_VIRTUAL_KEY_DELAY
+					virtual_key_delay = 1;
+					cancel_delayed_work(&himax_chip->virtual_key_delay_work);
+					queue_delayed_work(himax_chip->virtual_key_delay_wq, &himax_chip->virtual_key_delay_work, 10);
+					#endif
 
 					#ifdef HX_PORTING_DEB_MSG
 					if(debug_log){
@@ -6995,7 +7470,11 @@ bypass_checksum_failed_packet:
 		//#endif
 		//----[HX_ESD_WORKAROUND]-----------------------------------------------------------------------------end
 	}
+#ifdef HX_VIRTUAL_KEY_DELAY
+	else if(hx_point_num == 0 && tpd_key != 0xFF && virtual_key_delay == 0) // add by leo for virtual 
+#else
 	else if(hx_point_num == 0 && tpd_key != 0xFF)
+#endif
 	{
 		temp_x[0] = 0xFFFF;
 		temp_y[0] = 0xFFFF; 
@@ -7025,6 +7504,8 @@ bypass_checksum_failed_packet:
 			input_sync(himax_chip->input_dev);
 			printk("[Himax]: Press KEY_MENU. \r\n");	
 		}
+
+		himax_chip->is_key_down=1; // add by leo for google ui issue
 	}
 	else if(hx_point_num == 0 && tpd_key == 0xFF)
 	{
@@ -7035,9 +7516,13 @@ bypass_checksum_failed_packet:
 		
 		if (tpd_key_old != 0xFF)
 		{
-			input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
-			input_mt_sync(himax_chip->input_dev);
-			input_sync(himax_chip->input_dev);
+			if(himax_chip->is_key_down != 0){ // add by leo for google ui issue
+				printk("[Himax] %s: Key UP 2.\n",__func__);
+				input_report_key(himax_chip->input_dev, tpd_keys_local[tpd_key_old-1], 0);
+				input_mt_sync(himax_chip->input_dev);
+				input_sync(himax_chip->input_dev);
+				himax_chip->is_key_down=0; // add by leo for google ui issue
+			}
 		}
 		else
 		{
@@ -7116,6 +7601,8 @@ static long himax_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int err = 0, val = 0;
 	int ret = 0;
+	int crc_check_result = 0;
+	int ver_check_result = 0;
 	
 	printk( "[Himax] %s: cmd = 0x%x.\n",__func__,cmd);
 	
@@ -7153,8 +7640,38 @@ static long himax_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case TOUCH_TP_FW_check:
 		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK \n",__func__);
-		ret = himax_firmware_check();
-		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK = % d\n",__func__, ret);
+		#if 0
+			ret = himax_firmware_check();
+		#else
+		printk( "[Himax]:%s: FW_VER_MAJ_buff[0]=%d \n",__func__, FW_VER_MAJ_buff[0]);
+		printk( "[Himax]:%s: FW_VER_MIN_buff[0]=%d \n",__func__, FW_VER_MIN_buff[0]);
+		printk( "[Himax]:%s: CFG_VER_MAJ_buff[11]=%d \n",__func__, CFG_VER_MAJ_buff[11]);
+		printk( "[Himax]:%s: CFG_VER_MIN_buff[11]=%d \n",__func__, CFG_VER_MIN_buff[11]);
+		//if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==13)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==19)) // D050D.00.13
+		if((FW_VER_MAJ_buff[0]==5)&&(FW_VER_MIN_buff[0]==9)&&(CFG_VER_MAJ_buff[11]==0)&&(CFG_VER_MIN_buff[11]==18)) // D0509.00.12
+		{
+			printk( "[Himax]:%s: fw version ok\n",__func__);
+			ver_check_result = 1;
+		}
+		else
+		{
+			printk( "[Himax]:%s: fw version fail\n",__func__);
+			ver_check_result = 0;
+		}
+
+		crc_check_result = himax_CRC_check();
+		if(crc_check_result == 1)
+			printk( "[Himax]:%s: fw checksum ok.\n",__func__);
+		else
+			printk( "[Himax]:%s: fw checksum fail.\n",__func__);
+		#endif
+		
+		if((ver_check_result == 1)&&(crc_check_result == 1))
+			ret = 1;
+		else
+			ret = 0;
+
+		printk( "[Himax]:%s: TOUCH_FW_UPDATE_CHECK = %d\n",__func__, ret);
 		return ret;
 	default:
 		printk( "[Himax]:%s: incorrect cmd (%d) \n",__FUNCTION__, _IOC_NR(cmd));
@@ -7249,6 +7766,17 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	int err = 0, i = 0;
 
 	printk("[Himax] %s ++ \n",__func__);
+	
+	// add by josh for skip COS/POS ++
+    if(entry_mode==4) {
+        printk("[Himax] In COS, skip\n");
+        return;
+    }else if(entry_mode==3) {
+        printk("[Himax] In POS, skip\n");
+        return;
+    }
+    //add by josh for skip COS/POS --
+	
 	//*********************************************************************************************************
 	// Check i2c functionality
 	//*********************************************************************************************************
@@ -7278,6 +7806,7 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	himax_chip->tp_firmware_upgrade_proceed = 0;
 	himax_chip->irq_status = 0;
 	himax_chip->msg_count = 0;
+	himax_chip->is_key_down = 0; // add by leo for google ui issue
 	i2c_set_clientdata(client, himax_chip);
 	pdata = client->dev.platform_data;
 	if (likely(pdata != NULL)) {
@@ -7320,18 +7849,7 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	msleep(100);
 	printk("[Himax] %s: init reset pin OK. \n",__func__);
 	
-	if(gpio_get_value(TPID0_GPIO) && gpio_get_value(TPID1_GPIO))
-	{
-		printk("[Himax] %s: Wintek TP Lens.\n",__func__);
-	}
-	else if((!gpio_get_value(TPID0_GPIO)) && (!gpio_get_value(TPID1_GPIO)))
-	{
-		printk("[Himax] %s: O-film TP Lens.\n",__func__);
-	}
-	else
-	{
-		printk("[Himax] %s: without define TP Lens.\n",__func__);
-	}
+	himax_get_tp_id(); // add by leo for TP_ID ++
 	
 	//*********************************************************************************************************
 	// Create Work Queue
@@ -7353,6 +7871,15 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 		printk(KERN_ERR "[Himax] %s: create himax_wq workqueue failed\n", __func__);
 		goto err_create_wq_failed;
 	}
+	
+#ifdef HX_VIRTUAL_KEY_DELAY
+	himax_chip->virtual_key_delay_wq = create_singlethread_workqueue("virtual_key_delay_wq");
+	if (!himax_chip->virtual_key_delay_wq){
+		printk(KERN_ERR "[Himax] %s: create virtual_key_delay_wq failed\n", __func__);
+		goto err_create_flash_wq_failed;
+	}
+#endif
+	
 	printk("[Himax] %s: Create Work Queue OK. \n",__func__);		
 	//*********************************************************************************************************
 	// Init work 
@@ -7378,6 +7905,10 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	//firmware upgrade by Josh +++
 #ifdef ENABLE_SELF_FIRMWARE_UPGRADE
 	INIT_DELAYED_WORK(&himax_chip->himax_chip_firmware_upgrade_work, himax_chip_self_firmware_upgrade);
+#endif
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+	INIT_DELAYED_WORK(&himax_chip->virtual_key_delay_work, virtual_key_delay_function);
 #endif
 
 	printk("[Himax] %s:Init work function OK. \n",__func__);
@@ -7427,9 +7958,9 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	//----[HX_ESD_WORKAROUND]-------------------------------------------------------------------------------end
 
 	//----[ENABLE_CHIP_STATUS_MONITOR]--------------------------------------------------------------------start	
-#ifdef ENABLE_CHIP_STATUS_MONITOR
+//#ifdef ENABLE_CHIP_STATUS_MONITOR
 	himax_chip->running_status = 0;
-#endif
+//#endif
 	//----[ENABLE_CHIP_STATUS_MONITOR]----------------------------------------------------------------------end
 	err = himax_touch_sysfs_init();
 	if(err)
@@ -7572,7 +8103,7 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	
 	// add by josh for check USB status +++
 	cable_status = check_cable_status();
-	himax_cable_status(cable_status);
+	himax_a400cg_cable_status(cable_status);
 	// add by josh for check USB status ---
 	
 	//firmware upgrade by Josh ++
@@ -7626,6 +8157,10 @@ err_set_mutual_buffer_fail:
 	//firmware upgrade by Josh ++
 #ifdef ENABLE_SELF_FIRMWARE_UPGRADE
 	cancel_delayed_work(&himax_chip->himax_chip_firmware_upgrade_work);
+#endif
+
+#ifdef HX_VIRTUAL_KEY_DELAY
+	cancel_delayed_work(&himax_chip->virtual_key_delay_work);
 #endif
 
 	if(himax_chip->himax_wq)
@@ -7699,7 +8234,7 @@ static struct i2c_driver himax_ts_driver =
 	},
 };
 
-static int __devinit himax_ts_init(void)
+static int himax_ts_init(void)
 {
 	//add by josh for VCC330 +++
 //	intel_scu_ipc_iowrite8(PS_MSIC_VCC330CNT, PS_VCC330_ON);
@@ -7730,7 +8265,7 @@ MODULE_LICENSE("GPL");
 //
 //=============================================================================================================
 
-int himax_cable_status(int status)
+int himax_a400cg_cable_status(int status)
 {
     uint8_t buf0[2] = {0};
 		
@@ -7757,7 +8292,7 @@ int himax_cable_status(int status)
 		return 0;
 	}
 }
-EXPORT_SYMBOL(himax_cable_status);
+EXPORT_SYMBOL(himax_a400cg_cable_status);
 
 //add by Josh +++
 static int power_status(int status)

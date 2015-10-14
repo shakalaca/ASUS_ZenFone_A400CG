@@ -42,13 +42,14 @@ extern int register_dock_attach_notifier(struct notifier_block *nb);
 extern int unregister_dock_attach_notifier(struct notifier_block *nb);
 extern int register_dock_detach_notifier(struct notifier_block *nb);
 extern int unregister_dock_detach_notifier(struct notifier_block *nb);
-extern int ite_read_chargeric_reg(u8 reg_lsb, u8 reg_msb, u8 data_lsb, u8 data_msb);
-extern int ite_write_chargeric_reg(u8 reg_lsb, u8 reg_msb, u8 data_lsb, u8 data_msb);
 extern int ite_gauge_stop_polling(void);
 extern int ite_gauge_start_polling(void);
 extern int ite_read_base_charger_status_info(unsigned char *return_buf);
+extern int ite_read_charger_status_info(unsigned char *lsb, unsigned char *msb);
 extern int ite_ram_gauge_compare_result(unsigned char *buf);
 extern int ite_ram_gauge_temp_control(int enable);
+extern int ite_charger_control_function(u8 cmd);
+extern int ite_charger_ic_status_function(void);
 
 static int asus_battery_driver_ready = 0;
 struct workqueue_struct *battery_work_queue;
@@ -302,10 +303,11 @@ void asus_pad_batt_set_charger_data(u8 lsb, u8 msb) {
 }
 EXPORT_SYMBOL(asus_pad_batt_set_charger_data);
 
+#if 0
 int asus_pad_batt_write_charger_reg(u8 reg_lsb,u8 lsb) {
     int ret = 0;
     recive_charger_data = 0;
-    ite_write_chargeric_reg(reg_lsb, 0 , lsb, 0);
+//    ite_write_chargeric_reg(reg_lsb, 0 , lsb, 0);
     wait_event_interruptible_timeout(asus_pad_device->charger_status_event,recive_charger_data,1*HZ);
     dbg_d("msb:0x%x,lsb:0x%x,recived:%d for write reg 0x%x\n",data_msb,data_lsb,recive_charger_data,reg_lsb);
     if ( (data_msb== 0xFF && data_lsb == 0xFF) || recive_charger_data ==0)
@@ -316,17 +318,18 @@ int asus_pad_batt_write_charger_reg(u8 reg_lsb,u8 lsb) {
 int asus_pad_batt_read_charger_reg(u8 reg) {
     int ret = 0;
     recive_charger_data = 0;
-    ite_read_chargeric_reg(reg,0,0,0);
+    //ite_read_chargeric_reg(reg,0,0,0);
     wait_event_interruptible_timeout(asus_pad_device->charger_status_event,recive_charger_data,1*HZ);
     dbg_d("msb:0x%x,lsb:0x%x,recived:%d for read reg 0x%x\n",data_msb,data_lsb,recive_charger_data,reg);
     if ( (data_msb== 0xFF && data_lsb == 0xFF) || recive_charger_data ==0) {
-        err("can not read reg:0x%x\n",reg);
+        dbg_e("can not read reg:0x%x\n",reg);
         ret = -1;
     } else {
         ret = data_lsb;
     }
     return ret;
 }
+#endif
 
 /* Acquire the UUID */
 static ssize_t get_updateks(struct device *dev, struct device_attribute *attr, char *buf)
@@ -356,11 +359,21 @@ static ssize_t get_charge_status(struct device *dev, struct device_attribute *at
                 ret = 0;
         return sprintf(buf, "%d\n", ret);
 }
-
 static DEVICE_ATTR(charge_status, S_IRUGO, get_charge_status, NULL);
+
 #ifdef TX201LA_ENG_BUILD
+static ssize_t get_charger_disable(struct device *dev, struct device_attribute *attr, char *buf)
+{
+        int ret;
+        if ( asus_pad_device->limit_charger_disable == 1)
+                ret = 1;
+        else
+                ret = 0;
+        return sprintf(buf, "%d\n", ret);
+}
+
 static ssize_t set_charger_disable(struct device *dev, struct device_attribute *attr,
-                                     const char *buf,size_t count)
+                                     const char *buf, size_t count)
 {
     int value;
     dbg_d("Enter %s\n", __func__);
@@ -373,35 +386,19 @@ static ssize_t set_charger_disable(struct device *dev, struct device_attribute *
 
     return count;
 }
-
-static DEVICE_ATTR(charger_disable, S_IWUSR, NULL, set_charger_disable);
-
-static ssize_t set_gauge_temp_ctrl(struct device *dev, struct device_attribute *attr,
-                                     const char *buf,size_t count)
-{
-    int value;
-    dbg_d("Enter %s\n", __func__);
-
-    if (kstrtoul(buf, 0, &value))
-        return -EINVAL;
-
-    ite_ram_gauge_temp_control(value);
-    return count;
-}
-
-static DEVICE_ATTR(gauge_temp_enable, S_IWUSR, NULL, set_gauge_temp_ctrl);
-
+static DEVICE_ATTR(charger_disable, S_IRUGO | S_IWUGO, get_charger_disable, set_charger_disable);
 #endif
+
 static struct attribute *dev_attrs[] = {
     &dev_attr_charge_status.attr,
     &dev_attr_charge_keys.attr,
     &dev_attr_updateks.attr,
 #ifdef TX201LA_ENG_BUILD
     &dev_attr_charger_disable.attr,
-    &dev_attr_gauge_temp_enable.attr,
 #endif
-    NULL,
+        NULL,
 };
+
 static struct attribute_group dev_attr_grp = {
         .attrs = dev_attrs,
 };
@@ -417,9 +414,10 @@ void pad_bat_set_base_ac_status(int ac_status) {
     if (base_in) {
         dbg_i("ac_status=%d\n",ac_status);
         pre_base_ac_status = base_ac_status;
-        base_ac_status = ac_status & BIT(0);
-        dc_charging = (ac_status & BIT(3)) ?  true:false;
+        base_ac_status = ac_status & BIT(4) ? true:false;
+        dc_charging = (ac_status & BIT(7)) ?  true:false;
     } else {
+
         dbg_e("base is not attach,ingore the base ac event\n");
     }
     if ( asus_battery_driver_ready == 1 ) {
@@ -432,10 +430,6 @@ EXPORT_SYMBOL(pad_bat_set_base_ac_status);
 
 void asus_pad_battery_set_cable_status(int usb_state) {
     dbg_i("Get usb cable status:%d\n",usb_state);
-    if (base_in) {
-        dbg_i("base attach,ingore the cable status\n");
-        return;
-    }
     pre_cable_status = cable_status;
     cable_status = usb_state;
     if ( asus_battery_driver_ready == 1 ) {
@@ -626,12 +620,9 @@ static void asus_pad_batt_set_limit_charger()
              asus_pad_device->ec_bat_capacity > 60 &&
              asus_pad_device->limit_charger_disable == 1) 
         {
-            ret = ite_ram_gauge_temp_control(false);
-            if (ret == -1) {
-                dbg_e("disable gauge temp control fail.\n");
-            }
-
-            ret = smb345_charger_toggle(false);// disable charger
+            ite_charger_control_function(EC_CHARGER_CTRL_STOPCHARGE);
+//            ret = smb345_charger_toggle(false);// disable charger
+            printk("charger status:0x%x\n",ite_charger_ic_status_function());
             if (ret == -1) {
                 dbg_e("disable charging fail.\n");
             }
@@ -643,7 +634,9 @@ static void asus_pad_batt_set_limit_charger()
         } else if ( (asus_pad_device->charger_disabled == 1 && asus_pad_device->ec_bat_capacity < 60) ||
                     (asus_pad_device->limit_charger_disable == 0 && asus_pad_device->charger_disabled == 1)) 
         {
-            ret = smb345_charger_toggle(true); // enable charger
+            ite_charger_control_function(EC_CHARGER_CTRL_STARTCHARGE);
+            printk("charger status:0x%x\n",ite_charger_ic_status_function());
+//            ret = smb345_charger_toggle(true); // enable charger
             if (ret == -1) {
                 dbg_e("enable charging fail.\n");
             }
@@ -651,10 +644,6 @@ static void asus_pad_batt_set_limit_charger()
                 asus_pad_device->charger_disabled = 0;
                 asus_pad_device->bat_status = POWER_SUPPLY_STATUS_CHARGING;
                 dbg_i("percentage < 60. re-charging now\n");
-            }
-            ret = ite_ram_gauge_temp_control(true);
-            if (ret == -1) {
-                dbg_e("enable gauge temp control fail.\n");
             }
         } 
     } else { // usb remove,need to reset the charger stop charger
@@ -705,17 +694,6 @@ static ret_type_t asus_pad_battery_get_info(void)
         asus_pad_device->ec_fail_count = 0;
         asus_pad_device->bat_voltage = asus_pad_device->ec_bat_voltage*1000;
         asus_pad_device->bat_temperature = asus_pad_battery_get_temperature(asus_pad_device->ec_bat_temp);
-        if ( HW_ID == HW_ID_SR1 || HW_ID == HW_ID_SR2) {
-            dbg_i("sr board,read percentage from gauge now\n");
-            ite_gauge_stop_polling();
-            bq27541_read_percentage(&asus_pad_device->ec_bat_capacity);
-            ite_gauge_start_polling();
-            dbg_i("percentage read from gauge:%d\n",asus_pad_device->ec_bat_capacity);
-            asus_pad_device->bat_temperature = 300; // force set avoid system shutdown.
-        } else if ( asus_pad_device->bat_temperature < -200) {
-            dbg_i("the temp < -200 should be sr battery.force set percentage as 50\n");
-            asus_pad_device->ec_bat_capacity = 50;
-        }
 
         if (asus_pad_device->low_battery == true)
             asus_pad_device->bat_percentage = asus_pad_battery_get_capacity(0);
@@ -786,15 +764,15 @@ static ret_type_t asus_pad_battery_get_info(void)
 
 static void base_ac_poll(struct work_struct *work) {
 	int bat_ret;
-	unsigned char base_charger_status;
+	unsigned char charger_status_lsb,charger_status_msb;
 	
-    bat_ret = ite_read_base_charger_status_info(&base_charger_status);
+    bat_ret = ite_read_charger_status_info(&charger_status_lsb,&charger_status_msb);
     if ( bat_ret == RET_GAUGE_FAIL || bat_ret == RET_EC_FAIL) {
         dbg_e("%s:fail to get base charger info\n",__func__);
     } else {
-        base_ac_status = (base_charger_status >> 1) & BIT(0);
-        dc_charging = (base_charger_status & BIT(3)) ?  true:false;
-        dbg_i("base charger status:%d\n",base_charger_status);
+        base_ac_status = (charger_status_msb & BIT(4)) ? true:false;
+        dc_charging = (charger_status_msb & BIT(5)) ?  true:false;
+        dbg_i("charger status(lsb,msb):0x%x,0x%x\n",charger_status_lsb,charger_status_msb);
     }
     asus_update_all(0.1);
 }
@@ -988,18 +966,20 @@ static int smb345_debugfs_open(struct inode *inode, struct file *file)
 }
 
 static bool flag_create_bdge = false;
-static int bq27520_proc_bridge_read(char *page, char **start, off_t off, int count, int *eof, void *
-data)
+static int bq27520_proc_bridge_read(struct seq_file *s, void *data)
 {
-    int len;
-
     if (bq27520_is_rom_mode()) {
-        len = sprintf(page, "7");
+        seq_printf(s,"7");
     } else {
-        len = sprintf(page, "8");
+        seq_printf(s,"8");
     }
 
-    return len;
+    return 0;
+}
+
+static int bridge_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, bq27520_proc_bridge_read, inode->i_private);
 }
 
 static int bq27520_proc_bridge_write(struct file *file, const char *buf, unsigned long count, void *data)
@@ -1059,46 +1039,49 @@ static int bq27520_proc_bridge_write(struct file *file, const char *buf, unsigne
     return count;
 }
 
+static const struct file_operations bridge_proc_fops = {
+        .owner          = THIS_MODULE,
+        .open           = bridge_proc_open,
+        .read           = seq_read,
+        .llseek         = seq_lseek,
+        .release        = single_release,
+        .write          = bq27520_proc_bridge_write,
+};
+
 int bq27520_proc_fs_update_bridge(void)
 {
     struct proc_dir_entry *entry=NULL;
-
     /* not create again */
     if (flag_create_bdge)
         return 0;
 
-    entry = create_proc_entry("ubridge", 0666, NULL);
+    entry = proc_create("ubridge", 0666, NULL,&bridge_proc_fops);
     if (!entry) {
         dbg_e("Unable to create ubridge\n");
         return -EINVAL;
     }
-    entry->read_proc = bq27520_proc_bridge_read;
-    entry->write_proc = bq27520_proc_bridge_write;
 
     /* lock on the flag */
     flag_create_bdge = true;
-
     return 0;
 }
 
-static int bq27520_proc_read(char *page, char **start, off_t off, int count, int *eof, void *data)
+static int bq27520_proc_read(struct seq_file *s, void *data)
 {
-    int ret;
-
     if (!gaugekey_buf)
-        return count;
+        return 0;
 
     /* print the key to screen for debugging */
-    ret = sprintf(page, "%s\n", gaugekey_buf);
+    seq_printf(s,"%s\n", gaugekey_buf);
 
     /* re-generate the key to clean the memory */
     generate_key(gaugekey_buf);
 
-    return ret;
+    return 0;
 }
 
-static int bq27520_proc_write(struct file *file, const char *buffer, unsigned long count, void *data
-)
+static int bq27520_proc_write(struct file *file,
+    const char __user *buffer, size_t count, loff_t * ppos)
 {
     char proc_buf[64];
 
@@ -1138,7 +1121,18 @@ static const struct file_operations smb345_debugfs_fops = {
         .release        = single_release,
 };
 
-static int twinshead_proc_write(struct file *file, const char *buffer, unsigned long count, void *data)
+static int twinshead_proc_read(struct seq_file *s, void *data)
+{
+    return 0;
+}
+
+static int twinshead_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, twinshead_proc_read, inode->i_private);
+}
+
+static int twinshead_proc_write(struct file *file,
+    const char __user *buffer, size_t count, loff_t * ppos)
 {
     char proc_buf[64];
 
@@ -1154,7 +1148,8 @@ static int twinshead_proc_write(struct file *file, const char *buffer, unsigned 
 
     if (!memcmp(proc_buf, gbuffer, 36)) {
         dbg_i("%s: EQ\n", __func__);
-
+        ite_charger_control_function(EC_CHARGER_CTRL_CHG_CURRENT_2A);
+#if 0
         if (!gpio_get_value(asus_pad_device->inok_gpio)) {
 
             /* ME372CG charge current control algorithm:
@@ -1163,8 +1158,9 @@ static int twinshead_proc_write(struct file *file, const char *buffer, unsigned 
                is present)
             */
             /* force max 1.8A charge current for ME372CG */
-            smb345_config_max_current_twinheadeddragon(asus_pad_device->inok_gpio);
+//            smb345_config_max_current_twinheadeddragon(asus_pad_device->inok_gpio);
         }
+#endif
     }
     else {
         dbg_e("%s: NOT EQ\n", __func__);
@@ -1220,6 +1216,36 @@ static int bq27520_proc_info_dump_read(struct seq_file *s, void *data)
     return 0;
 }
 
+static void batt_remove_proc_entry(void)
+{
+    remove_proc_entry("twinheadeddragon",NULL);
+    remove_proc_entry("twinsheadeddragon",NULL);
+    remove_proc_entry("bq27520_test_info_dump",NULL);
+}
+
+static int twinsheadeddragon_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, bq27520_proc_read, inode->i_private);
+}
+
+static const struct file_operations twinsheadeddragon_proc_fops = {
+        .owner          = THIS_MODULE,
+        .open           = twinsheadeddragon_proc_open,
+        .read           = seq_read,
+        .llseek         = seq_lseek,
+        .release        = single_release,
+        .write          = bq27520_proc_write,
+};
+
+static const struct file_operations twinshead_proc_fops = {
+        .owner          = THIS_MODULE,
+        .open           = twinshead_proc_open,
+        .read           = seq_read,
+        .llseek         = seq_lseek,
+        .release        = single_release,
+        .write          = twinshead_proc_write,
+};
+
 static int dumpinfo_proc_open(struct inode *inode, struct file *file)
 {
         return single_open(file, bq27520_proc_info_dump_read, inode->i_private);
@@ -1234,32 +1260,21 @@ static const struct file_operations dumpinfo_proc_fops = {
         .write          = NULL,
 };
 
-static int batt_remove_proc_entry(void)
-{
-    remove_proc_entry("twinheadeddragon",NULL);
-    remove_proc_entry("twinsheadeddragon",NULL);
-    remove_proc_entry("bq27520_test_info_dump",NULL);
-} 
-
 static int batt_create_proc_entry(void)
 {
     struct proc_dir_entry *entry=NULL;
 
-    entry = create_proc_entry("twinheadeddragon", 0666, NULL);
+    entry = proc_create("twinheadeddragon", 0666, NULL, &twinshead_proc_fops);
     if (!entry) {
         dbg_e("Unable to create twinheadeddragon\n");
         return -EINVAL;
     }
-    entry->read_proc = NULL;
-    entry->write_proc = twinshead_proc_write;
 
-    entry = create_proc_entry("twinsheadeddragon", 0666, NULL);
+    entry = proc_create("twinsheadeddragon", 0666, NULL, &twinsheadeddragon_proc_fops);
     if (!entry) {
         dbg_e("Unable to create twinsheadeddragon\n");
         return -EINVAL;
     }
-    entry->read_proc = bq27520_proc_read;
-    entry->write_proc = bq27520_proc_write;
 
     entry = proc_create("bq27520_test_info_dump", 0644, NULL,&dumpinfo_proc_fops);
     if (!entry) {
@@ -1285,7 +1300,7 @@ static ssize_t batt_switch_name(struct switch_dev *sdev, char *buf)
     return sprintf(buf, "%s\n", FAIL);
 }
 
-static int __devinit asus_battery_ec_probe(struct platform_device *pdev)
+static int asus_battery_ec_probe(struct platform_device *pdev)
 {
     struct device *dev = &pdev->dev;
     int irq;
@@ -1301,7 +1316,6 @@ static int __devinit asus_battery_ec_probe(struct platform_device *pdev)
         goto pad_dev_alloc_fail;
     }
     memset(asus_pad_device, 0, sizeof(*asus_pad_device));
-
     //Init
     asus_pad_device->bat_present = 1;
     asus_pad_device->bat_status = 3;
@@ -1335,7 +1349,6 @@ static int __devinit asus_battery_ec_probe(struct platform_device *pdev)
         }
     }
 #endif
-
 
     /* init wake lock in COS */
     wake_lock_init(&wakelock, WAKE_LOCK_SUSPEND, "asus_battery_power_wakelock");
@@ -1421,14 +1434,10 @@ static int __devinit asus_battery_ec_probe(struct platform_device *pdev)
         goto base_ac_reg_fail;
     }
 
-//        wake_lock_init(&asus_pad_device->wake_lock, WAKE_LOCK_SUSPEND, "battery_wake_lock");
     bat_ret = asus_pad_battery_get_info();
     if ( bat_ret == RET_GAUGE_FAIL || bat_ret == RET_EC_FAIL) {
-//        ret = -EIO;
         dbg_e("%s:fail to get battery info\n",__func__);
-//	goto get_batt_info_err;
     }
-
 #ifndef TX201LA_USER_BUILD
     asus_pad_device->charger_dentry = debugfs_create_file("smb345", S_IRUGO, NULL, asus_pad_device,
                                           &smb345_debugfs_fops);
@@ -1438,41 +1447,33 @@ static int __devinit asus_battery_ec_probe(struct platform_device *pdev)
     register_dock_detach_notifier(&detach_dock_notifier);
     sysfs_create_group(&dev->kobj, &dev_attr_grp);
 
-// create proc for twinsheadeddragon
+    // create proc for twinsheadeddragon
     generate_key(gbuffer);
     batt_create_proc_entry();
-    
+
     ite_gauge_stop_polling();
     asus_pad_device->fw_cfg_ver = bq27520_asus_battery_dev_read_fw_cfg_version();
     if ( asus_pad_device->fw_cfg_ver == ERROR_CODE_I2C_FAILURE)
         asus_pad_device->fw_cfg_ver = 0;
-    dbg_i("fw_cfg_version:%d\n",asus_pad_device->fw_cfg_ver);
+    dbg_i("fw_cfg_version:%x\n",asus_pad_device->fw_cfg_ver);
     asus_pad_device->chem_id = bq27520_asus_battery_dev_read_chemical_id();
     if ( asus_pad_device->chem_id == ERROR_CODE_I2C_FAILURE)
         asus_pad_device->chem_id = 0;
-    dbg_i("chemical_id=%d\n", asus_pad_device->chem_id);
+    dbg_i("chemical_id=%x\n", asus_pad_device->chem_id);
     asus_pad_device->df_ver = bq27520_asus_battery_dev_read_df();
     if ( asus_pad_device->df_ver == ERROR_CODE_I2C_FAILURE)
         asus_pad_device->df_ver = 0;
-    dbg_i("df:%d\n",asus_pad_device->df_ver);
+    dbg_i("df:%x\n",asus_pad_device->df_ver);
     ite_gauge_start_polling();
-
     /* switch added for battery version info */
+
     asus_pad_device->batt_dev.name = "battery";
     asus_pad_device->batt_dev.print_name = batt_switch_name;
     if (switch_dev_register(&asus_pad_device->batt_dev) < 0) {
         dbg_e("fail to register battery switch\n");
     }
 
-/*
-    bat_ret = ite_read_base_charger_status_info(&base_charger_status);
-    if ( bat_ret == RET_GAUGE_FAIL || bat_ret == RET_EC_FAIL) {
-        dbg_e("%s:fail to get base charger info\n",__func__);
-    } else {
-        base_ac_status = (base_charger_status >> 1) & BIT(0);
-        dbg_i("base charger status:%d\n",base_charger_status);
-    }
-*/
+//    ite_ram_gauge_temp_control(true);
     queue_delayed_work(battery_work_queue, &battery_poll_data_work, FIRST_RUN_TIME*HZ);
     asus_battery_driver_ready = 1;
     return 0;
@@ -1504,7 +1505,7 @@ pad_dev_alloc_fail:
 
 }
 
-static int __devexit asus_battery_ec_remove(struct platform_device *pdev)
+static int asus_battery_ec_remove(struct platform_device *pdev)
 {
     struct device *dev = &pdev->dev;
 
@@ -1546,7 +1547,7 @@ static struct platform_driver asus_battery_ec_driver = {
 		.owner		= THIS_MODULE,
 	},
 	.probe		= asus_battery_ec_probe,
-	.remove = __devexit_p(asus_battery_ec_remove),
+	.remove = asus_battery_ec_remove,
         .suspend  = asus_pad_batt_suspend,
         .resume   = asus_pad_batt_resume,
 	.id_table = asus_battery_ec_table,
@@ -1564,8 +1565,8 @@ static int __init asus_battery_ec_module_init(void)
         return -ENOMEM;
     }
 
-    INIT_DELAYED_WORK_DEFERRABLE(&battery_poll_data_work, asus_pad_battery_status_poll);
-    INIT_DELAYED_WORK_DEFERRABLE(&base_ac_data_work, base_ac_poll);
+    INIT_DELAYED_WORK(&battery_poll_data_work, asus_pad_battery_status_poll);
+    INIT_DELAYED_WORK(&base_ac_data_work, base_ac_poll);
 
     rc = platform_driver_register(&asus_battery_ec_driver);
     if (rc < 0)
@@ -1600,7 +1601,8 @@ static void __exit asus_battery_ec_module_exit(void)
     asus_battery_driver_ready = 0;
 }
 
-module_init(asus_battery_ec_module_init);
+//module_init(asus_battery_ec_module_init);
+late_initcall(asus_battery_ec_module_init);
 module_exit(asus_battery_ec_module_exit);
 
 MODULE_AUTHOR("ASUS BSP");

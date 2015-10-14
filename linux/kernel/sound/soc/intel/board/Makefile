@@ -14,16 +14,32 @@ snd-soc-yukkabeach-machine-objs := mfld_common.o yukkabeach_machine.o
 obj-$(CONFIG_SND_YUKKABEACH_MACHINE) += snd-soc-yukkabeach-machine.o
 
 # Cloverview/Clovertrail+/Bodegabay board
-snd-soc-ctp-machine-5640-objs := ctp_common.o ctp_rhb_rt5640.o
-snd-soc-ctp-machine-5642-objs := ctp_common.o ctp_rhb_rt5640.o
-obj-$(CONFIG_SND_CTP_MACHINE_5640) += snd-soc-ctp-machine-5640.o
-obj-$(CONFIG_SND_CTP_MACHINE_5642) += snd-soc-ctp-machine-5642.o
+snd-soc-ctp-machine-5640-objs := ctp_common.o ctp_rhb_rt5640.o 
+obj-$(CONFIG_SND_CTP_MACHINE_RT5640) += snd-soc-ctp-machine-5640.o
+snd-soc-ctp-machine-5647-objs := ctp_common_rt5647.o ctp_rhb_rt5647.o
+obj-$(CONFIG_SND_CTP_MACHINE_RT5647) += snd-soc-ctp-machine-5647.o
+snd-soc-ctp-machine-5648-objs := ctp_common_rt5648.o ctp_rhb_rt5648.o
+obj-$(CONFIG_SND_CTP_MACHINE_RT5648) += snd-soc-ctp-machine-5648.o
 
 # Merrifield board
 snd-merr-saltbay-lm49453-objs := merr_saltbay_lm49453.o
 snd-merr-saltbay-wm8958-objs := merr_saltbay_wm8958.o
-obj-$(CONFIG_SND_MRFLD_MACHINE) += snd-merr-saltbay-lm49453.o snd-merr-saltbay-wm8958.o
+snd-merr-dpcm-wm8958-objs := merr_dpcm_wm8958.o
+
+ifdef CONFIG_SST_MRFLD_DPCM
+	obj-$(CONFIG_SND_MRFLD_MACHINE) += snd-merr-dpcm-wm8958.o
+else
+	obj-$(CONFIG_SND_MRFLD_MACHINE) += snd-merr-saltbay-lm49453.o snd-merr-saltbay-wm8958.o
+endif
+
+# Moorefield board
+obj-$(CONFIG_SND_MOOR_MACHINE) += snd-merr-saltbay-wm8958.o
 
 # Baytrail board
 snd-byt-bl-rt5642-objs := byt_bl_rt5642.o
-obj-$(CONFIG_SND_BYT_MACHINE) += snd-byt-bl-rt5642.o
+snd-byt-cr-aic3100-objs := byt_cr_aic3100.o
+obj-$(CONFIG_SND_BYT_MACHINE) += snd-byt-bl-rt5642.o snd-byt-cr-aic3100.o
+
+# Cherrytrail board
+snd-cht-bl-rt5672-objs := cht_bl_rt5672.o
+obj-$(CONFIG_SND_CHT_MACHINE) += snd-cht-bl-rt5672.o

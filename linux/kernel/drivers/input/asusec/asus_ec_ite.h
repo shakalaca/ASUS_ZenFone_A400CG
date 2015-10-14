@@ -70,51 +70,68 @@ static const unsigned short normal_i2c[] = { 0x45, I2C_CLIENT_END };
 #define CMD_W 0
 #define CMD_R 1
 
-/*************IO control setting***************/
-#define ASUSEC_TP_ON			1
-#define ASUSEC_TP_OFF			0
+/*+++++ ITE8566 IO control setting +++++++++++*/
+//#define ASUSEC_TP_ON			1
+//#define ASUSEC_TP_OFF			0
 #define ASUSEC_EC_ON			1
 #define ASUSEC_EC_OFF			0
 #define ASUSEC_FW_UPGRADE_ON	1
 #define ASUSEC_FW_UPGRADE_OFF	0
-#define ASUSEC_WIFI_ON			1
-#define ASUSEC_WIFI_OFF			0
+//#define ASUSEC_WIFI_ON			1
+//#define ASUSEC_WIFI_OFF			0
 #define ASUSEC_ACCESS_ON		1
 #define ASUSEC_ACCESS_OFF		0
 #define ASUSEC_CPAS_LED_ON		1
 #define ASUSEC_CPAS_LED_OFF		0
 #define ASUSEC_IOC_MAGIC		0xF4
-#define ASUSEC_IOC_MAXNR		10
-#define ASUSEC_INIT					_IOR(ASUSEC_IOC_MAGIC,	1,	int)
-#define ASUSEC_FW_UPDATE_FLAG		_IOR(ASUSEC_IOC_MAGIC,	2,	int)
-#define ASUSEC_FW_UPDATE_PROCESS	_IOR(ASUSEC_IOC_MAGIC,	3,	int)
-#define ASUSEC_TP_CONTROL			_IOR(ASUSEC_IOC_MAGIC,	4,	int)
-#define ASUSEC_EC_WAKEUP			_IOR(ASUSEC_IOC_MAGIC,	5,	int)
-#define ASUSEC_CHANGE_OWNER			_IOR(ASUSEC_IOC_MAGIC,	6,	int)
-#define ASUSEC_WIFI					_IOR(ASUSEC_IOC_MAGIC,	7,	int)
-#define ASUSEC_DATA_ACCESS			_IOR(ASUSEC_IOC_MAGIC,	8,	int)
-#define ASUSEC_CPASLOCK_LED			_IOR(ASUSEC_IOC_MAGIC,	9,	int)
-#define ASUSEC_BASE_EC_CHECK		_IOR(ASUSEC_IOC_MAGIC,	10,	int)
+#define ASUSEC_IOC_MAXNR		12
+#define ASUSEC_INIT						_IOR(ASUSEC_IOC_MAGIC,	1,	int)
+#define ASUSEC_FW_UPDATE_FLAG			_IOR(ASUSEC_IOC_MAGIC,	2,	int)
+#define ASUSEC_FW_UPDATE_PROCESS		_IOR(ASUSEC_IOC_MAGIC,	3,	int)
+#define ASUSEC_FW_CHECK					_IOR(ASUSEC_IOC_MAGIC,	4,	int)
+#define ASUSEC_EC_WAKEUP				_IOR(ASUSEC_IOC_MAGIC,	5,	int)
+#define ASUSEC_CHANGE_OWNER				_IOR(ASUSEC_IOC_MAGIC,	6,	int)
+//#define ASUSEC_WIFI						_IOR(ASUSEC_IOC_MAGIC,	7,	int)
+#define ASUSEC_DATA_ACCESS				_IOR(ASUSEC_IOC_MAGIC,	8,	int)
+#define ASUSEC_CPASLOCK_LED				_IOR(ASUSEC_IOC_MAGIC,	9,	int)
+#define ASUSEC_BASE_EC_CHECK			_IOR(ASUSEC_IOC_MAGIC,	10,	int)
+#define ASUSEC_GET_BASE_WIFI_MAC		_IOR(ASUSEC_IOC_MAGIC,	11,	int)
+#define ASUSEC_REFRESH_BASE_WIFI_MAC	_IOR(ASUSEC_IOC_MAGIC,	12,	int)
 
 #define ASUSEC_FW_UPGRADE_SUCCESS	"0"
 #define ASUSEC_FW_UPGRADE_FAIL		"1"
 #define ASUSEC_FW_UPGRADE_PROCESS	"2"
 #define ASUSEC_FW_UPGRADE_INIT		"3"
+/*----- ITE8566 IO control setting -----------*/
 
-/*************IO control setting***************/
+/*+++++ ASUSPEC IO control setting +++++++++++*/
+#define ASUSPEC_TP_ON			1
+#define ASUSPEC_TP_OFF			0
+#define ASUSPEC_FLIGHT_MODE_ON	1
+#define ASUSPEC_FLIGHT_MODE_OFF	0
+#define ASUSPEC_CPAS_LED_ON		1
+#define ASUSPEC_CPAS_LED_OFF	0
+#define ASUSPEC_IOC_MAGIC		0xF4
+#define ASUSPEC_IOC_MAXNR		10
+#define ASUSPEC_TP_CONTROL			_IOR(ASUSPEC_IOC_MAGIC,	5,	int)
+#define ASUSPEC_FLIGHT_MODE			_IOR(ASUSPEC_IOC_MAGIC,	7,	int)
+#define ASUSPEC_CPASLOCK_LED		_IOR(ASUSPEC_IOC_MAGIC,	9,	int)
+/*----- ASUSPEC IO control setting -----------*/
+
+/*+++++ ASUSDEC IO control setting +++++++++++*/
 #define ASUSDEC_EC_ON			1
 #define ASUSDEC_EC_OFF			0
-#define ASUSDEC_IOC_MAGIC		0xf4
+#define ASUSDEC_IOC_MAGIC		0xF4
 #define ASUSDEC_IOC_MAXNR		7
 #define ASUSDEC_EC_WAKEUP		_IOR(ASUSDEC_IOC_MAGIC,	6,	int)
-/*************IO control setting***************/
+/*----- ASUSDEC IO control setting -----------*/
 
-/*************IO control setting***************/
 #define WIN_POWER_SDEV_NAME	"win_power"
 #define PAD_SDEV_NAME		"pad"
 #define DOCK_SDEV_NAME		"dock"
 #define OWNER_SDEV_NAME		"panel_owner"
 #define BASEEC_SDEV_NAME	"base_ec_check"
+#define BASE_WIFI_MAC_SDEV_NAME	"base_wifi_mac"
 
 //#define dprintk
 //#define dprintk printk
@@ -130,6 +147,7 @@ static const unsigned short normal_i2c[] = { 0x45, I2C_CLIENT_END };
 #define EFLASH_CMD_WRITE_ENABLE		0x06
 #define EFLASH_CMD_FAST_READ		0x0B
 #define EFLASH_CMD_CHIP_ERASE	 	0x60
+#define EFLASH_CMD_SECTOR_ERASE	 	0xD7  // add by tom for only erase 1024 byte
 #define EFLASH_CMD_AAI_WORD_PROGRAM 0xAD
 #define EFLASH_MAX_RETRY_COUNT		5
 
@@ -144,6 +162,7 @@ static const unsigned short normal_i2c[] = { 0x45, I2C_CLIENT_END };
 #define	ASUSEC_IRQ1_COMPARE_PASS	0x02
 #define	ASUSEC_IRQ1_I2C_FAIL		0x04
 #define	ASUSEC_IRQ1_BASE_STATUS		0x08
+#define	ASUSEC_IRQ1_WIFI_MAC_ADDR_READY		0x10
 
 #define ASUSEC_KEY_RELASE			0x00
 
@@ -184,16 +203,17 @@ static const unsigned short normal_i2c[] = { 0x45, I2C_CLIENT_END };
 #define	ASUSEC_KEY_GEMINI_KEY		0x01
 #define	ASUSEC_KEY_BASE_ATTACH		0x02
 #define	ASUSEC_KEY_BASE_DETACH		0x04
-#define	ASUSEC_KEY_EC_SWITCH		0x08
+//#define	ASUSEC_KEY_EC_SWITCH		0x08
+#define	ASUSEC_KEY_TOUCH_PAD_POWER		0x08
 #define	ASUSEC_KEY_OWNER_ANDROID	0x10
 #define	ASUSEC_KEY_OWNER_WINDOWS	0x20
 #define	ASUSEC_KEY_BASE_STATUS		0x40
 #define	ASUSEC_KEY_WAKEUP_SOC		0x80
 
-#define	ASUSEC_LIGHT_SENSOR_RESET		0x01
-#define	ASUSEC_LIGHT_SENSOR_ENABLE		0x02
-#define	ASUSEC_LIGHT_SENSOR_DISABLE		0x04
-#define	ASUSEC_LIGHT_SENSOR_RAWDATA		0x08
+#define	ASUSEC_LIGHT_SENSOR_RESET		0x80
+#define	ASUSEC_LIGHT_SENSOR_ENABLE		0x01
+#define	ASUSEC_LIGHT_SENSOR_DISABLE		0x02
+#define	ASUSEC_LIGHT_SENSOR_RAWDATA		0x04
 
 #define ASUSEC_KEYCODE_LAUNCH_SETTING	KEY_F13
 #define ASUSEC_KEYCODE_SCREEN_CAPTURE	KEY_F14
@@ -227,10 +247,12 @@ struct ite_chip {
 	struct mutex mutex_lock;
 	struct mutex mutex_lock_irq;
 	struct i2c_client *client;
+	struct input_dev *input_dev;
 	struct work_struct work_0x68;
 	struct work_struct work_0x66;
-	struct input_dev *input_dev;
 	struct workqueue_struct *asusec_wq;
+	struct workqueue_struct *flash_wq;
+	
 	struct attribute_group attrs;
 	struct asusdec_keypad keypad_data;
 	struct wake_lock wake_lock;
@@ -244,6 +266,7 @@ struct ite_chip {
 	struct switch_dev dock_sdev;
 	struct switch_dev owner_sdev;
 	struct switch_dev baseec_sdev;
+	struct switch_dev base_wifi_mac_sdev; // add by Tom for Base WiFi MAC Address
 	struct miscdevice ite_misc_dev;
 	struct early_suspend early_suspend;
 		
@@ -251,6 +274,7 @@ struct ite_chip {
 	char input_phys_name[32];
 	char pad_ec_version[32];
 	char dock_ec_version[32];
+	u8 base_wifi_mac[6];  // add by Tom for Base WiFi MAC Address
 	unsigned char old[8];
 	unsigned char new[14];
 	unsigned short keymap[ITE_KEYMAP_SIZE];

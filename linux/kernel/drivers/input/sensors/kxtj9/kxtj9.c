@@ -32,6 +32,7 @@
 // 2012.11.30 cheng_kao early_suspend ++
 #include <linux/earlysuspend.h>
 // 2012.11.30 cheng_kao early_suspend --
+#include <linux/spinlock.h>
 
 // added by cheng_kao for  HWVersion 2013.11.11 ++
 #include <linux/HWVersion.h>
@@ -39,15 +40,14 @@ extern int Read_HW_ID(void);
 // added by cheng_kao for  HWVersion 2013.11.11 --
 
 
-#ifdef CONFIG_ME175CG
-#define NAME			"kxtj2"
-#elif defined(CONFIG_PF400CG)
-#define NAME			"kxtj2"
-#elif defined(CONFIG_A400CG)
-#define NAME			"kxtj2"
-#else
+#ifdef CONFIG_ME372CG
 #define NAME			"kxtj9"
+#elif defined(CONFIG_ME372CL)
+#define NAME			"kxtj9"
+#else
+#define NAME			"kxtj2"
 #endif
+
 #define G_MAX			8000
 /* OUTPUT REGISTERS */
 #define XOUT_L			0x06
@@ -121,16 +121,23 @@ extern int Read_HW_ID(void);
 #define KXTJ2_CHIP_LOCATION_SR_PF400CG		4	//	X(-1 , 0 , 0 );	Y(0 , 1 , 0);	Z(0 , 0 , -1)
 #define KXTJ2_CHIP_LOCATION_SR_A400CG		5	//	X(-1 , 0 , 0 );	Y(0 , 1 , 0);	Z(0 , 0 , -1)
 #define KXTJ2_CHIP_LOCATION_ER_ME372CL		6	//	X(0 , 0 , 0 );	Y(0 , -1 , 0);	Z(0 , 0 , -1)
-int g_ilocation=0;
+#define KXTJ2_CHIP_LOCATION_SR_A450CG		7	//	X(0 , 1 , 0 );	Y(1 , 0 , 0);	Z(0 , 0 , -1)
+#define KXTJ2_CHIP_LOCATION_SR_FE380CG		8	//	X(0 , 1 , 0 );	Y(1 , 0 , 0);	Z(0 , 0 , -1)
+#define KXTJ2_CHIP_LOCATION_SR_TX201LAF		9	//	X(0 , 1 , 0 );	Y(1 , 0 , 0);	Z(0 , 0 , -1)
+#define KXTJ2_CHIP_LOCATION_SR_ZC400CG		10	//	X(-1 , 0 , 0 );	Y(0 , 1 , 0);	Z(0 , 0 , -1)
+int g_ilocation=-1;
 
 #define WHOAMI_VALUE_FOR_KXTJ9	8
 #define WHOAMI_VALUE_FOR_KXTJ2	9
 
-#define RAW_LIMIT_PERCENT			35
+#define RAW_LIMIT_PERCENT			80
 
 #define KXTJ9_VALUE_FOR_NOT_NEED_RESET	0
 #define KXTJ9_RESET_FOR_SAME_RAWDATA	1
 #define KXTJ9_RESET_FOR_ZERO_RAWDATA	2
+// limit for reset chip by cheng_kao 2014.07.01 ++
+#define KXTJ9_RESET_COUNTER_LIMIT	5
+// limit for reset chip by cheng_kao 2014.07.01 --
 
 // for calibration 2013.11.25 ++
 unsigned char  g_kxtj_for_calibration[6]={0};
@@ -148,27 +155,38 @@ void gsensor_info_for_camera(int *info_x, int *info_y, int *info_z);
 // added by cheng_kao 2013.06.01  for sensors calibration --
 
 extern int build_version;
-extern int g_i2c5_reset_by_gsensor;
+//extern int g_i2c5_reset_by_gsensor;
+bool bypass_for_eng_mode = false ; 
 
 // define the GPIO PIN for Intel x86
-int gpio_line =  60;
+int gpio_kxtj2 =  60;
+int gpio_invensense = 76;
 //int i2c_bus =    5;
-//module_param(gpio_line, int, S_IRUGO);
+//module_param(gpio_kxtj2, int, S_IRUGO);
 //module_param(i2c_bus, int, S_IRUGO);
 //Use to open/close the debugmessage
 int KXTJ9_DEBUG_MESSAGE=0;
 int KXTJ9_REG_MESSAGE=0;
 int KXTJ9_CALIBRATED_MESSAGE=1;
 
+#define KXTJ9_ST_LATE_RESUME		0
+#define KXTJ9_ST_EARLY_SUSPEND	1
+
 #define KXTJ9_RESUME_DISABLE		0
 #define KXTJ9_RESUME_ENABLE		1
 #define KXTJ9_RESUME_MISSDISABLE	2
 #define KXTJ9_RESUME_MISSENABLE	3
 
-#define KXTJ9_NORMAL_TIME			200
-
 //calibration algorithm : used for 6 planes
 int g_KXTJ9_CLIBRATION_6_PLANES=0;
+
+//#define KXTJ2_BUILD_MOTION_DETECT	1
+
+//cheng_kao 2014.10.07 for four methods
+//#define KXTJ_SPIN_LOCK		1
+//#define KXTJ_CONTROL_IRQ	1
+//#define KXTJ_MUTEX_LOCK	1
+#define KXTJ_BYPASS_IRQ	1
 
 //The following table lists the maximum appropriate poll interval for each available output data rate.
 #define KXTJ9_RES_8BIT	0
@@ -180,9 +198,9 @@ static const struct {
 } kxtj9_odr_table[] = {											// ms,	range,	mode
 	{ 15,			ODR200F,	KXTJ9_RES_12BIT},			// 2.5,	6~ 10	FASTEST MODE , full power mode
 	{ 35,			ODR50F,		KXTJ9_RES_12BIT},			// 20,	21~30	GAME MODE
-	{ 70,			ODR25F,		KXTJ9_RES_12BIT},				// 70,	31~70	UI MODE
-	{ 250,			ODR12_5F,	KXTJ9_RES_12BIT},				// 160,	71~250	NORMAL MODE
-	{ 0xFFFFFFFF,	ODR12_5F,	KXTJ9_RES_12BIT},				// 160,	251~max	NO POLL
+	{ 70,			ODR25F,		KXTJ9_RES_12BIT},			// 70,	31~70	UI MODE
+	{ 250,			ODR12_5F,	KXTJ9_RES_12BIT},			// 160,	71~250	NORMAL MODE
+	{ 0xFFFFFFFF,	ODR12_5F,	KXTJ9_RES_12BIT},			// 160,	251~max	NO POLL
 //	{ 0xFFFFFFFF,		ODR3_125F,	KXTJ9_RES_8BIT},				// 320,	251~max	NO POLL
 };
 /*	default
@@ -210,9 +228,11 @@ struct kxtj9_data {
 	u8 data_ctrl;
 	u8 int_ctrl;
 // for enable motion detect , added by cheng_kao 2014.02.12 ++
+#ifdef KXTJ2_BUILD_MOTION_DETECT
 	u8 wufe_rate;
 	u8 wufe_timer;
 	u8 wufe_thres;
+#endif
 // for enable motion detect , added by cheng_kao 2014.02.12 --
 	atomic_t enabled;
 // added by cheng_kao 2013.06.01  for sensors calibration ++
@@ -223,20 +243,29 @@ struct kxtj9_data {
 	int suspend_resume_state;
 	int resume_enable;
 	int irq_status;
+	int irq_bypass;
+// counter for reset chip by cheng_kao 2014.07.01 ++
+	int reset_counter;
+// counter for reset chip by cheng_kao 2014.07.01 --
 #ifdef CONFIG_HAS_EARLYSUSPEND	
 	struct early_suspend kxtj9_early_suspendresume;
 #endif
 	int irq;
 // for enable motion detect , added by cheng_kao 2014.02.12 ++
+#ifdef KXTJ2_BUILD_MOTION_DETECT
 	int motion_detect_threshold_x;
 	int motion_detect_threshold_y;
 	int motion_detect_threshold_z;
 	int motion_detect_timer;
 	int chip_interrupt_mode;
-	int playing_game;
+#endif
+#ifdef KXTJ_SPIN_LOCK
+	spinlock_t lock;
+#endif
 // for enable motion detect , added by cheng_kao 2014.02.12 --
 };
 
+#ifdef KXTJ2_BUILD_MOTION_DETECT
 static int kxtj9_into_drdy_function(struct kxtj9_data *tj9)
 {
 	int result = 0;
@@ -306,31 +335,35 @@ static int kxtj9_into_motion_detect_function(struct kxtj9_data *tj9)
 
 	return result;
 }
+#endif
 
 
 static int kxtj9_reset_function(struct kxtj9_data *tj9)
 {
 	int result = 0;
 	tj9->ctrl_reg1 &= PC1_OFF;
-	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG2, 0x84); // SRST set to 1
+
+	/* ensure that PC1 is cleared before updating control register one and two*/
+	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
+//	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, 0);
+	if (result < 0){
+		result = 1;
+		return result;
+	}
+
+	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG2, 0x80); // SRST set to 1
 	if (result < 0){
 		printk("alp : kxtj9_reset_function : reset fail (%d)\n",result);
-		result = 1;
+		result = 2;
 		return result;
 	}
 	mdelay(50); // 50 ms
 
-	/* ensure that PC1 is cleared before updating control registers */
-	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, 0);
-	if (result < 0){
-		result = 3;
-		return result;
-	}
 	/* only write INT_CTRL_REG1 if in irq mode */
 	if (tj9->irq) {
 		result = i2c_smbus_write_byte_data(tj9->client,INT_CTRL1, tj9->int_ctrl);
 		if (result < 0){
-			result = 4;
+			result = 3;
 			return result;
 		}
 	}
@@ -339,7 +372,7 @@ static int kxtj9_reset_function(struct kxtj9_data *tj9)
 	tj9->ctrl_reg1 |= PC1_ON;
 	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG1, tj9->ctrl_reg1);
 	if (result < 0){
-		result = 5;
+		result = 4;
 		return result;
 	}
 
@@ -347,7 +380,7 @@ static int kxtj9_reset_function(struct kxtj9_data *tj9)
 	if (tj9->irq) {
 		result = i2c_smbus_read_byte_data(tj9->client, INT_REL);
 		if (result < 0){
-			result = 6;
+			result = 5;
 			return result;
 		}
 	}
@@ -391,19 +424,29 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 	rawdata_y = ( (acc_data[2]>>4) | (acc_data[3]<<4) );
 	rawdata_z = ( (acc_data[4]>>4) | (acc_data[5]<<4) );
 
+//	printk("alp.D : same value (%d), (%d), (%d)\n",rawdata_x, rawdata_y, rawdata_z);
+//	printk("alp.D : compare same value (%d), (%d), (%d)\n",g_kxtj_for_camera_x, g_kxtj_for_camera_y, g_kxtj_for_camera_z);
 	if( (g_kxtj_for_camera_x==rawdata_x)&&(g_kxtj_for_camera_y==rawdata_y)&&(g_kxtj_for_camera_z==rawdata_z) ){
-		printk("alp : the same rawdata!!!\n");
-		ireset = KXTJ9_RESET_FOR_SAME_RAWDATA;
+		tj9->reset_counter++;
+//		printk("alp.D : the same rawdata!!!(%d)\n",tj9->reset_counter);
+		if(tj9->reset_counter>KXTJ9_RESET_COUNTER_LIMIT){
+			ireset = KXTJ9_RESET_FOR_SAME_RAWDATA;
+			tj9->reset_counter=0;
+		}
+	}else{
+//		printk("alp.D : re-cali reset counter!!!\n");
+		tj9->reset_counter=0;
 	}
 
 	if( (rawdata_x==0)&&(rawdata_y==0)&&(rawdata_z==0) ){
-		printk("alp : the zero rawdata!!!\n");
+		printk("alp.D : the zero rawdata!!!\n");
 		ireset = KXTJ9_RESET_FOR_ZERO_RAWDATA;
+		tj9->reset_counter=0;
 	}
 
 	if(ireset!=KXTJ9_VALUE_FOR_NOT_NEED_RESET){
 		err=kxtj9_reset_function(tj9);
-		printk("alp :  kxtj9_reset_function : %d\n",err);		
+		printk("alp.D :  kxtj9_reset_function : %d\n",err);		
 	}
 
 // for calibration 2013.11.25 ++
@@ -466,19 +509,20 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 		break;
 
 		case KXTJ2_CHIP_LOCATION_SR_PF400CG : 
-		case KXTJ2_CHIP_LOCATION_SR_A400CG : 
+		case KXTJ2_CHIP_LOCATION_SR_A400CG :
+		case KXTJ2_CHIP_LOCATION_SR_ZC400CG :
 			if(g_KXTJ9_CLIBRATION_6_PLANES){
 				if( (tj9->accel_cal_sensitivity[0]==0)||(tj9->accel_cal_sensitivity[1]==0)||(tj9->accel_cal_sensitivity[2]==0) ){
 					reportdata_x = rawdata_x*(-1);
 					reportdata_y = rawdata_y;
 					reportdata_z = rawdata_z*(-1);
-					if(KXTJ9_DEBUG_MESSAGE) printk("alp : KXTJ2_CHIP_LOCATION_SR_PF400CG default\n");
+					if(KXTJ9_DEBUG_MESSAGE) printk("alp : KXTJ2_CHIP_LOCATION_SR_X400CG default\n");
 				}
 				else{
 					reportdata_x = (-1024)*(rawdata_x - tj9->accel_cal_offset[0])/tj9->accel_cal_sensitivity[0];
 					reportdata_y = 1024*(rawdata_y - tj9->accel_cal_offset[1])/tj9->accel_cal_sensitivity[1];
 					reportdata_z = (-1024)*(rawdata_z - tj9->accel_cal_offset[2])/tj9->accel_cal_sensitivity[2];
-					if(KXTJ9_DEBUG_MESSAGE) printk("alp : KXTJ2_CHIP_LOCATION_SR_PF400CG calibration\n");
+					if(KXTJ9_DEBUG_MESSAGE) printk("alp : KXTJ2_CHIP_LOCATION_SR_X400CG calibration\n");
 				}
 			}else{
 				reportdata_x = (rawdata_x - tj9->accel_cal_offset[0])*(-1);
@@ -522,6 +566,51 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 				if(KXTJ9_DEBUG_MESSAGE) printk("alp : KXTJ2_CHIP_LOCATION_ER_ME372CL calibration\n");
 			}
 		break;
+
+		case KXTJ2_CHIP_LOCATION_SR_FE380CG:
+			if( (tj9->accel_cal_sensitivity[0]==0)||(tj9->accel_cal_sensitivity[1]==0)||(tj9->accel_cal_sensitivity[2]==0) ){
+				reportdata_x = rawdata_y;
+				reportdata_y = rawdata_x;
+				reportdata_z = rawdata_z*(-1);
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_FE380CG_SR default\n");
+			}
+			else{
+				reportdata_x = 1024*(rawdata_y - tj9->accel_cal_offset[1])/tj9->accel_cal_sensitivity[1];
+				reportdata_y = 1024*(rawdata_x - tj9->accel_cal_offset[0])/tj9->accel_cal_sensitivity[0];
+				reportdata_z = (-1024)*(rawdata_z - tj9->accel_cal_offset[2])/tj9->accel_cal_sensitivity[2];
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_FE380CG_SR calibration\n");
+			}
+		break;
+
+		case KXTJ2_CHIP_LOCATION_SR_A450CG:
+			if( (tj9->accel_cal_sensitivity[0]==0)||(tj9->accel_cal_sensitivity[1]==0)||(tj9->accel_cal_sensitivity[2]==0) ){
+				reportdata_x = rawdata_y*(-1);
+				reportdata_y = rawdata_x*(-1);
+				reportdata_z = rawdata_z*(-1);
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_A450CG_SR default\n");
+			}
+			else{
+				reportdata_x = (-1024)*(rawdata_y - tj9->accel_cal_offset[1])/tj9->accel_cal_sensitivity[1];
+				reportdata_y = (-1024)*(rawdata_x - tj9->accel_cal_offset[0])/tj9->accel_cal_sensitivity[0];
+				reportdata_z = (-1024)*(rawdata_z - tj9->accel_cal_offset[2])/tj9->accel_cal_sensitivity[2];
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_A450CG_SR calibration\n");
+			}
+		break;
+
+		case KXTJ2_CHIP_LOCATION_SR_TX201LAF:
+			if( (tj9->accel_cal_sensitivity[0]==0)||(tj9->accel_cal_sensitivity[1]==0)||(tj9->accel_cal_sensitivity[2]==0) ){
+				reportdata_x = rawdata_x*(1);
+				reportdata_y = rawdata_y*(1);
+				reportdata_z = rawdata_z*(1);
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_TX201LAF_SR default\n");
+			}
+			else{
+				reportdata_x = (1024)*(rawdata_x - tj9->accel_cal_offset[0])/tj9->accel_cal_sensitivity[0];
+				reportdata_y = (1024)*(rawdata_y - tj9->accel_cal_offset[1])/tj9->accel_cal_sensitivity[1];
+				reportdata_z = (1024)*(rawdata_z - tj9->accel_cal_offset[2])/tj9->accel_cal_sensitivity[2];
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : LOCATION_TX201LAF_SR calibration\n");
+			}
+		break;
 	}
 
 	if(KXTJ9_DEBUG_MESSAGE) printk("report_acceleration data : (%d), (%d), (%d)\n",reportdata_x, reportdata_y, reportdata_z);
@@ -534,48 +623,44 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 	input_sync(tj9->input_dev);
 
 // for enable motion detect , added by cheng_kao 2014.02.12 ++
-	if(tj9->motion_detect_timer==-1){
-		if(KXTJ9_DEBUG_MESSAGE) printk("alp : motion_detect_timer init!!\n");
-		tj9->motion_detect_timer=0;
-		tj9->motion_detect_threshold_x = reportdata_x;
-		tj9->motion_detect_threshold_y = reportdata_y;
-		tj9->motion_detect_threshold_z = reportdata_z;
-	}
+#ifdef KXTJ2_BUILD_MOTION_DETECT
+	if(!bypass_for_eng_mode){
+		if(tj9->motion_detect_timer==-1){
+			if(KXTJ9_DEBUG_MESSAGE) printk("alp : motion_detect_timer init!!\n");
+			tj9->motion_detect_timer=0;
+			tj9->motion_detect_threshold_x = reportdata_x;
+			tj9->motion_detect_threshold_y = reportdata_y;
+			tj9->motion_detect_threshold_z = reportdata_z;
+		}
 
-	thres_x_low = tj9->motion_detect_threshold_x-1024*MOTION_DETECT_PERCENT/100;
-	thres_x_high = tj9->motion_detect_threshold_x+1024*MOTION_DETECT_PERCENT/100;
-	thres_y_low = tj9->motion_detect_threshold_y-1024*MOTION_DETECT_PERCENT/100;
-	thres_y_high = tj9->motion_detect_threshold_y+1024*MOTION_DETECT_PERCENT/100;
-	thres_z_low = tj9->motion_detect_threshold_z-1024*MOTION_DETECT_PERCENT/100;;
-	thres_z_high = tj9->motion_detect_threshold_z+1024*MOTION_DETECT_PERCENT/100;;
-	if(KXTJ9_DEBUG_MESSAGE) printk("alp : thres_x : (%d),(%d) ; thres_y : (%d),(%d) ; thres_z : (%d),(%d)\n",thres_x_low,thres_x_high,thres_y_low,thres_y_high,thres_z_low,thres_z_high);
+		thres_x_low = tj9->motion_detect_threshold_x-1024*MOTION_DETECT_PERCENT/100;
+		thres_x_high = tj9->motion_detect_threshold_x+1024*MOTION_DETECT_PERCENT/100;
+		thres_y_low = tj9->motion_detect_threshold_y-1024*MOTION_DETECT_PERCENT/100;
+		thres_y_high = tj9->motion_detect_threshold_y+1024*MOTION_DETECT_PERCENT/100;
+		thres_z_low = tj9->motion_detect_threshold_z-1024*MOTION_DETECT_PERCENT/100;;
+		thres_z_high = tj9->motion_detect_threshold_z+1024*MOTION_DETECT_PERCENT/100;;
+		if(KXTJ9_DEBUG_MESSAGE) printk("alp : thres_x : (%d),(%d) ; thres_y : (%d),(%d) ; thres_z : (%d),(%d)\n",thres_x_low,thres_x_high,thres_y_low,thres_y_high,thres_z_low,thres_z_high);
 
-	if( (reportdata_x>thres_x_low)&&(reportdata_x<thres_x_high) && (reportdata_y>thres_y_low)&&(reportdata_y<thres_y_high) && (reportdata_z>thres_z_low)&&(reportdata_z<thres_z_high) ) {
-		if(tj9->playing_game==0){
+		if( (reportdata_x>thres_x_low)&&(reportdata_x<thres_x_high) && (reportdata_y>thres_y_low)&&(reportdata_y<thres_y_high) && (reportdata_z>thres_z_low)&&(reportdata_z<thres_z_high) ) {
 			if(KXTJ9_DEBUG_MESSAGE) printk("alp : motion_detect_timer count=%d !!\n",tj9->motion_detect_timer);
 			tj9->motion_detect_timer++;
 		}else{
-			if(tj9->motion_detect_timer!=0)
-				tj9->motion_detect_timer = 0;
+			tj9->motion_detect_timer=0;
+			tj9->motion_detect_threshold_x = reportdata_x;
+			tj9->motion_detect_threshold_y = reportdata_y;
+			tj9->motion_detect_threshold_z = reportdata_z;
 		}
-	}else{
-		tj9->motion_detect_timer=0;
-		tj9->motion_detect_threshold_x = reportdata_x;
-		tj9->motion_detect_threshold_y = reportdata_y;
-		tj9->motion_detect_threshold_z = reportdata_z;
-	}
-	if(tj9->chip_interrupt_mode==INT_MODE_WUFE){
-		if(KXTJ9_DEBUG_MESSAGE) printk("alp : into the drdy method!!\n");
-		err=kxtj9_into_drdy_function(tj9);
-		if(err<0){
-			printk("alp :  kxtj9_into_drdy_function : %d\n",err);	
-		}else{
-			tj9->chip_interrupt_mode=INT_MODE_DRDY;
-			if(KXTJ9_DEBUG_MESSAGE) printk("alp : start drdy mode!!\n");
+		if(tj9->chip_interrupt_mode==INT_MODE_WUFE){
+			if(KXTJ9_DEBUG_MESSAGE) printk("alp : into the drdy method!!\n");
+			err=kxtj9_into_drdy_function(tj9);
+			if(err<0){
+				printk("alp :  kxtj9_into_drdy_function : %d\n",err);	
+			}else{
+				tj9->chip_interrupt_mode=INT_MODE_DRDY;
+				if(KXTJ9_DEBUG_MESSAGE) printk("alp : start drdy mode!!\n");
+			}
 		}
-	}
 
-	if(tj9->playing_game==0){
 		if(tj9->motion_detect_timer > MOTION_DETECT_COUNT){
 			if(tj9->chip_interrupt_mode==INT_MODE_DRDY){
 				if(KXTJ9_DEBUG_MESSAGE) printk("alp : into the motion detect method!!\n");
@@ -590,6 +675,7 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 			}
 		}
 	}
+#endif
 // for enable motion detect , added by cheng_kao 2014.02.12 --	
 
 }
@@ -631,6 +717,13 @@ static irqreturn_t kxtj9_isr(int irq, void *dev)
 	int err;
 
 	/* data ready is the only possible interrupt type */
+#ifdef  KXTJ_BYPASS_IRQ
+	if(tj9->irq_bypass==1){
+		printk("alp : bypass irq return !!\n");
+		return IRQ_HANDLED;
+	}
+#endif
+
 	kxtj9_report_acceleration_data(tj9);
 	err = i2c_smbus_read_byte_data(tj9->client, INT_REL);
 	if (err < 0){
@@ -723,9 +816,14 @@ static void kxtj9_device_power_off(struct kxtj9_data *tj9)
 static int kxtj9_enable(struct kxtj9_data *tj9)
 {
 	int err;
+	unsigned long flags;
+//#ifdef  KXTJ_MUTEX_LOCK
+//	struct input_dev *input_dev = tj9->input_dev;
+//#endif
+
 	if(KXTJ9_DEBUG_MESSAGE) printk("alp:kxtj9_enable ++\n");
 
-	if(tj9->suspend_resume_state==1){
+	if(tj9->suspend_resume_state==KXTJ9_ST_EARLY_SUSPEND){
 		printk("alp : kxtj9_enable  already suspend return !\n");
 		tj9->resume_enable=KXTJ9_RESUME_MISSENABLE;
 		return 0;
@@ -734,11 +832,6 @@ static int kxtj9_enable(struct kxtj9_data *tj9)
 	if(atomic_read(&tj9->enabled)==1){
 		printk("alp : kxtj9_enable  already enable , return 0\n");
 		return 0;
-	}
-	
-	if(tj9->irq_status==0){
-		enable_irq(tj9->irq);
-		tj9->irq_status = 1;
 	}
 
 	/* ensure that PC1 is cleared before updating control registers */
@@ -773,7 +866,7 @@ static int kxtj9_enable(struct kxtj9_data *tj9)
 	if (tj9->irq) {
 		err = i2c_smbus_read_byte_data(tj9->client, INT_REL);
 		if (err < 0) {
-			if(KXTJ9_DEBUG_MESSAGE) printk("alp : error clearing interrupt: %d\n",err)	;
+			printk("alp.D : error clearing interrupt: %d\n",err);
 			goto fail;
 		}
 	}
@@ -788,16 +881,20 @@ fail:
 
 static void kxtj9_disable(struct kxtj9_data *tj9)
 {
+	unsigned long flags;
+//#ifdef  KXTJ_MUTEX_LOCK
+//	struct input_dev *input_dev = tj9->input_dev;
+//#endif
+
+	if( (tj9->suspend_resume_state == KXTJ9_ST_EARLY_SUSPEND)&&(tj9->resume_enable ==KXTJ9_RESUME_ENABLE) ){
+		tj9->resume_enable = KXTJ9_RESUME_DISABLE;
+		printk("alp : kxtj9_disable  suspend and re-disable by AP !!\n");
+	}
+		
 	if(atomic_read(&tj9->enabled)==0){
 		printk("alp : kxtj9_disable  already disable , return !!\n");
 		return ;
 	}
-
-	if(tj9->irq_status==1){
-		disable_irq(tj9->irq);
-		tj9->irq_status = 0;
-	}
-
 	kxtj9_device_power_off(tj9);
 	atomic_set(&tj9->enabled, 0);
 }
@@ -855,7 +952,7 @@ static void kxtj9_input_close(struct input_dev *dev)
 	kxtj9_disable(tj9);
 }
 
-static void __devinit kxtj9_init_input_device(struct kxtj9_data *tj9,
+static void kxtj9_init_input_device(struct kxtj9_data *tj9,
 					      struct input_dev *input_dev)
 {
 	if(KXTJ9_DEBUG_MESSAGE) printk("alp :  kxtj9_init_input_device ++\n");
@@ -872,7 +969,7 @@ static void __devinit kxtj9_init_input_device(struct kxtj9_data *tj9,
 	if(KXTJ9_DEBUG_MESSAGE) printk("alp :  kxtj9_init_input_device --\n");
 }
 
-static int __devinit kxtj9_setup_input_device(struct kxtj9_data *tj9)
+static int  kxtj9_setup_input_device(struct kxtj9_data *tj9)
 {
 	struct input_dev *input_dev;
 	int err;
@@ -957,7 +1054,7 @@ static ssize_t kxtj9_set_message(struct device *dev,
 		break;
 
 		case 5 :
-			g_i2c5_reset_by_gsensor=1;
+//			g_i2c5_reset_by_gsensor=1;
 			printk("alp : reset  i2c-5 !!!\n");
 		break;
 
@@ -999,13 +1096,6 @@ static ssize_t kxtj9_set_poll(struct device *dev, struct device_attribute *attr,
 		printk("alp : kxtj9_set_poll buf (%s)\n",buf);
 	if(KXTJ9_DEBUG_MESSAGE) 
 		printk("alp : last_poll_interval (%u), New_poll(%d)\n",tj9->last_poll_interval,interval);
-	if(interval<KXTJ9_NORMAL_TIME){
-		tj9->playing_game=1;
-		printk("alp.D : into game mode time=(%u)\n",interval);
-	}else{
-		tj9->playing_game=0;
-		printk("alp.D : into normal mode time=(%u)\n",interval);
-	}
 
 	// Lock the device to prevent races with open/close (and itself)
 	mutex_lock(&input_dev->mutex);
@@ -1033,6 +1123,18 @@ static ssize_t kxtj9_enable_store(struct device *dev,
 	struct i2c_client *client = to_i2c_client(dev);
 	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
 	int val = simple_strtoul(buf, NULL, 10);
+
+	if(tj9->suspend_resume_state==KXTJ9_ST_EARLY_SUSPEND){
+		printk("alp : kxtj9_enable_store  already suspend return miss status : (%d)!\n",val);
+//		dump_stack();
+		if(val==KXTJ9_RESUME_ENABLE)
+			tj9->resume_enable=KXTJ9_RESUME_MISSENABLE;
+		if(val==KXTJ9_RESUME_DISABLE)
+			tj9->resume_enable=KXTJ9_RESUME_DISABLE;
+		msleep(150);
+		return 0;
+	}
+
 	switch(val){
 		case 0:
 			kxtj9_disable(tj9);
@@ -1085,6 +1187,19 @@ static ssize_t get_rawdata(struct device *dev, struct device_attribute *devattr,
 	
 	retval = atomic_read(&tj9->enabled);
 	printk("alp : get_rawdata enable state=(%d)\n",retval);
+
+	if(tj9->suspend_resume_state==KXTJ9_ST_EARLY_SUSPEND){
+		printk("alp : get_rawdata  already suspend return miss action!\n");
+		data[0]=g_kxtj_for_calibration[0];
+		data[1]=g_kxtj_for_calibration[1];
+		data[2]=g_kxtj_for_calibration[2];	
+		data[3]=g_kxtj_for_calibration[3];
+		data[4]=g_kxtj_for_calibration[4];
+		data[5]=g_kxtj_for_calibration[5];
+		tj9->resume_enable=KXTJ9_RESUME_MISSENABLE;
+		return 0;
+	}
+
 	if(retval==0){
 		retval = kxtj9_enable(tj9);
 		mdelay(100);
@@ -1139,8 +1254,8 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 	fp=filp_open(GSENSOR_CALIBRATION_FILE_PATH,O_RDWR|O_CREAT,S_IRWXU|S_IRWXG|S_IRWXO);
 	if(IS_ERR(fp)){
 		printk(KERN_INFO "filp_open fail\n");
-		retval = -1;
-		return retval;
+		retval = 0;
+		return sprintf(buf, "%d\n",retval);	
 	}
 	ilen = fp->f_op->read(fp,tmp_data,128,&fp->f_pos);
 	printk(KERN_INFO "KXTJ9_CONFIG_FILE %d\n",ilen);
@@ -1206,23 +1321,29 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 		//for X axis
 		tj9->accel_cal_sensitivity[0] = (tj9->accel_cal_data[2]-tj9->accel_cal_data[3])/2;
 		tj9->accel_cal_offset[0] = tj9->accel_cal_data[3]+tj9->accel_cal_sensitivity[0];
-		if( (tj9->accel_cal_sensitivity[0]==0) ||(tj9->accel_cal_sensitivity[0]>up_calibration_limit) || (tj9->accel_cal_sensitivity[0]<down_calibration_limit))
+//		disable limit base on Ver. 4
+//		if( (tj9->accel_cal_sensitivity[0]==0) ||(tj9->accel_cal_sensitivity[0]>up_calibration_limit) || (tj9->accel_cal_sensitivity[0]<down_calibration_limit))
+		if(tj9->accel_cal_sensitivity[0]==0)
 			tj9->accel_cal_sensitivity[0]=1024;
 
 		//for Y axis
 		tj9->accel_cal_sensitivity[1] = (tj9->accel_cal_data[4]-tj9->accel_cal_data[5])/2;
 		tj9->accel_cal_offset[1] = tj9->accel_cal_data[5]+tj9->accel_cal_sensitivity[1];
-		if( (tj9->accel_cal_sensitivity[1]==0) ||(tj9->accel_cal_sensitivity[1]>up_calibration_limit) || (tj9->accel_cal_sensitivity[1]<down_calibration_limit))
+//		disable limit base on Ver. 4
+//		if( (tj9->accel_cal_sensitivity[1]==0) ||(tj9->accel_cal_sensitivity[1]>up_calibration_limit) || (tj9->accel_cal_sensitivity[1]<down_calibration_limit))
+		if(tj9->accel_cal_sensitivity[1]==0)
 			tj9->accel_cal_sensitivity[1]=1024;
 
 		//for Z axis
 		tj9->accel_cal_sensitivity[2] = (tj9->accel_cal_data[0]-tj9->accel_cal_data[1])/2;
 		tj9->accel_cal_offset[2] = tj9->accel_cal_data[1]+tj9->accel_cal_sensitivity[2];
-		if( (tj9->accel_cal_sensitivity[2]==0) ||(tj9->accel_cal_sensitivity[2]>up_calibration_limit) || (tj9->accel_cal_sensitivity[2]<down_calibration_limit))
+//		disable limit base on Ver. 4
+//		if( (tj9->accel_cal_sensitivity[2]==0) ||(tj9->accel_cal_sensitivity[2]>up_calibration_limit) || (tj9->accel_cal_sensitivity[2]<down_calibration_limit))
+		if(tj9->accel_cal_sensitivity[2]==0)
 			tj9->accel_cal_sensitivity[2]=1024;
 	}else{
-		// just only for PF400CG adn A400CG
-		if( (g_ilocation == KXTJ2_CHIP_LOCATION_SR_PF400CG) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_A400CG) ){
+		// for PF400CG, A400CG, A450CG, ME372CL,ZC400CG
+		if( (g_ilocation == KXTJ2_CHIP_LOCATION_SR_PF400CG) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_A400CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_SR_A450CG) ||(g_ilocation == KXTJ2_CHIP_LOCATION_ER_ME372CL) || (g_ilocation == KXTJ2_CHIP_LOCATION_SR_ZC400CG) ){
 			//for X axis
 			tj9->accel_cal_offset[0]=tj9->accel_cal_data[1];
 			if( (tj9->accel_cal_offset[0]<up_calibration_limit) && (tj9->accel_cal_offset[0]>down_calibration_limit) )
@@ -1238,15 +1359,21 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 
 			//for Z axis
 			tj9->accel_cal_offset[2]=tj9->accel_cal_data[5];
-			if(tj9->accel_cal_offset[2]>0){
-				if( (tj9->accel_cal_offset[2]>up_calibration_limit) ||(tj9->accel_cal_offset[2]<down_calibration_limit) )
-					tj9->accel_cal_offset[2]=0;
-				else
+			if(tj9->accel_cal_offset[2]==0){
+				tj9->accel_cal_offset[2]=0;
+				printk(KERN_INFO "alp : z-axiz is zero!!\n" );
+			}
+			else if(tj9->accel_cal_offset[2]>0){
+//	disable limit base on Ver. 4
+//				if( (tj9->accel_cal_offset[2]>up_calibration_limit) ||(tj9->accel_cal_offset[2]<down_calibration_limit) )
+//					tj9->accel_cal_offset[2]=0;
+//				else
 					tj9->accel_cal_offset[2]=tj9->accel_cal_offset[2]-1024;
 			}else{
-				if( (tj9->accel_cal_offset[2]<neg_up_calibration_limit) || (tj9->accel_cal_offset[2]>neg_down_calibration_limit) )
-					tj9->accel_cal_offset[2]=0;
-				else
+//	disable limit base on Ver. 4
+//				if( (tj9->accel_cal_offset[2]<neg_up_calibration_limit) || (tj9->accel_cal_offset[2]>neg_down_calibration_limit) )
+//					tj9->accel_cal_offset[2]=0;
+//				else
 					tj9->accel_cal_offset[2]=tj9->accel_cal_offset[2]+1024;
 			}
 		}
@@ -1259,7 +1386,9 @@ static ssize_t reset_kxtj9_calibration(struct device *dev, struct device_attribu
 		printk("accel_cal_sensitivity : (%d), (%d), (%d)\n",tj9->accel_cal_sensitivity[0],tj9->accel_cal_sensitivity[1],tj9->accel_cal_sensitivity[2] );
 		printk("accel_cal_offset : (%d), (%d), (%d)\n",tj9->accel_cal_offset[0],tj9->accel_cal_offset[1],tj9->accel_cal_offset[2] );
 	}
-	return retval;
+
+	return sprintf(buf, "%d\n",retval);	
+//	return retval;
 }
 
 static ssize_t read_kxtj9_resolution(struct device *dev,
@@ -1346,9 +1475,12 @@ static ssize_t write_kxtj9_wufe(struct device *dev,
 			printk("alp : not support !!!\n");
 		break;
 	}
+#ifdef KXTJ2_BUILD_MOTION_DETECT
 	tj9->wufe_timer = wufe_data[0];
 	tj9->wufe_thres = wufe_data[1];
-
+#else
+	printk("alp.D. : not support motion mode for wufe_data!!!\n");
+#endif
 	// set the chip timer
 	result = i2c_smbus_write_byte_data(tj9->client, WAKEUP_TIMER, wufe_data[0]);
 	if (result < 0){
@@ -1418,7 +1550,11 @@ static ssize_t write_kxtj9_reg2_rate(struct device *dev,
 			printk("alp : not support !!!\n");
 		break;
 	}
+#ifdef KXTJ2_BUILD_MOTION_DETECT
 	tj9->wufe_rate = data;
+#else
+	printk("alp.D. : not support motion mode for wufe_rate!!!\n");
+#endif
 	// set the chip wufe rate
 	result = i2c_smbus_write_byte_data(tj9->client, CTRL_REG2, data);
 	if (result < 0){
@@ -1520,7 +1656,7 @@ static void kxtj9_polled_input_close(struct input_polled_dev *dev)
 	kxtj9_disable(tj9);
 }
 
-static int __devinit kxtj9_setup_polled_device(struct kxtj9_data *tj9)
+static int kxtj9_setup_polled_device(struct kxtj9_data *tj9)
 {
 	int err;
 	struct input_polled_dev *poll_dev;
@@ -1572,7 +1708,7 @@ static inline void kxtj9_teardown_polled_device(struct kxtj9_data *tj9)
 
 #endif
 
-static int __devinit kxtj9_vertify(struct kxtj9_data *tj9)
+static int kxtj9_vertify(struct kxtj9_data *tj9)
 {
 	int retval=0;
 	if(KXTJ9_DEBUG_MESSAGE) printk("alp : kxtj9_verify ++\n");
@@ -1634,10 +1770,14 @@ static void kxtj9_early_suspend(struct early_suspend *h)
 	int status=0;
 
 	mutex_lock(&input_dev->mutex);
-	tj9->suspend_resume_state = 1;
+	tj9->suspend_resume_state = KXTJ9_ST_EARLY_SUSPEND;
+#ifdef  KXTJ_BYPASS_IRQ
+	tj9->irq_bypass=1;
+#endif
 	// update enable status
 	status = 	tj9->ctrl_reg1 >> 7;
 	printk("alp : kxtj9_early_suspend enable(%d)\n",status);
+	kxtj9_disable(tj9);
 	if(status==KXTJ9_RESUME_ENABLE){
 		printk("alp : kxtj, need to enable after resume!\n");
 		tj9->resume_enable = KXTJ9_RESUME_ENABLE;
@@ -1645,12 +1785,30 @@ static void kxtj9_early_suspend(struct early_suspend *h)
 	else{
 		tj9->resume_enable = KXTJ9_RESUME_DISABLE;
 	}
-//	if(tj9->irq_status==1){
-//		disable_irq(tj9->irq);
-//		tj9->irq_status=0;
-//	}
-	kxtj9_disable(tj9);
 	mutex_unlock(&input_dev->mutex);
+#ifdef  KXTJ_SPIN_LOCK
+	printk("alp.D : disbale use the spin_lock_irqsave !!\n");
+	spin_lock_irqsave(&tj9->lock,flags);
+#endif
+#ifdef  KXTJ_MUTEX_LOCK
+	printk("alp.D : disbale use the mutex_lock !!\n");
+	mutex_lock(&input_dev->mutex);
+#endif
+#ifdef  KXTJ_CONTROL_IRQ
+	if(tj9->irq_status==1){
+//		mdelay(10);
+		disable_irq(tj9->irq);
+		tj9->irq_status = 0;
+		printk("alp.D : disable the irq \n");
+	}
+#endif
+#ifdef  KXTJ_MUTEX_LOCK
+	mutex_unlock(&input_dev->mutex);
+#endif
+#ifdef  KXTJ_SPIN_LOCK
+	spin_unlock_irqrestore(&tj9->lock,flags);
+#endif
+
 	printk("alp : kxtj9_early_suspend irq(%d)\n",tj9->irq);
 }
 
@@ -1659,24 +1817,45 @@ static void kxtj9_late_resume(struct early_suspend *h)
 	struct kxtj9_data *tj9 = container_of(h,struct kxtj9_data,kxtj9_early_suspendresume);
 	struct input_dev *input_dev = tj9->input_dev;
 
+#ifdef  KXTJ_SPIN_LOCK
+	printk("alp.D : enable use the spin_lock_irqsave !!\n");
+	spin_lock_irqsave(&tj9->lock,flags);
+#endif
+#ifdef  KXTJ_MUTEX_LOCK
+	printk("alp.D : enable use the mutex_lock !!\n");
 	mutex_lock(&input_dev->mutex);
-	tj9->suspend_resume_state = 0;
+#endif
+#ifdef  KXTJ_CONTROL_IRQ
+	if(tj9->irq_status==0){
+		enable_irq(tj9->irq);
+		tj9->irq_status = 1;
+		printk("alp.D : enable the irq \n");
+	}
+#endif
+#ifdef  KXTJ_MUTEX_LOCK
+	mutex_unlock(&input_dev->mutex);
+#endif
+#ifdef  KXTJ_SPIN_LOCK
+	spin_unlock_irqrestore(&tj9->lock,flags);
+#endif
+
+	mutex_lock(&input_dev->mutex);
+	tj9->suspend_resume_state = KXTJ9_ST_LATE_RESUME;
 	if( (tj9->resume_enable==KXTJ9_RESUME_ENABLE)||(tj9->resume_enable==KXTJ9_RESUME_MISSENABLE) ){
 		kxtj9_enable(tj9);
-//		if(tj9->irq_status==0){
-//			enable_irq(tj9->irq);
-//			tj9->irq_status = 1;
-//		}
 		printk("alp : kxtj9_late_resume enable\n");
 	}else
 		printk("alp : kxtj9_late_resume pass enable\n");
+#ifdef  KXTJ_BYPASS_IRQ
+	tj9->irq_bypass=0;
+#endif
 	mutex_unlock(&input_dev->mutex);
 	printk("alp : kxtj9_late_resume irq(%d)\n",tj9->irq);
 }
 #endif
 
 
-static int __devinit kxtj9_probe(struct i2c_client *client,
+static int kxtj9_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
 {
 	struct kxtj9_platform_data *pdata = client->dev.platform_data;
@@ -1723,7 +1902,10 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 
 //	if(KXTJ9_DEBUG_MESSAGE) 
 		printk("alp : irq=%d\n",tj9->irq);
-	gpio = 60;//pdata->gpio;
+	gpio = gpio_kxtj2;//pdata->gpio;
+#ifdef CONFIG_TX201LAF
+	gpio = gpio_invensense;//pdata->gpio;
+#endif
 	err = gpio_request(gpio,"accel_kxtj9");
 	err = gpio_direction_input(gpio);
 	tj9->irq = gpio_to_irq(gpio);
@@ -1737,7 +1919,11 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, tj9);
 
 	// tj9->ctrl_reg1 = tj9->pdata.res_12bit | tj9->pdata.g_range;
-    tj9->ctrl_reg1 |= RES_12bit;
+	#ifdef CONFIG_ME372CG
+            tj9->ctrl_reg1 |= RES_8bit;
+	#else
+            tj9->ctrl_reg1 |= RES_12bit;
+	#endif
 
 	tj9->last_poll_interval = tj9->pdata.init_interval;
 	printk("alp : init reg1=%d \n",tj9->ctrl_reg1);
@@ -1751,11 +1937,11 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 		if (err)
 			goto err_pdata_exit;
 
-//		err = request_threaded_irq(tj9->irq, NULL, kxtj9_isr,
-//					   IRQF_TRIGGER_RISING |
-//					   IRQF_ONESHOT |
-//					   "kxtj9-irq", tj9);
-		err = request_threaded_irq(tj9->irq, NULL, kxtj9_isr,IRQF_TRIGGER_RISING , "kxtj9-irq", tj9);
+		err = request_threaded_irq(tj9->irq, NULL, kxtj9_isr,
+					   IRQF_TRIGGER_RISING |
+					   IRQF_ONESHOT,
+					   "kxtj9-irq", tj9);
+//		err = request_threaded_irq(tj9->irq, NULL, kxtj9_isr,IRQF_TRIGGER_RISING , "kxtj9-irq", tj9);
 		if (err) {
 			dev_err(&client->dev, "request irq failed: %d\n", err);
 			goto err_destroy_input;
@@ -1817,21 +2003,50 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 	g_ilocation = KXTJ2_CHIP_LOCATION_SR_A400CG;
 #endif
 
+#ifdef CONFIG_FE380CG
+	g_ilocation = KXTJ2_CHIP_LOCATION_SR_FE380CG;
+#endif
+
+#ifdef CONFIG_A450CG
+	g_ilocation = KXTJ2_CHIP_LOCATION_SR_A450CG;
+#endif
+
+#ifdef CONFIG_TX201LAF
+	g_ilocation = KXTJ2_CHIP_LOCATION_SR_TX201LAF;
+#endif
+
+#ifdef CONFIG_ZC400CG
+	g_ilocation = KXTJ2_CHIP_LOCATION_SR_ZC400CG;
+#endif
+
 // for enable motion detect , added by cheng_kao 2014.02.12 ++
+#ifdef KXTJ2_BUILD_MOTION_DETECT
+	if(build_version==1){	// 1:eng ; 2:user ; 3:userdebug 
+		bypass_for_eng_mode = true;
+		printk("alp.D. : kxtj9 G-sensor for eng mode !!\n");
+	}
 	tj9->motion_detect_threshold_x=0;
 	tj9->motion_detect_threshold_y=0;
 	tj9->motion_detect_threshold_z=0;
 	tj9->motion_detect_timer=-1;	// init counter
 	tj9->chip_interrupt_mode=INT_MODE_DRDY;
-	tj9->wufe_rate=WUFE50F;		// 	rate
+	tj9->wufe_rate=WUFE25F;		// 	rate
 	tj9->wufe_timer=0x01;			//	1 / rate = delay (sec)
 	tj9->wufe_thres=0x01;			//	counts 16 = 1g
+#else
+	printk("alp.D. : kxtj2 G-sensor disable motion detect mode !!\n");
+#endif
 // for enable motion detect , added by cheng_kao 2014.02.12 --
 
-	tj9->suspend_resume_state = 0;
+	tj9->suspend_resume_state = KXTJ9_ST_LATE_RESUME;
 	tj9->resume_enable = 0;
 	tj9->irq_status=1;
+	tj9->irq_bypass=0;
 	printk("alp : kxtj9_probe (%d) --\n", g_ilocation);
+
+#ifdef  KXTJ_SPIN_LOCK
+	spin_lock_init(&tj9->lock);
+#endif
 
 	return 0;
 
@@ -1847,7 +2062,7 @@ err_pdata_exit:
 	return err;
 }
 
-static int __devexit kxtj9_remove(struct i2c_client *client)
+static int kxtj9_remove(struct i2c_client *client)
 {
 	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
 
@@ -1921,7 +2136,7 @@ static struct i2c_driver kxtj9_driver = {
 		.pm	= &kxtj9_pm_ops,
 	},
 	.probe		= kxtj9_probe,
-	.remove		= __devexit_p(kxtj9_remove),
+	.remove		= kxtj9_remove,
 	.id_table	= kxtj9_id,
 };
 
@@ -1934,7 +2149,11 @@ module_init(kxtj9_init);
 
 static void __exit kxtj9_exit(void)
 {
-	gpio_free(gpio_line);
+#ifdef CONFIG_TX201LAF
+	gpio_free(gpio_invensense);
+#else
+	gpio_free(gpio_kxtj2);
+#endif	
 	i2c_del_driver(&kxtj9_driver);
 }
 module_exit(kxtj9_exit);

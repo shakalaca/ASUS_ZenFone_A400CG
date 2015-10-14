@@ -22,15 +22,19 @@
 #include <linux/sysfs.h>
 
 #if defined(CONFIG_PF400CG) || defined(CONFIG_A400CG)
-#include "ug31xx_ggb_data_PF400CG_PR2_20140506_125236.h"
-#include "ug31xx_ggb_data_PF400CG_2ND_20140506_125657.h"
-#include "ug31xx_ggb_data_A400CG_DEF_20140506_123742.h"
-#include "ug31xx_ggb_data_A400CG_3RD_20140506_124040.h"
-#else // ME175CG && A450CG
+#include "ug31xx_ggb_data_PF400CG_PR2_20140515_160903.h"
+#include "ug31xx_ggb_data_PF400CG_2ND_20140515_161336.h"
+#include "ug31xx_ggb_data_A400CG_DEF_20140515_155210.h"
+#include "ug31xx_ggb_data_A400CG_3RD_20140515_154717.h"
+#else // ME175CG && A450CG && FE170CSG
 #if defined(CONFIG_A450CG)
-#include "ug31xx_ggb_data_A450CG_DEF_20140506_124636.h"
+#include "ug31xx_ggb_data_A450CG_DEF_20140515_155911.h"
+#else // ME175CG && FE170CSG
+#if defined(CONFIG_FE170CSG)
+#include "ug31xx_ggb_data_FE170CSG_DEF_20140609_111700.h"
 #else // ME175CG
-#include "ug31xx_ggb_data_ME175CG_SANYO_20140310_171120.h"
+#include "ug31xx_ggb_data_ME175CG_SANYO_20140515_162109.h"
+#endif
 #endif
 #endif
 #include "uG31xx_Platform.h"
@@ -144,7 +148,8 @@ struct ug31xx_gauge {
 	char effective_board_offset[8];
 	char daemon_ver[UG31XX_USER_DAEMON_VER_LENGTH];
 	int daemon_uevent_count;
-    struct hrtimer kbo_timer;
+  struct hrtimer kbo_timer;
+  int force_fc_time;
 };
 
 static void batt_info_update_work_func(struct work_struct *work);
@@ -196,6 +201,8 @@ static void batt_info_update_work_func(struct work_struct *work);
 #define UG31XX_IOCTL_KBO_STOP                 _IO(UG31XX_IOC_MAGIC, 36)
 #define UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO    _IO(UG31XX_IOC_MAGIC, 37)
 #define UG31XX_IOCTL_CURRENT_NOW              _IOWR(UG31XX_IOC_MAGIC, 38, unsigned char *)
+#define UG31XX_IOCTL_RESET_TOTALLY      			_IO(UG31XX_IOC_MAGIC, 39)
+#define UG31XX_IOCTL_CMD(cmd)         (((_IOC_DIR(cmd)) << 16) | (_IOC_NR(cmd)))
 
 #endif	///< end of UG31XX_MISC_DEV
 
@@ -294,6 +301,8 @@ static unsigned char ioctl_data_trans_buf[UG31XX_IOCTL_TRANS_DATA_SIZE];
 static int retry_cnt = 0;
 static int kbo_cnt = 0;
 static int op_actions = UG31XX_OP_NORMAL;
+static int force_fc_current_thrd = 0;
+static int force_fc_timeout = 0;
 static bool unknown_battery = false;
 bool get_unknown_battery() { return unknown_battery; }
 EXPORT_SYMBOL(get_unknown_battery);
@@ -422,17 +431,21 @@ static void set_project_config(void)
 	else
 		charge_termination_current = 105;
 #endif
-#else	///< ME175CG & A450CG
+#else	///< ME175CG & A450CG & FE170CSG
 #if defined(CONFIG_A450CG)
 	ggb_board_offset = 7;
 	ntc_offset = 12;
 	standby_current = 3;
 	ggb_board_gain = 915;
 	charge_termination_current = 135;
-#else	///< ME175CG
+#else	///< ME175CG & FE170CSG
+#if defined(CONFIG_FE170CSG)
+	standby_current = 3;
+#else ///< ME175CG
 	ggb_board_offset = 18;
 	standby_current = 3;
 	ggb_board_gain = 955;
+#endif
 #endif
 #endif
 }
@@ -469,9 +482,20 @@ static void update_project_config(void)
 	}
 }
 
+#if !defined(CONFIG_FE170CSG)
+#define smb3xx_get_charger_type get_charger_type
+#endif
+
 static bool is_charging_full(void)
 {
   int charger_status;
+
+  if((ug31->force_fc_time > force_fc_timeout) &&
+     (cur_cable_status != UG31XX_NO_CABLE))
+  {
+    GAUGE_notice("[%s]: force fc reached.\n", __func__);
+    return (true);
+  }
 
   charger_status = smb345_get_charging_status();
   if (charger_status == POWER_SUPPLY_STATUS_FULL)
@@ -564,31 +588,38 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
   int backup_size;
   unsigned char backup_file[256];
 
-  switch (cmd)
+  /// [AT-PM] : Check UG31XX_IOC_MAGIC ; 06/09/2014
+  if(_IOC_TYPE(cmd) != UG31XX_IOC_MAGIC)
   {
-    case UG31XX_IOCTL_RESET:
+    UG31_LOGE("[%s]: UG31XX_IOC_MAGIC mismatched.\n", __func__);
+    return (-ENOTTY);
+  }
+
+  switch (UG31XX_IOCTL_CMD(cmd))
+  {
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_RESET)):
       UG31_LOGN("[%s] cmd -> RESET\n", __func__);
       op_options = op_options | LKM_OPTIONS_FORCE_RESET;
       cancel_delayed_work_sync(&ug31->batt_info_update_work);
       schedule_delayed_work(&ug31->batt_info_update_work, 0*HZ);
       break;
       
-    case UG31XX_IOCTL_ENABLE_SUSPEND_LOG:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ENABLE_SUSPEND_LOG)):
       UG31_LOGN("[%s] cmd -> ENABLE_SUSPEND_LOG\n", __func__);
       op_options = op_options | LKM_OPTIONS_ENABLE_SUSPEND_DATA_LOG;
       break;
       
-    case UG31XX_IOCTL_ENABLE_LOG:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ENABLE_LOG)):
       UG31_LOGN("[%s] cmd -> ENABLE_LOG\n", __func__);
       op_options = op_options | LKM_OPTIONS_ENABLE_DEBUG_LOG;
       break;
 
-    case UG31XX_IOCTL_DISABLE_LOG:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_DISABLE_LOG)):
       UG31_LOGN("[%s] cmd -> DISABLE_LOG\n", __func__);
       op_options = op_options & (~LKM_OPTIONS_ENABLE_DEBUG_LOG);
       break;
 
-    case UG31XX_IOCTL_I2C_READ:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_I2C_READ)):
       UG31_LOGN("[%s] cmd -> I2C_READ\n", __func__);
       if(copy_from_user((void *)&val[0], (void __user *)arg, sizeof(unsigned char)))
       {
@@ -612,7 +643,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_I2C_WRITE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_I2C_WRITE)):
       UG31_LOGN("[%s] cmd -> I2C_WRITE\n", __func__);
       if(copy_from_user((void *)&val[0], (void __user *)arg, sizeof(val)))
       {
@@ -629,12 +660,12 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_RESET_CYCLE_COUNT:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_RESET_CYCLE_COUNT)):
       UG31_LOGN("[%s] cmd -> RESET_CYCLE_COUNT\n", __func__);
       rc = ug31_module.reset_cycle_count();
       break;
 
-    case UG31XX_IOCTL_BACKUP_SIZE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_BACKUP_SIZE)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_BACKUP_SIZE\n", __func__);
       backup_buf = ug31_module.get_backup_buffer(&backup_size);
       data = (unsigned char)backup_size;
@@ -645,7 +676,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_BACKUP_READ:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_BACKUP_READ)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_BACKUP_READ\n", __func__);
       backup_buf = ug31_module.get_backup_buffer(&backup_size);
       if(copy_to_user((void __user *)arg, (void *)backup_buf, backup_size))
@@ -655,7 +686,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_BACKUP_WRITE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_BACKUP_WRITE)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_BACKUP_WRITE\n", __func__);
       backup_buf = ug31_module.get_backup_buffer(&backup_size);
       if(copy_from_user((void *)backup_buf, (void __user *)arg, backup_size))
@@ -665,7 +696,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_DAEMON_GET_CNTL:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_DAEMON_GET_CNTL)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_DAEMON_GET_CNTL\n", __func__);
       mutex_lock(&ug31->info_update_lock);
       data = ug31_module.get_backup_daemon_cntl();
@@ -677,7 +708,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_DAEMON_SET_CNTL:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_DAEMON_SET_CNTL)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_DAEMON_SET_CNTL\n", __func__);
       if(copy_from_user((void *)&data, (void __user *)arg, 1))
       {
@@ -689,7 +720,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       mutex_unlock(&ug31->info_update_lock);
       break;
 
-    case UG31XX_IOCTL_DAEMON_DELAY:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_DAEMON_DELAY)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_DAEMON_DELAY\n", __func__);
       mutex_lock(&ug31->info_update_lock);
       data = ug31_module.get_backup_daemon_period();
@@ -702,7 +733,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_DAEMON_FILENAME:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_DAEMON_FILENAME)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_DAEMON_FILENAME\n", __func__);
       sprintf(backup_file, "%s", UPI_UG31XX_BACKUP_FILE);
       if(copy_to_user((void __user *)arg, (void *)backup_file, 256))
@@ -712,8 +743,8 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_SIZE:
-      UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SIZE\n", __func__);
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_SIZE)):
+      UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SIZE (%d, %d)\n", __func__, sizeof(unsigned long), sizeof(unsigned long long));
       backup_buf = ug31_module.shell_memory(&backup_size);
       val[0] = backup_size/256;
       val[1] = backup_size%256;
@@ -724,7 +755,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_START:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_START)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_START\n", __func__);
       backup_buf = ug31_module.shell_memory(&backup_size);
       if(copy_to_user((void __user *)arg, (void *)backup_buf, backup_size))
@@ -734,7 +765,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_UPDATE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_UPDATE)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_UPDATE\n", __func__);
       backup_buf = ug31_module.shell_memory(&backup_size);
       ug31_module.backup_pointer();
@@ -747,7 +778,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       schedule_delayed_work(&ug31->shell_algorithm_work, 0*HZ);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_OPTION:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_OPTION)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_OPTION\n", __func__);
       if(copy_to_user((void __user *)arg, (void *)&op_options, sizeof(op_options)))
       {
@@ -756,7 +787,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_BACKUP:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_BACKUP)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_BACKUP\n", __func__);
       backup_buf = ug31_module.shell_memory(&backup_size);
       ug31_module.backup_pointer();
@@ -769,7 +800,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       schedule_delayed_work(&ug31->shell_backup_work, 0*HZ);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_BACKUP_BUFFER:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_BACKUP_BUFFER)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_BACKUP_BUFFER\n", __func__);
       backup_buf = ug31_module.shell_backup_memory(&backup_size);
       if(copy_to_user((void __user *)arg, (void *)backup_buf, backup_size))
@@ -779,7 +810,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_BACKUP_SIZE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_BACKUP_SIZE)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_BACKUP_SIZE\n", __func__);
       backup_buf = ug31_module.shell_backup_memory(&backup_size);
       val[0] = backup_size/256;
@@ -791,7 +822,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_TABLE_SIZE:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_TABLE_SIZE)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_TABLE_SIZE\n", __func__);
       backup_buf = ug31_module.shell_table_memory(&backup_size);
       val[0] = backup_size/256;
@@ -803,7 +834,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_TABLE_DATA:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_TABLE_DATA)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_TABLE_DATA\n", __func__);
       backup_buf = ug31_module.shell_table_memory(&backup_size);
       if(copy_to_user((void __user *)arg, (void *)backup_buf, backup_size))
@@ -813,7 +844,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_TABLE_BUF:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_TABLE_BUF)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_TABLE_BUF\n", __func__);
       backup_buf = ug31_module.shell_table_buf_memory(&backup_size);
       if(copy_to_user((void __user *)arg, (void *)backup_buf, backup_size))
@@ -823,7 +854,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_VERSION:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_VERSION)):
       UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_VERSION\n", __func__);
       if(copy_from_user((void *)ug31->daemon_ver, (void __user *)arg, UG31XX_USER_DAEMON_VER_LENGTH))
       {
@@ -836,7 +867,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       schedule_delayed_work(&ug31->kbo_check_work, (UG31XX_CALI_BO_FACTORY_DELAY + 1)*HZ);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_LOCK:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_LOCK)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_LOCK\n", __func__);
       if(wake_lock_active(&ug31->shell_timeout_wake_lock) != 0)
       {
@@ -848,7 +879,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       schedule_delayed_work(&ug31->shell_timeout_work, 1*HZ);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_UNLOCK:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_UNLOCK)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_UNLOCK\n", __func__);
       user_space_in_progress = false;
       mutex_unlock(&ug31->info_update_lock);
@@ -858,7 +889,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_READ_BO:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_READ_BO)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_READ_BO\n", __func__);
       backup_size = kbo_result;
       if(backup_size < 0)
@@ -878,7 +909,7 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       }
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_WRITE_BO:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_WRITE_BO)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_WRITE_BO\n", __func__);
       if(copy_from_user((void *)&val[0], (void __user *)arg, 2))
       {
@@ -899,13 +930,13 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_BO);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_GET_DATA:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_GET_DATA)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_GET_DATA\n", __func__);
       ioctl_data_trans_cnt = 0;
       ioctl_data_trans_ptr = ug31_module.shell_memory(&ioctl_data_trans_size);
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_GET_DATA_RUN:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_GET_DATA_RUN)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_GET_DATA_RUN (%d)\n", __func__,
                 ioctl_data_trans_cnt);
       memcpy(ioctl_data_trans_buf, ioctl_data_trans_ptr, UG31XX_IOCTL_TRANS_DATA_SIZE);
@@ -918,14 +949,14 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       ioctl_data_trans_ptr = ioctl_data_trans_ptr + UG31XX_IOCTL_TRANS_DATA_SIZE;
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_SET_DATA:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_SET_DATA)):
       UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SET_DATA\n", __func__);
       ioctl_data_trans_cnt = 0;
       ioctl_data_trans_ptr = ug31_module.shell_memory(&ioctl_data_trans_size);
       ug31_module.backup_pointer();
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_SET_DATA_RUN:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_SET_DATA_RUN)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SET_DATA_RUN (%d)\n", __func__,
                 ioctl_data_trans_cnt);
       if(copy_from_user((void *)ioctl_data_trans_buf, (void __user *)arg, UG31XX_IOCTL_TRANS_DATA_SIZE))
@@ -938,30 +969,30 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
       ioctl_data_trans_ptr = ioctl_data_trans_ptr + UG31XX_IOCTL_TRANS_DATA_SIZE;
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_SET_DATA_END:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_SET_DATA_END)):
       UG31_LOGI("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SET_DATA_END\n", __func__);
       ug31_module.restore_pointer();
       schedule_delayed_work(&ug31->shell_algorithm_work, 0*HZ);
       break;
       
-    case UG31XX_IOCTL_KBO_START:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_KBO_START)):
       UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_KBO_START\n", __func__);
       kbo_start();
       break;
 
-    case UG31XX_IOCTL_KBO_STOP:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_KBO_STOP)):
       UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_KBO_STOP\n", __func__);
       kbo_stop();
       break;
 
-    case UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO)):
       UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_ALGORITHM_SET_BO_AUTO\n", __func__);
       kbo_file_exist = false;
       kbo_auto_file_exist = true;
       ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_COS);
       break;
 
-    case UG31XX_IOCTL_CURRENT_NOW:
+    case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_CURRENT_NOW)):
       UG31_LOGE("[%s] cmd -> UG31XX_IOCTL_CURRENT_NOW\n", __func__);
   		mutex_lock(&ug31->info_update_lock);
 	  	backup_size = ug31_module.get_current_now();
@@ -983,7 +1014,14 @@ static long ug31xx_misc_ioctl(struct file *file, unsigned int cmd, unsigned long
         UG31_LOGE("[%s] copy_to_user fail\n", __func__);
       }
       break;
-
+			
+		case (UG31XX_IOCTL_CMD(UG31XX_IOCTL_RESET_TOTALLY)):
+			UG31_LOGN("[%s] cmd -> UG31XX_IOCTL_RESET_TOTALLY\n", __func__);
+			op_options = op_options | LKM_OPTIONS_FORCE_RESET_TOTALLY;
+			cancel_delayed_work_sync(&ug31->batt_info_update_work);
+			schedule_delayed_work(&ug31->batt_info_update_work, 0*HZ);
+			break;
+			
     default:
       UG31_LOGE("[%s] invalid cmd %d\n", __func__, _IOC_NR(cmd));
       rc = -EINVAL;
@@ -997,7 +1035,8 @@ static struct file_operations ug31xx_fops = {
   .owner = THIS_MODULE,
   .open = ug31xx_misc_open,
   .release = ug31xx_misc_release,
-  .unlocked_ioctl = ug31xx_misc_ioctl
+  .unlocked_ioctl = ug31xx_misc_ioctl,
+  .compat_ioctl = ug31xx_misc_ioctl
 };
 
 struct miscdevice ug31xx_misc = {
@@ -1389,6 +1428,9 @@ static void check_backup_file_routine(void)
 
 #ifdef	UG31XX_REGISTER_POWERSUPPLY
 
+#define MAX_CURRENT_DB      (5)
+#define MIN_CURRENT_DB      (-5)
+
 static int ug31xx_update_psp(enum power_supply_property psp,
 			     union power_supply_propval *val)
 {
@@ -1440,10 +1482,22 @@ static int ug31xx_update_psp(enum power_supply_property psp,
 		{
 			val->intval = 0;
 		}
+    #if defined(CONFIG_A450CG)
+      if((val->intval <= MAX_CURRENT_DB) && (val->intval >= MIN_CURRENT_DB))
+      {
+        val->intval = 0;
+      }
+    #endif  ///< end of defined(CONFIG_A450CG)
 		val->intval = val->intval * 1000;
 	}
 	if(psp == POWER_SUPPLY_PROP_CURRENT_AVG)
 	{
+    #if defined(CONFIG_A450CG)
+      if((val->intval <= MAX_CURRENT_DB) && (val->intval >= MIN_CURRENT_DB))
+      {
+        val->intval = 0;
+      }
+    #endif  ///< end of defined(CONFIG_A450CG)
 		val->intval = ug31->batt_current * 1000;
 	}
 	if(psp == POWER_SUPPLY_PROP_STATUS)
@@ -1613,7 +1667,7 @@ static void ug31xx_battery_external_power_changed(struct power_supply *psy)
 	int old_cable_status = cur_cable_status;
 
     if (power_supply_am_i_supplied(psy)) {
-        switch (get_charger_type()) {
+        switch (smb3xx_get_charger_type()) {
         case USB_IN:
             cur_cable_status = UG31XX_USB_PC_CABLE;
             GAUGE_err("[%s] UG31XX_USB_PC_CABLE\n", __func__);
@@ -2019,6 +2073,21 @@ static ssize_t batt_switch_name(struct switch_dev *sdev, char *buf)
 /// Charger control for initial capacity prediction (Stop)
 /// =================================================================
 
+#define FORCE_FC_RSOC_THRESHOLD     (99)
+
+static void chk_force_fc_status(void)
+{
+  if((ug31_module.get_relative_state_of_charge() != FORCE_FC_RSOC_THRESHOLD) ||
+     (cur_cable_status == UG31XX_NO_CABLE) ||
+     (ug31_module.get_current() >= force_fc_current_thrd))
+  {
+    ug31->force_fc_time = 0;
+    return;
+  }
+
+  ug31->force_fc_time = ug31->force_fc_time + ug31_module.get_delta_time();
+}
+
 #define UG31_BATTERY_WORK_MAX_INTERVAL      (30)
 #define UG31XX_PROBE_CHARGER_OFF_DELAY      (1)
 
@@ -2058,16 +2127,23 @@ static void batt_info_update_work_func(struct work_struct *work)
 
 	mutex_lock(&ug31_dev->info_update_lock); 
 	ug31_module.set_options(op_options);  
-	if(op_options & LKM_OPTIONS_FORCE_RESET)
+	if(op_options & (LKM_OPTIONS_FORCE_RESET | LKM_OPTIONS_FORCE_RESET_TOTALLY))
 	{
 	  now_is_charging = is_charging();
 	  if(now_is_charging == true)
 	  {
 	    stop_charging();
 	  } 
-    
-		ug31_module.reset(FactoryGGBXFile);
 
+		if(op_options & LKM_OPTIONS_FORCE_RESET)
+		{
+			ug31_module.reset(FactoryGGBXFile, false);
+		}
+		else
+		{
+			ug31_module.reset(FactoryGGBXFile, false);
+		}
+		
 	  if(now_is_charging == true)
 	  {
 	    start_charging();
@@ -2082,8 +2158,7 @@ static void batt_info_update_work_func(struct work_struct *work)
 			ug31_module.set_board_offset(kbo_result, UG31XX_BOARD_OFFSET_FROM_UPI_COS);
 		}
 	}
-	op_options = op_options & (~LKM_OPTIONS_FORCE_RESET);
-  
+	op_options = op_options & (~(LKM_OPTIONS_FORCE_RESET | LKM_OPTIONS_FORCE_RESET_TOTALLY));
 	adjust_cell_table();
 	update_project_config();
 
@@ -2094,6 +2169,8 @@ static void batt_info_update_work_func(struct work_struct *work)
 	now_fc_sts = ug31_module.get_full_charge_status();
 	if(gg_status == 0)
 	{
+    chk_force_fc_status();
+
 		if(charger_detect_full == true)
 		{
 			charger_detect_full = false;
@@ -2877,7 +2954,7 @@ static void batt_reinitial_work_func(struct work_struct *work)
   else
   {
     GAUGE_info("[%s] reset, retry count = %d\n", __func__, retry_cnt);
-    rtn = ug31_module.reset(FactoryGGBXFile);
+    rtn = ug31_module.reset(FactoryGGBXFile, true);
     if(rtn != 0)
     {
       start_charging();
@@ -3338,7 +3415,7 @@ static void batt_probe_work_func(struct work_struct *work)
 	ug31xx_config_earlysuspend(ug31);
 
 	/* acquired charger type from charger driver */
-	switch (get_charger_type()) {
+	switch (smb3xx_get_charger_type()) {
 	case USB_IN:
 		cur_cable_status = UG31XX_USB_PC_CABLE;
 		GAUGE_err("[%s] UG31XX_USB_PC_CABLE\n", __func__);
@@ -3478,7 +3555,7 @@ static int ug31xx_i2c_probe(struct i2c_client *client,
 	probe_with_cable = is_charging();
 
 	/* acquired charger type from charger driver */
-	switch (get_charger_type()) {
+	switch (smb3xx_get_charger_type()) {
 	case USB_IN:
 		cur_cable_status = UG31XX_USB_PC_CABLE;
 		GAUGE_err("[%s] UG31XX_USB_PC_CABLE\n", __func__);
@@ -4040,3 +4117,8 @@ module_param(ggb_board_gain, int, 0644);
 MODULE_PARM_DESC(ggb_board_gain, "Set board gain in GGB file");
 module_param(ggb_config, uint, 0644);
 MODULE_PARM_DESC(ggb_config, "Set config in GGB file");
+module_param(force_fc_current_thrd, uint, 0644);
+MODULE_PARM_DESC(force_fc_current_thrd, "Set force FC current threshold");
+module_param(force_fc_timeout, uint, 0644);
+MODULE_PARM_DESC(force_fc_timeout, "Set force FC timeout threshold");
+

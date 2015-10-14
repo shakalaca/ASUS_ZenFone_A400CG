@@ -17,16 +17,9 @@ extern unsigned int g_b_isP01Connected;
 extern unsigned int g_i2c_bus_suspended;
 extern unsigned int g_i2c_microp_busy;
 unsigned char isregister = false;
-//ASUS_BSP +++ Maggie Lee "For Pad I2C suspend/resume api"
-#if defined(ASUS_A11_PROJECT) || defined(ASUS_A68M_PROJECT)
-extern unsigned int g_i2c_bus_3v3_state;
-int AX_MicroP_Is_resuming(void) {
-		return (g_i2c_bus_3v3_state==1)?1:0;
-}
-EXPORT_SYMBOL_GPL(AX_MicroP_Is_resuming);
-#endif
+uint8_t speaker_en = 0;
+uint8_t recevier_en = 0;
 
-//ASUS_BSP --- Maggie Lee "For Pad I2C suspend/resume api"
 void AX_MicroP_Bus_Suspending(int susp){
     if(susp)
         g_i2c_bus_suspended=1;
@@ -756,8 +749,16 @@ int AX_MicroP_setSPK_EN(uint8_t enable){
         return -1;
     }
 
+    speaker_en = enable;
+
     hwid = AX_MicroP_getHWID();
-    if ( hwid == P72_ER1_2_HWID || hwid == P72_ER2_HWID || hwid == P72_ER1_1_HWID )
+    if (hwid == P72_MP_HWID) {
+        if ( enable && AX_MicroP_getGPIOOutputPinLevel(OUT_uP_5V_PWR_EN) ==0) {
+            AX_MicroP_setGPIOOutputPin(OUT_uP_5V_PWR_EN,1);
+            msleep(100);
+        }
+    }
+    if ( hwid == P72_ER1_2_HWID || hwid == P72_ER2_HWID )
         AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL,enable);
     else
         AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL,!enable);
@@ -779,8 +780,17 @@ int AX_MicroP_setRCV_EN(uint8_t enable){
         return -1;
     }
 
+    recevier_en = enable;
     hwid = AX_MicroP_getHWID();
-    if ( hwid == P72_ER1_2_HWID || hwid == P72_ER2_HWID || hwid == P72_ER1_1_HWID )
+    if (hwid == P72_MP_HWID) {
+        if ( enable && AX_MicroP_getGPIOOutputPinLevel(OUT_uP_5V_PWR_EN) ==0) {
+            AX_MicroP_setGPIOOutputPin(OUT_uP_5V_PWR_EN,1);
+            msleep(100);
+        }
+    }
+
+    hwid = AX_MicroP_getHWID();
+    if ( hwid == P72_ER1_2_HWID || hwid == P72_ER2_HWID )
         AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL,enable);
     else
         AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL,!enable);
@@ -930,4 +940,9 @@ EXPORT_SYMBOL_GPL(AX_setECPowerOff);
 
 bool AX_Is_pad_exist(void) {
     return pad_exist();
+}
+
+void AX_Recheck_EC_interrupt(void)
+{
+    microp_recheck_interrupt();
 }

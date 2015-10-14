@@ -19,11 +19,11 @@ int bq27520_write_i2c(u8 addr,u8 reg, int value, int b_single)
     int ret;
 
     memset(data, 0, sizeof(data));
-    data[0] = addr;
+//    data[0] = addr;
     data[1] = reg;
-    data[2] = b_single ? 1 : 2;
-    data[3] = value& 0x00FF;
-    data[4] = (value & 0xFF00) >> 8;
+    data[0] = b_single ? 1 : 2;
+    data[2] = value& 0x00FF;
+    data[3] = (value & 0xFF00) >> 8;
     ret = ite_gauge_write_reg(data);
 
     return ret;
@@ -39,6 +39,7 @@ int bq27520_read_i2c(u8 addr, u8 reg, int *rt_value,int b_single)
         length = 1;
     else
         length = 2;
+    addr = addr >> 1;
     err = ite_gauge_read_reg(addr, reg, length, data);
 
     if (err == RET_EC_OK) {
@@ -58,11 +59,11 @@ static int bq27520_i2c_txsubcmd(u8 addr,
     int ret;
     int i;
     memset(data, 0, sizeof(data));
-    data[0] = addr;
+//    data[0] = addr;
     data[1] = reg;
-    data[2] = 2;
-    data[3] = subcmd& 0x00FF;
-    data[4] = (subcmd & 0xFF00) >> 8;
+    data[0] = 2;
+    data[2] = subcmd& 0x00FF;
+    data[3] = (subcmd & 0xFF00) >> 8;
     ret = ite_gauge_write_reg(data);
 
     return ret;

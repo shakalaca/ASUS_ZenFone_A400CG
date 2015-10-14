@@ -23,7 +23,6 @@
 #include "platform_camera.h"
 #include "platform_gc0339_raw.h"
 
-
 #define VPROG1_VAL 1800000
 #define VPROG2_VAL 2800000
 
@@ -39,7 +38,6 @@ static int camera_vemmc1_on;
 static struct regulator *vprog1_reg;
 static struct regulator *vprog2_reg;
 
-
 static int gc0339_raw_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
 	static const unsigned int clock_khz = 19200; //Intel just can support 19.2MHz/9.6MHz/4.8MHz 
@@ -49,13 +47,10 @@ static int gc0339_raw_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 	return ret;
 }
 
-
 static int gc0339_raw_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 {
 	return 0;
 }
-
-
 
 static int gc0339_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 {
@@ -198,10 +193,6 @@ static int gc0339_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 			camera_power_down = -1;
 			msleep(10);
 		}
-		
-		//turn off MCLK
-                gc0339_raw_flisclk_ctrl(sd, 0);
-                msleep(10);
 
 		//turn off I2C 1.8V
 		if (camera_vprog1_on) {
@@ -258,6 +249,126 @@ static int gc0339_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 						return ret;
 					}
 			}
+		}
+
+		//turn off MCLK
+		gc0339_raw_flisclk_ctrl(sd, 0);
+		msleep(10); 
+	}
+#elif defined(CONFIG_A450CG)
+	if (camera_reset < 0) {
+		ret = camera_sensor_gpio(GP_CORE_080, GP_CAMERA_1_RESET,
+					 GPIOF_DIR_OUT, 1);
+		if (ret < 0)
+			return ret;
+		camera_reset = GP_CORE_080;
+	}
+
+	if (camera_power_down < 0) {
+		ret = camera_sensor_gpio(GP_CORE_064, GP_CAMERA_SUB_CAM_PWDN,
+				 GPIOF_DIR_OUT, 0);
+		if (ret < 0){
+			printk("%s not available.\n", GP_CAMERA_SUB_CAM_PWDN);
+			return ret;
+		}
+		camera_power_down = GP_CORE_064;
+	}
+
+	if (flag) {
+		//turn on 2.8V power
+		if (!camera_vprog2_on){
+			ret = regulator_enable(vprog2_reg);
+			if (!ret) {
+				camera_vprog2_on = 1;
+				printk("<<< AVDD_SENSOR 2.8V = 1\n");
+			}
+			else{
+				printk(KERN_ALERT "Failed to enable regulator vprog2\n");
+				return ret;
+			}
+			msleep(10);
+		}
+
+		//turn on 1.8V power and I2C 1.8V
+		if (!camera_vprog1_on) {
+			ret = regulator_enable(vprog1_reg);
+			if (!ret) {
+				camera_vprog1_on = 1;
+				printk("<<< VDD and I2C 1.8V = 1\n");
+			}
+			else{
+				printk(KERN_ALERT "Failed to enable regulator vprog1\n");
+				return ret;
+			}
+			msleep(10);
+		}
+
+		//turn on MCLK
+		gc0339_raw_flisclk_ctrl(sd, 1);
+		msleep(10);
+
+		//turn off power down
+		if (camera_power_down >= 0){
+			gpio_set_value(camera_power_down, 0);
+			printk("<<< PWDN = 0\n");
+			msleep(10);
+		}
+
+		//pull high reset first
+		if (camera_reset >= 0){
+			gpio_set_value(camera_reset, 0);
+			msleep(20);
+			gpio_set_value(camera_reset, 1);
+			printk("<<< camera_reset = 1\n");
+			msleep(10);
+		}
+	} else {
+		if (camera_reset >= 0){
+			gpio_set_value(camera_reset, 0);
+			gpio_free(camera_reset);
+			camera_reset = -1;
+			msleep(10);
+		}
+
+		//turn off PWDN
+		if (camera_power_down >= 0){
+			gpio_set_value(camera_power_down, 0);
+			printk("<<< PWDN = 0\n");
+			gpio_free(camera_power_down);
+			camera_power_down = -1;
+			msleep(10);
+		}
+
+		//turn off MCLK
+                gc0339_raw_flisclk_ctrl(sd, 0);
+                msleep(10);
+
+		//turn off 1.8V power and I2C 1.8V
+		if (camera_vprog1_on) {
+			ret = regulator_disable(vprog1_reg);
+			if (!ret) {
+				camera_vprog1_on = 0;
+				printk("<<< VDD and I2C 1.8V = 0\n");
+			}
+			else {
+				printk(KERN_ALERT "Failed to disable regulator vprog1\n");
+				return ret;
+			}
+			msleep(10);
+		}
+
+		//turn off 2.8V power
+		if (camera_vprog2_on) {
+			ret = regulator_disable(vprog2_reg);
+			if (!ret) {
+				camera_vprog2_on = 0;
+				printk("<<< AVDD_SENSOR 2.8V = 0\n");
+			}
+			else {
+				printk(KERN_ALERT "Failed to disable regulator vprog2\n");
+				return ret;
+			}
+			msleep(10);
 		}
 
 	}

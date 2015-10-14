@@ -49,14 +49,22 @@ struct comms_mc_private {
 int ctp_soc_jack_gpio_detect(void);
 int ctp_soc_jack_gpio_detect_bp(void);
 
-//extern struct snd_soc_machine_ops ctp_rhb_cs42l73_ops;
-//extern struct snd_soc_machine_ops ctp_vb_cs42l73_ops;
+/*
+extern struct snd_soc_machine_ops ctp_rhb_cs42l73_ops;
+extern struct snd_soc_machine_ops ctp_vb_cs42l73_ops;
+extern struct snd_soc_machine_ops merr_bb_cs42l73_ops;
+extern struct snd_soc_machine_ops ctp_ht_wm5102_ops;
+extern struct snd_soc_machine_ops ctp_lt_wm8994_ops;
+*/
 extern void *ctp_get_rhb_ops(void);
- extern struct snd_soc_machine_ops ctp_rhb_ops;
+extern struct snd_soc_machine_ops ctp_rhb_ops;
 
 struct snd_soc_machine_ops {
 	int micsdet_debounce;
+	char *mic_bias;
 	bool jack_support;
+	bool dmic3_support;
+	void (*card_name)(struct snd_soc_card *card);
 	int (*ctp_init)(struct snd_soc_pcm_runtime *runtime);
 	int (*dai_link) (struct snd_soc_card *card);
 	int (*hp_detection) (struct snd_soc_codec *codec,
@@ -64,6 +72,12 @@ struct snd_soc_machine_ops {
 	int (*bp_detection) (struct snd_soc_codec *codec,
 			struct snd_soc_jack *jack, int plug_status);
 	void (*mclk_switch) (struct device *dev, bool mode);
+	int (*set_bias_level) (struct snd_soc_card *card,
+			struct snd_soc_codec *codec,
+			enum snd_soc_bias_level level);
+	int (*set_bias_level_post) (struct snd_soc_card *card,
+			struct snd_soc_codec *codec,
+			enum snd_soc_bias_level level);
 };
 
 struct ctp_mc_private {
@@ -80,13 +94,17 @@ struct ctp_mc_private {
 	atomic_t bpirq_flag;
 	int bpirq;
 	atomic_t hs_det_retry;
+	//bool btn_press_flag;
 	atomic_t btn_press_flag;
+	int dmic_switch;
+	int dmic_gpio;
 #ifdef CONFIG_HAS_WAKELOCK
 	struct wake_lock *jack_wake_lock;
 	struct wake_lock *button_wake_lock;
 #endif
 	bool voice_call_flag;
 	bool headset_plug_flag;
+	int ext_amp_status;
 };
 
 static inline struct ctp_mc_private
@@ -104,6 +122,60 @@ static inline void ctp_config_voicecall_flag(
 	pr_debug("%s voice call flag: %d\n", __func__, state);
 	ctx->voice_call_flag = state;
 }
+
+static inline struct snd_soc_codec *ctp_get_codec(struct snd_soc_card *card,
+			const char *codec_name)
+{
+	bool found = false;
+	struct snd_soc_codec *codec;
+
+	list_for_each_entry(codec, &card->codec_dev_list, card_list) {
+		if (!strstr(codec->name, codec_name)) {
+			pr_debug("codec was %s", codec->name);
+			continue;
+		} else {
+			found = true;
+			break;
+		}
+	}
+	if (found == false) {
+		pr_err("%s: cant find codec", __func__);
+		return NULL;
+	}
+	return codec;
+}
+
+static int ext_amp_put(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_dapm_widget_list *wlist = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_dapm_widget *w = wlist->widgets[0];
+	struct snd_soc_codec *codec = snd_soc_dapm_kcontrol_codec(kcontrol);
+	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(codec->card);
+
+	pr_debug("ext_amp_put: %ld\n", ucontrol->value.integer.value[0]);
+	ctx->ext_amp_status = ucontrol->value.integer.value[0];
+
+	snd_soc_dapm_mixer_update_power(w, kcontrol,
+				!!ucontrol->value.integer.value[0]);
+
+	return 0;
+}
+
+static int ext_amp_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_dapm_kcontrol_codec(kcontrol);
+	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(codec->card);
+
+	ucontrol->value.integer.value[0] = ctx->ext_amp_status;
+	pr_debug("ext_amp_get: %ld\n", ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static const struct snd_kcontrol_new ext_amp_sw =
+	SOC_SINGLE_EXT("Switch", SND_SOC_NOPM, 0, 1, 0,
+			ext_amp_get, ext_amp_put);
 
 struct ctp_clk_fmt {
 	int clk_id;
@@ -146,7 +218,8 @@ int set_ssp_modem_master_mode(struct snd_kcontrol *kcontrol,
 int snd_ctp_init(struct snd_soc_pcm_runtime *runtime);
 int ctp_init(struct snd_soc_pcm_runtime *runtime);
 int ctp_vb_init(struct snd_soc_pcm_runtime *runtime);
-int ctp_amp_event(struct snd_soc_dapm_widget *w, struct snd_kcontrol *k, int event);
+int ctp_amp_event(struct snd_soc_dapm_widget *w,
+			struct snd_kcontrol *k, int event);
 int ctp_set_bias_level(struct snd_soc_card *card,
 		struct snd_soc_dapm_context *dapm,
 		enum snd_soc_bias_level level);

@@ -15,14 +15,15 @@ obj-$(CONFIG_TOUCHSCREEN_ADS7846)	+= ads7846.o
 obj-$(CONFIG_TOUCHSCREEN_ATMEL_MXT)	+= atmel_mxt_ts.o
 obj-$(CONFIG_TOUCHSCREEN_ATMEL_TSADCC)	+= atmel_tsadcc.o
 obj-$(CONFIG_TOUCHSCREEN_AUO_PIXCIR)	+= auo-pixcir-ts.o
-obj-$(CONFIG_TOUCHSCREEN_BITSY)		+= h3600_ts_input.o
 obj-$(CONFIG_TOUCHSCREEN_BU21013)	+= bu21013_ts.o
 obj-$(CONFIG_TOUCHSCREEN_CY8CTMG110)	+= cy8ctmg110_ts.o
 obj-$(CONFIG_TOUCHSCREEN_CYTTSP_CORE)	+= cyttsp_core.o
 obj-$(CONFIG_TOUCHSCREEN_CYTTSP_I2C)	+= cyttsp_i2c.o
 obj-$(CONFIG_TOUCHSCREEN_CYTTSP_SPI)	+= cyttsp_spi.o
 obj-$(CONFIG_TOUCHSCREEN_DA9034)	+= da9034-ts.o
+obj-$(CONFIG_TOUCHSCREEN_DA9052)	+= da9052_tsi.o
 obj-$(CONFIG_TOUCHSCREEN_DYNAPRO)	+= dynapro.o
+obj-$(CONFIG_TOUCHSCREEN_EDT_FT5X06)	+= edt-ft5x06.o
 obj-$(CONFIG_TOUCHSCREEN_HAMPSHIRE)	+= hampshire.o
 obj-$(CONFIG_TOUCHSCREEN_GUNZE)		+= gunze.o
 obj-$(CONFIG_TOUCHSCREEN_EETI)		+= eeti_ts.o
@@ -37,6 +38,7 @@ obj-$(CONFIG_TOUCHSCREEN_MAX11801)	+= max11801_ts.o
 obj-$(CONFIG_TOUCHSCREEN_MC13783)	+= mc13783_ts.o
 obj-$(CONFIG_TOUCHSCREEN_MCS5000)	+= mcs5000_ts.o
 obj-$(CONFIG_TOUCHSCREEN_MIGOR)		+= migor_ts.o
+obj-$(CONFIG_TOUCHSCREEN_MMS114)	+= mms114.o
 obj-$(CONFIG_TOUCHSCREEN_MTOUCH)	+= mtouch.o
 obj-$(CONFIG_TOUCHSCREEN_MK712)		+= mk712.o
 obj-$(CONFIG_TOUCHSCREEN_HP600)		+= hp680_ts_input.o
@@ -49,9 +51,8 @@ obj-$(CONFIG_TOUCHSCREEN_PIXCIR)	+= pixcir_i2c_ts.o
 obj-$(CONFIG_TOUCHSCREEN_S3C2410)	+= s3c2410_ts.o
 obj-$(CONFIG_TOUCHSCREEN_ST1232)	+= st1232.o
 obj-$(CONFIG_TOUCHSCREEN_STMPE)		+= stmpe-ts.o
-obj-$(CONFIG_TOUCHSCREEN_TI_TSCADC)	+= ti_tscadc.o
+obj-$(CONFIG_TOUCHSCREEN_TI_AM335X_TSC)	+= ti_am335x_tsc.o
 obj-$(CONFIG_TOUCHSCREEN_TNETV107X)	+= tnetv107x-ts.o
-obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI)	+= synaptics_i2c_rmi.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHIT213)	+= touchit213.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHRIGHT)	+= touchright.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHWIN)	+= touchwin.o
@@ -60,6 +61,7 @@ obj-$(CONFIG_TOUCHSCREEN_TSC2005)	+= tsc2005.o
 obj-$(CONFIG_TOUCHSCREEN_TSC2007)	+= tsc2007.o
 obj-$(CONFIG_TOUCHSCREEN_UCB1400)	+= ucb1400_ts.o
 obj-$(CONFIG_TOUCHSCREEN_WACOM_W8001)	+= wacom_w8001.o
+obj-$(CONFIG_TOUCHSCREEN_WACOM_I2C)	+= wacom_i2c.o
 obj-$(CONFIG_TOUCHSCREEN_WM831X)	+= wm831x-ts.o
 obj-$(CONFIG_TOUCHSCREEN_WM97XX)	+= wm97xx-ts.o
 wm97xx-ts-$(CONFIG_TOUCHSCREEN_WM9705)	+= wm9705.o
@@ -70,41 +72,16 @@ obj-$(CONFIG_TOUCHSCREEN_WM97XX_MAINSTONE)	+= mainstone-wm97xx.o
 obj-$(CONFIG_TOUCHSCREEN_WM97XX_ZYLONITE)	+= zylonite-wm97xx.o
 obj-$(CONFIG_TOUCHSCREEN_W90X900)	+= w90p910_ts.o
 obj-$(CONFIG_TOUCHSCREEN_TPS6507X)	+= tps6507x-ts.o
-# Josh add for Himax HX8528 driver ++
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528)	+= hx8528.o
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CGCD)	+= hx8528_me372cgcd.o
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL)  += hx8528_me372cl.o
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL_C58)  += hx8528_me372cl_c58.o
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A12)  += hx8528_a12.o
-# Josh add for Himax HX8528 driver --
-
-# Jui-Chuan add for Atmel Touch ++
-obj-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)      += atmel_mxt_1664s.o
-# Jui-Chuan add for Atmel Touch --
-
-# add by leo for ELAN touch ++
-obj-$(CONFIG_TOUCHSCREEN_ELAN_EKTH3374)		+= ektf3k.o
-# add by leo for ELAN touch --
-
-# add by leo for Goodix touch ++
 obj-$(CONFIG_TOUCHSCREEN_GOODIX_GT927)		+= gt927.o
 obj-$(CONFIG_TOUCHSCREEN_GOODIX_GT927)		+= gt927_tool.o
 obj-$(CONFIG_TOUCHSCREEN_GOODIX_GT927)		+= gt927_update.o
 obj-$(CONFIG_TOUCHSCREEN_GOODIX_GT927)		+= gt927_openshort.o
-# add by leo for Goodix touch --
-
-# add by leo for Himax touch D48 ++
+obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A12)  += hx8528_a12.o
 obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_P72G)  += hx8528_p72g.o
-# add by leo for Himax touch D48 --
-
-# Joe add for A400 Himax D48 touch ++
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A400)  += hx8528_a400cg.o
-# Joe add for A400 Himax D48 touch --
-
-# add by leo for A450 Himax D48 touch ++
-obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG)  += hx8528_a450cg.o
-# Joe add for A400 Himax D48 touch --
-
-# Josh add for FE380CG Himax E58 touch ++
+obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL)  += hx8528_me372cl.o
+obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528)  		+= hx8528.o
 obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_FE380CG)  += hx8528_fe380cg.o
-# Josh add for FE380CG Himax E58 touch --
+obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A400)  += hx8528_a400cg.o
+obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_A450CG)  += hx8528_a450cg.o
+obj-$(CONFIG_TOUCHSCREEN_ELAN_EKTH3374)		+= ektf3k.o
+obj-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)      += atmel_mxt_1664s.o

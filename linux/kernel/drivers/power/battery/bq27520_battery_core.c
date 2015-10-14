@@ -387,6 +387,7 @@ static int bq27520_proc_bridge_read(char *page, char **start, off_t off,
     return len;
 }
 
+#ifndef CONFIG_NEW_PROC_FS
 int bq27520_proc_fs_update_bridge(void)
 {
     struct proc_dir_entry *entry=NULL;
@@ -408,6 +409,48 @@ int bq27520_proc_fs_update_bridge(void)
 
     return 0;
 }
+#else
+static ssize_t nbq27520_proc_bridge_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    return count;
+}
+static int nbq27520_proc_bridge_read(struct seq_file *m, void *v)
+{
+    if (bq27520_is_rom_mode()) {
+        seq_printf(m, "%d\n", "7");
+    } else {
+        seq_printf(m, "%d\n", "8");
+    }
+
+    return 0;
+}
+static int nbq27520_proc_bridge_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nbq27520_proc_bridge_read, NULL);
+}
+int bq27520_proc_fs_update_bridge(void)
+{
+    static const struct file_operations proc_fs_update_bridge_fops = {
+        .owner = THIS_MODULE,
+        .open = nbq27520_proc_bridge_open,
+        .read = seq_read,
+        .write = nbq27520_proc_bridge_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("ubridge", 0666, NULL,
+        &proc_fs_update_bridge_fops);
+    if (!entry) {
+        BAT_DBG_E("Unable to create ubridge\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 
 static int bq27520_proc_read(char *page, char **start, off_t off,
                             int count, int *eof, void *date)
@@ -467,6 +510,7 @@ static int bq27520_proc_write(struct file *file, const char *buffer,
     return count;
 }
 
+#ifndef CONFIG_NEW_PROC_FS
 int bq27520_proc_fs_update_latch(void)
 {
     struct proc_dir_entry *entry=NULL;
@@ -481,6 +525,86 @@ int bq27520_proc_fs_update_latch(void)
 
     return 0;
 }
+#else
+static ssize_t nbq27520_proc_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    char proc_buf[64];
+
+    if (count > sizeof(gbuffer)) {
+        BAT_DBG("%s: data error\n", __func__);
+        return -EINVAL;
+    }
+
+    if (copy_from_user(proc_buf, buf, count)) {
+        BAT_DBG("%s: read data from user space error\n", __func__);
+        return -EFAULT;
+    }
+
+    if (!memcmp(proc_buf, gbuffer, 36)) {
+        BAT_DBG_E("%s: EQ\n", __func__);
+
+        /* cancel all the I2C polling work
+           to avoid affect the update
+        */
+        asus_cancel_work();
+
+        /* create update bridge */
+        bq27520_proc_fs_update_bridge();
+
+    }
+    else {
+        BAT_DBG_E("%s: NOT EQ\n", __func__);
+
+        /* re-generate the key to clean memory to avoid
+           "brute-force attack". we do not allow someone
+           who using "repetitive try-error" to find out
+           the correct one.
+        */
+        generate_key();
+    }
+
+    return count;
+}
+static int nbq27520_proc_read(struct seq_file *m, void *v)
+{
+    if (!gbuffer)
+        return 0;
+
+    /* print the key to screen for debugging */
+    seq_printf(m, "%s\n", gbuffer);
+
+    /* re-generate the key to clean the memory */
+    generate_key();
+
+    return 0;
+}
+static int nbq27520_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nbq27520_proc_read, NULL);
+}
+int bq27520_proc_fs_update_latch(void)
+{
+    static const struct file_operations proc_fs_update_latch_fops = {
+        .owner = THIS_MODULE,
+        .open = nbq27520_proc_open,
+        .read = seq_read,
+        .write = nbq27520_proc_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("twinheadeddragon", 0666, NULL,
+        &proc_fs_update_latch_fops);
+    if (!entry) {
+        BAT_DBG_E("Unable to create twinheadeddragon\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 #else
 int bq27520_proc_fs_update_bridge(void) { return 0; }
 int bq27520_proc_fs_update_latch(void) { return 0; }
@@ -794,13 +918,13 @@ int bq27520_asus_battery_dev_read_fw_cfg_version(void)
     return fw_cfg_ver;
 }
 
-static int __devexit bq27520_bat_i2c_remove(struct i2c_client *i2c)
+static int bq27520_bat_i2c_remove(struct i2c_client *i2c)
 {
     dev_info(&i2c->dev, "%s\n", __func__);
     return 0;
 }
 
-static int __devexit bq27520_bat_i2c_shutdown(struct i2c_client *i2c)
+static int bq27520_bat_i2c_shutdown(struct i2c_client *i2c)
 {
     dev_info(&i2c->dev, "%s\n", __func__);
 #if 0
@@ -1068,6 +1192,7 @@ static int bq27520_adc_alert_irq_init(struct bq27520_chip *chip)
     ret = request_threaded_irq(adc_alert_irq, NULL,
                     bq27520_adc_alert_interrupt,
                     IRQF_PERCPU | IRQF_NO_SUSPEND | IRQF_FORCE_RESUME |
+                    IRQF_ONESHOT |
                     IRQF_TRIGGER_FALLING,
                     chip->client->name,
                     chip);
@@ -1123,6 +1248,8 @@ static int bq27520_batlow_irq_init(struct bq27520_chip *chip)
     batlow_irq = gpio_to_irq(pdata->low_bat);
     ret = request_threaded_irq(batlow_irq, NULL,
                     bq27520_batlow_interrupt,
+                    IRQF_PERCPU | IRQF_NO_SUSPEND | IRQF_FORCE_RESUME |
+                    IRQF_ONESHOT |
                     IRQF_TRIGGER_FALLING,
                     chip->client->name,
                     chip);
@@ -1149,6 +1276,7 @@ static int bq27520_batlow_irq_init(struct bq27520_chip *chip)
 { return 0; }
 #endif
 
+#ifndef CONFIG_A450CG
 static int bq27520_irq_init(struct bq27520_chip *chip)
 {
     struct bq27520_platform_data *pdata = chip->pdata;
@@ -1166,6 +1294,9 @@ static int bq27520_irq_init(struct bq27520_chip *chip)
 
     return 0;
 }
+#else
+static int bq27520_irq_init(struct bq27520_chip *chip) { return 0; }
+#endif
 
 static void batlow_work_func(struct work_struct *work)
 {
@@ -1312,7 +1443,7 @@ int bq27520_is_normal_mode()
     return 1;
 }
 
-static int __devinit bq27520_bat_i2c_probe(struct i2c_client *client,
+static int bq27520_bat_i2c_probe(struct i2c_client *client,
                             const struct i2c_device_id *id)
 {
     int ret = 0;
@@ -1348,7 +1479,7 @@ static int __devinit bq27520_bat_i2c_probe(struct i2c_client *client,
     i2c_set_clientdata(client, chip);
     bq27520_dev_info.i2c = client;
 
-    /* Do it only in MOS, COS. Not support in other conditions */
+    /* Auto Battery Cell Data update */
     ret = bq27520_bat_upt_main_update_flow();
     mutex_lock(&bq27520_dev_info_mutex);
     bq27520_dev_info.update_status = ret;
@@ -1496,7 +1627,7 @@ static struct i2c_driver bq27520_bat_i2c_driver = {
         .pm    = &bq27520_pm_ops,
     },
     .probe     = bq27520_bat_i2c_probe,
-    .remove    = __devexit_p(bq27520_bat_i2c_remove),
+    .remove    = bq27520_bat_i2c_remove,
     .id_table  = bq27520_bat_i2c_id,
 };
 
@@ -1541,11 +1672,13 @@ static int __init bq27520_bat_i2c_init(void)
         BAT_DBG_E("Unable to create proc file\n");
         goto proc_fail;
     }
+#ifndef CONFIG_A450CG
     ret = bq27520_proc_fs_update_latch();
     if (ret) {
         BAT_DBG_E("Unable to create proc file\n");
         goto proc_fail;
     }
+#endif
 
     ret = asus_battery_init(bat_cfg.polling_time,
             bat_cfg.critical_polling_time,

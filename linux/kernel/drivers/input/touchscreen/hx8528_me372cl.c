@@ -69,7 +69,7 @@
 
 #include <linux/hx8528_me372cl.h>
 
-#define DRIVER_VERSION	"0.2.0"		//Josh modify 
+#define DRIVER_VERSION	"0.3.1"		//Josh modify 
 
 //=============================================================================================================
 //
@@ -141,11 +141,11 @@
 //TODO START : Modify the I2C address
 //----- I2C -----
 #define HIMAX_I2C_ADDR	0x48
-#define HIMAX_TS_NAME			"hx8528_me372cl"
+#define HIMAX_TS_NAME	"hx8528"
 //TODO END
 
 //----- Input Device
-#define INPUT_DEV_NAME	"himax-touchscreen-ME372CL"
+#define INPUT_DEV_NAME	"himax-touchscreen"
 
 //----- Flash dump file
 #define FLASH_DUMP_FILE "/data/log/ME372CL_Touch_Flash_Dump.bin"
@@ -571,7 +571,7 @@ static bool hitouch_is_connect = false;
 
 
 //----[ASUS_BSP Josh_Sh]-------------------------------------------------------------------------------start
-static int himax_me372cl_cable_status(int status);
+int himax_me372cl_cable_status(int status);
 static int himax_firmware_upgrade(int path);
 static int update_touch_progress(int update_progress);
 static int update_touch_result(int result);
@@ -626,6 +626,8 @@ static ssize_t himax_chip_enable_irq(struct device *dev, struct device_attribute
 static ssize_t himax_get_fw_version(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t himax_debug_log(struct device *dev, struct device_attribute *attr, char *buf, size_t count);
 static ssize_t himax_checksum(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t himax_fw_upgrade(struct device *dev, struct device_attribute *attr, char *buf, size_t count);
+static ssize_t himax_fw_check(struct device *dev, struct device_attribute *attr, char *buf);
 
 #ifdef HX_TP_SYS_SELF_TEST 
 static DEVICE_ATTR(tp_self_test, (S_IWUSR|S_IRUGO), himax_chip_self_test_function, himax_self_test_setting);
@@ -655,6 +657,7 @@ static DEVICE_ATTR(touch_irq, (S_IWUSR|S_IRUGO), NULL, himax_chip_enable_irq);
 static DEVICE_ATTR(tp_fw_version,(S_IWUSR|S_IRUGO), himax_get_fw_version, NULL);
 static DEVICE_ATTR(debug_log,(S_IWUSR|S_IRUGO), NULL, himax_debug_log);
 static DEVICE_ATTR(himax_check_sum,(S_IWUSR|S_IRUGO),  himax_checksum, NULL);
+static DEVICE_ATTR(tp_fw_upgrade,(S_IWUSR|S_IRUGO),  himax_fw_check, himax_fw_upgrade);
 
 static struct attribute *himax_attr[] = {
 #ifdef HX_TP_SYS_REGISTER
@@ -676,12 +679,23 @@ static struct attribute *himax_attr[] = {
 	&dev_attr_tp_check_running.attr,
 	&dev_attr_debug_log.attr,
 	&dev_attr_himax_check_sum.attr,
+	&dev_attr_tp_fw_upgrade.attr,
 	NULL
 };	
 
 extern int Read_PROJ_ID(void);
 extern int check_cable_status(void);
 extern int Read_HW_ID(void);
+
+// add by josh for skip COS/POS ++
+/*
+ * entry_mode = 1; MOS
+ * entry_mode = 2; recovery
+ * entry_mode = 3; POS
+ * entry_mode = 4; COS
+*/
+extern int entry_mode;
+// add by josh for skip COS/POS --
 
 typedef enum {
 	SELF,
@@ -3496,7 +3510,7 @@ static ssize_t himax_checksum(struct device *dev, struct device_attribute *attr,
 
 
 //--------[proc_function]-----------start
-static ssize_t himax_me372cl_chip_proc_chip_check_running(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static int himax_me372cl_chip_proc_chip_check_running(struct seq_file *buf, void *v)
 {
 	int ret;
 	
@@ -3504,15 +3518,24 @@ static ssize_t himax_me372cl_chip_proc_chip_check_running(char *buf, char **star
 	ret = himax_hang_shaking();	//0:Running, 1:Stop, 2:I2C Fail
 	if(ret == 2)
 	{
-		return sprintf(buf, "[Himax]: I2C Fail.\n");
+		seq_printf(buf, "[Himax]: I2C Fail.\n");
+		return 0;
 	}
 	if(ret == 1)
 	{
-		return sprintf(buf, "[Himax]: MCU Stop.\n");
+		seq_printf(buf, "[Himax]: MCU Stop.\n");
+		return 0;
 	}
-	else
-		return sprintf(buf, "[Himax]: MCU Running\n");
+	else{
+		seq_printf(buf, "[Himax]: MCU Running\n");
+		return 0;
+	}
 }
+
+static int proc_chip_check_running_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_me372cl_chip_proc_chip_check_running, NULL);
+}
+
 static ssize_t himax_me372cl_chip_proc_debug_flag(struct file *filp, const char *buf, unsigned long len, void *data)
 {
 	
@@ -3527,12 +3550,17 @@ static ssize_t himax_me372cl_chip_proc_debug_flag(struct file *filp, const char 
 	return len;
 }
 
+static const struct file_operations debug_flag_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_check_running_open,
+		.read = seq_read,
+        .write = himax_me372cl_chip_proc_debug_flag,
+};
+
 static void himax_me372cl_chip_create_proc_debug_flag(void)
 {
-	himax_me372cl_proc_debug_flag = create_proc_entry(HIMAX_ME372CL_PROC_DEBUG_FLAG, 0666, NULL);
+	himax_me372cl_proc_debug_flag = proc_create(HIMAX_ME372CL_PROC_DEBUG_FLAG, 0666, NULL, &debug_flag_fops);
 	if(himax_me372cl_proc_debug_flag){
-		himax_me372cl_proc_debug_flag->read_proc = himax_me372cl_chip_proc_chip_check_running;
-		himax_me372cl_proc_debug_flag->write_proc = himax_me372cl_chip_proc_debug_flag;
 	}
 	else{
 		printk(KERN_ERR "[Himax_ME372CL] %s: proc config file create failed!\n", __func__);
@@ -3547,7 +3575,7 @@ static void himax_me372cl_chip_remove_proc_debug_flag(void)
 }
 
 
-static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static ssize_t himax_me372cl_chip_proc_diag_read(struct seq_file *buf, void *v)
 {
 	size_t count = 0;
 	uint32_t loop_i;
@@ -3556,7 +3584,7 @@ static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t 
 	mutual_num 	= x_channel * y_channel;
 	self_num = x_channel + y_channel; //don't add KEY_COUNT
 	width = x_channel;
-	count += sprintf(buf + count, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
+	seq_printf(buf, "ChannelStart: %4d, %4d\n\n", x_channel, y_channel);
 	
 	// start to show out the raw data in adb shell
 	if (diag_command >= 1 && diag_command <= 6) 
@@ -3565,27 +3593,27 @@ static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t 
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1)) 
 				{
-				count += sprintf(buf + count, " %3d\n", diag_self[width + loop_i/width]);
+				seq_printf(buf, " %3d\n", diag_self[width + loop_i/width]);
 				}
 			}
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < width; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 	
 			#ifdef HX_EN_SEL_BUTTON
-			count += sprintf(buf + count, "\n");
+			seq_printf(buf, "\n");
 			for (loop_i = 0; loop_i < HX_BT_NUM; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
+				seq_printf(buf, "%4d", diag_self[HX_RX_NUM + HX_TX_NUM + loop_i]); 
 			}
 			#endif                
 		} 
@@ -3593,10 +3621,10 @@ static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t 
 		{
 			for (loop_i = 0; loop_i < self_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_self[loop_i]);
+				seq_printf(buf, "%4d", diag_self[loop_i]);
 				if (((loop_i - mutual_num) % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		} 
@@ -3604,15 +3632,15 @@ static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t 
 		{
 			for (loop_i = 0; loop_i < mutual_num; loop_i++) 
 			{
-				count += sprintf(buf + count, "%4d", diag_mutual[loop_i]);
+				seq_printf(buf, "%4d", diag_mutual[loop_i]);
 				if ((loop_i % width) == (width - 1))
 				{
-					count += sprintf(buf + count, "\n");
+					seq_printf(buf, "\n");
 				}
 			}
 		}
-		count += sprintf(buf + count, "ChannelEnd");
-		count += sprintf(buf + count, "\n");
+		seq_printf(buf, "ChannelEnd");
+		seq_printf(buf, "\n");
 	}
 	else if (diag_command == 7)
 	{
@@ -3620,18 +3648,18 @@ static ssize_t himax_me372cl_chip_proc_diag_read(char *buf, char **start, off_t 
 		{
 			if((loop_i % 16) == 0)
 			{
-				count += sprintf(buf + count, "LineStart:");
+				seq_printf(buf, "LineStart:");
 			}
 
-			count += sprintf(buf + count, "%4d", diag_coor[loop_i]);
+			seq_printf(buf, "%4d", diag_coor[loop_i]);
 			if((loop_i % 16) == 15)
 			{
-				count += sprintf(buf + count, "\n");
+				seq_printf(buf, "\n");
 			}
 		}
 	}
 	
-	return count;
+	return 0;
 }
 
 static ssize_t himax_me372cl_chip_proc_diag_write(struct file *filp, const char __user *buf, unsigned long len, void *data)
@@ -3752,12 +3780,21 @@ static ssize_t himax_me372cl_chip_proc_diag_write(struct file *filp, const char 
 	return len;
 }
 
+static int proc_chip_diag_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_me372cl_chip_proc_diag_read, NULL);
+}
+
+static const struct file_operations diag_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_diag_open,
+		.read = seq_read,
+        .write = himax_me372cl_chip_proc_diag_write,
+};
+
 static void himax_me372cl_chip_create_proc_diag_file(void)
 {
-	himax_me372cl_proc_diag_file = create_proc_entry(HIMAX_ME372CL_PROC_DIAG_FILE, 0666, NULL);
+	himax_me372cl_proc_diag_file = proc_create(HIMAX_ME372CL_PROC_DIAG_FILE, 0666, NULL, &diag_fops);
 	if(himax_me372cl_proc_diag_file){
-		himax_me372cl_proc_diag_file->read_proc = himax_me372cl_chip_proc_diag_read;
-		himax_me372cl_proc_diag_file->write_proc = himax_me372cl_chip_proc_diag_write;
 	}
 	else{
 		printk(KERN_ERR "[Himax_ME372CL] %s: proc diag file create failed!\n", __func__);
@@ -3771,7 +3808,7 @@ static void himax_me372cl_chip_remove_proc_diag_file(void)
     remove_proc_entry(HIMAX_ME372CL_PROC_DIAG_FILE, &proc_root);
 }
 
-static ssize_t himax_me372cl_chip_proc_register_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_me372cl_chip_proc_register_read(struct seq_file *buf, void *v)
 {
     int ret = 0;
 	int base = 0;
@@ -3832,24 +3869,24 @@ static ssize_t himax_me372cl_chip_proc_register_read(char *buf, char **start, of
 			{
 				if(multi_cfg_bank[loop_i] == 1)
 				{
-					ret += sprintf(buf + ret, "Register: FE(%x)\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: FE(%x)\n", multi_register[loop_i]);
 				}
 				else
 				{
-					ret += sprintf(buf + ret, "Register: %x\n", multi_register[loop_i]);
+					seq_printf(buf, "Register: %x\n", multi_register[loop_i]);
 				}
 		
 				for (loop_j = 0; loop_j < 128; loop_j++)
 				{
-					ret += sprintf(buf + ret, "0x%2.2X ", multi_value[base++]);
+					seq_printf(buf, "0x%2.2X ", multi_value[base++]);
 					if ((loop_j % 16) == 15)
 					{
-						ret += sprintf(buf + ret, "\n");
+						seq_printf(buf, "\n");
 					}
 				}
 			}
 		}
-		return ret;
+		return 0;
 	}
 
 	if(config_bank_reg)
@@ -3879,29 +3916,29 @@ static ssize_t himax_me372cl_chip_proc_register_read(char *buf, char **start, of
 	{
 		if (i2c_himax_read(himax_data->client, register_command, bufdata, 128, DEFAULT_RETRY_CNT) < 0) 
 		{
-			return ret;
+			return 0;
 		}
 	}
 	
 	if(config_bank_reg)
 	{
-		ret += sprintf(buf, "command: FE(%x)\n", register_command);
+		seq_printf(buf, "command: FE(%x)\n", register_command);
 	}
 	else
 	{
-		ret += sprintf(buf, "command: %x\n", register_command);
+		seq_printf(buf, "command: %x\n", register_command);
 	}
 
 	for (loop_i = 0; loop_i < 128; loop_i++) 
 	{
-		ret += sprintf(buf + ret, "0x%2.2X ", bufdata[loop_i]);
+		seq_printf(buf, "0x%2.2X ", bufdata[loop_i]);
 		if ((loop_i % 16) == 15)
 		{
-			ret += sprintf(buf + ret, "\n");
+			seq_printf(buf, "\n");
 		}
 	}
-	ret += sprintf(buf + ret, "\n");
-    return ret;
+	seq_printf(buf, "\n");
+    return 0;
 }
 static ssize_t himax_me372cl_chip_proc_register_write(struct file *filp, const char *buf, unsigned long len, void *data)
 {
@@ -4059,12 +4096,21 @@ static ssize_t himax_me372cl_chip_proc_register_write(struct file *filp, const c
     return len;
 }
 
+static int proc_chip_register_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_me372cl_chip_proc_register_read, NULL);
+}
+
+static const struct file_operations register_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_register_open,
+		.read = seq_read,
+        .write = himax_me372cl_chip_proc_register_write,
+};
+
 static void himax_me372cl_chip_create_proc_register(void)
 {
-	himax_me372cl_proc_register = create_proc_entry(HIMAX_ME372CL_PROC_REGISTER, 0666, NULL);
+	himax_me372cl_proc_register = proc_create(HIMAX_ME372CL_PROC_REGISTER, 0666, NULL, &register_fops);
 	if(himax_me372cl_proc_register){
-		himax_me372cl_proc_register->read_proc = himax_me372cl_chip_proc_register_read;
-		himax_me372cl_proc_register->write_proc = himax_me372cl_chip_proc_register_write;
 	}
 	else{
 		printk(KERN_ERR "[Himax_ME372CL] %s: proc config file create failed!\n", __func__);
@@ -4079,7 +4125,7 @@ static void himax_me372cl_chip_remove_proc_register(void)
 }
 
 
-static ssize_t himax_me372cl_chip_proc_debug_level_show(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static ssize_t himax_me372cl_chip_proc_debug_level_show(struct seq_file *buf, void *v)
 {
 	size_t count = 0;
 	int i = 0;
@@ -4088,127 +4134,127 @@ static ssize_t himax_me372cl_chip_proc_debug_level_show(char *buf, char **start,
 	{
 		if(fw_update_complete)
 		{
-			count += sprintf(buf, "FW Update Complete \n");
+			seq_printf(buf, "FW Update Complete \n");
 		}
 		else
 		{
-			count += sprintf(buf, "FW Update Fail \n");
+			seq_printf(buf, "FW Update Fail \n");
 		}
 	}
 	else if(debug_level_cmd == 'i')
 	{
 		if(irq_enable)
 		{
-			count += sprintf(buf, "IRQ is enable\n");
+			seq_printf(buf, "IRQ is enable\n");
 		}
 		else
 		{
-			count += sprintf(buf, "IRQ is disable\n");
+			seq_printf(buf, "IRQ is disable\n");
 		}
 	}
 	else if(debug_level_cmd == 'h')
 	{
 		if(handshaking_result == 0)
 		{
-			count += sprintf(buf, "Handshaking Result = %d (MCU Running)\n",handshaking_result);
+			seq_printf(buf, "Handshaking Result = %d (MCU Running)\n",handshaking_result);
 		}
 		else if(handshaking_result == 1)
 		{
-			count += sprintf(buf, "Handshaking Result = %d (MCU Stop)\n",handshaking_result);
+			seq_printf(buf, "Handshaking Result = %d (MCU Stop)\n",handshaking_result);
 		}
 		else if(handshaking_result == 2)
 		{
-			count += sprintf(buf, "Handshaking Result = %d (I2C Error)\n",handshaking_result);
+			seq_printf(buf, "Handshaking Result = %d (I2C Error)\n",handshaking_result);
 		}
 		else
 		{
-			count += sprintf(buf, "Handshaking Result = error \n");
+			seq_printf(buf, "Handshaking Result = error \n");
 		}
 	}
 	else if(debug_level_cmd == 'v')
 	{
-		count += sprintf(buf + count, "FW_VER_MAJ_buff = ");
-              count += sprintf(buf + count, "0x%2.2X \n",FW_VER_MAJ_buff[0]);
+		seq_printf(buf, "FW_VER_MAJ_buff = ");
+        seq_printf(buf, "0x%2.2X \n",FW_VER_MAJ_buff[0]);
 
-		count += sprintf(buf + count, "FW_VER_MIN_buff = ");
-              count += sprintf(buf + count, "0x%2.2X \n",FW_VER_MIN_buff[0]);
+		seq_printf(buf, "FW_VER_MIN_buff = ");
+        seq_printf(buf, "0x%2.2X \n",FW_VER_MIN_buff[0]);
 
-		count += sprintf(buf + count, "CFG_VER_MAJ_buff = ");
+		seq_printf(buf, "CFG_VER_MAJ_buff = ");
 		for( i=0 ; i<12 ; i++)
 		{
-			count += sprintf(buf + count, "0x%2.2X ",CFG_VER_MAJ_buff[i]);
+		seq_printf(buf, "0x%2.2X ",CFG_VER_MAJ_buff[i]);
 		}
-		count += sprintf(buf + count, "\n");
+		seq_printf(buf, "\n");
 
-		count += sprintf(buf + count, "CFG_VER_MIN_buff = ");
+		seq_printf(buf, "CFG_VER_MIN_buff = ");
               for( i=0 ; i<12 ; i++)
               {
-                  count += sprintf(buf + count, "0x%2.2X ",CFG_VER_MIN_buff[i]);
+        seq_printf(buf, "0x%2.2X ",CFG_VER_MIN_buff[i]);
               }
-		count += sprintf(buf + count, "\n");
+		seq_printf(buf, "\n");
 	}
 	else if(debug_level_cmd == 'd')
 	{
-		count += sprintf(buf + count, "Himax Touch IC Information :\n");
+		seq_printf(buf, "Himax Touch IC Information :\n");
 		if(IC_TYPE == HX_85XX_A_SERIES_PWON)
 		{
-			count += sprintf(buf + count, "IC Type : A\n");
+			seq_printf(buf, "IC Type : A\n");
 		}
 		else if(IC_TYPE == HX_85XX_B_SERIES_PWON)
 		{
-			count += sprintf(buf + count, "IC Type : B\n");
+			seq_printf(buf, "IC Type : B\n");
 		}
 		else if(IC_TYPE == HX_85XX_C_SERIES_PWON)
 		{
-			count += sprintf(buf + count, "IC Type : C\n");
+			seq_printf(buf, "IC Type : C\n");
 		}
 		else if(IC_TYPE == HX_85XX_D_SERIES_PWON)
 		{
-			count += sprintf(buf + count, "IC Type : D\n");
+			seq_printf(buf, "IC Type : D\n");
 		}
 		else 
 		{
-			count += sprintf(buf + count, "IC Type error.\n");
+			seq_printf(buf, "IC Type error.\n");
 		}
 		
 		if(IC_CHECKSUM == HX_TP_BIN_CHECKSUM_SW)
 		{
-			count += sprintf(buf + count, "IC Checksum : SW\n");
+			seq_printf(buf, "IC Checksum : SW\n");
 		}
 		else if(IC_CHECKSUM == HX_TP_BIN_CHECKSUM_HW)
 		{
-			count += sprintf(buf + count, "IC Checksum : HW\n");
+			seq_printf(buf, "IC Checksum : HW\n");
 		}
 		else if(IC_CHECKSUM == HX_TP_BIN_CHECKSUM_CRC)
 		{
-			count += sprintf(buf + count, "IC Checksum : CRC\n");
+			seq_printf(buf, "IC Checksum : CRC\n");
 		}
 		else
 		{
-			count += sprintf(buf + count, "IC Checksum error.\n");
+			seq_printf(buf, "IC Checksum error.\n");
 		}		
 		
 		if(HX_INT_IS_EDGE)
 		{
-			count += sprintf(buf + count, "Interrupt : EDGE TIRGGER\n");
+			seq_printf(buf, "Interrupt : EDGE TIRGGER\n");
 		}
 		else
 		{
-			count += sprintf(buf + count, "Interrupt : LEVEL TRIGGER\n");
+			seq_printf(buf, "Interrupt : LEVEL TRIGGER\n");
 		}
 		
-		count += sprintf(buf + count, "RX Num : %d\n",HX_RX_NUM);
-		count += sprintf(buf + count, "TX Num : %d\n",HX_TX_NUM);
-		count += sprintf(buf + count, "BT Num : %d\n",HX_BT_NUM);
-		count += sprintf(buf + count, "X Resolution : %d\n",HX_X_RES);
-		count += sprintf(buf + count, "Y Resolution : %d\n",HX_Y_RES);
-		count += sprintf(buf + count, "Max Point : %d\n",HX_MAX_PT);
+		seq_printf(buf, "RX Num : %d\n",HX_RX_NUM);
+		seq_printf(buf, "TX Num : %d\n",HX_TX_NUM);
+		seq_printf(buf, "BT Num : %d\n",HX_BT_NUM);
+		seq_printf(buf, "X Resolution : %d\n",HX_X_RES);
+		seq_printf(buf, "Y Resolution : %d\n",HX_Y_RES);
+		seq_printf(buf, "Max Point : %d\n",HX_MAX_PT);
 	}
 	else
 	{
-		count += sprintf(buf, "%d\n", debug_log_level);
+		seq_printf(buf, "%d\n", debug_log_level);
 	}
-	return count;
+	return 0;
 }
 
 static ssize_t himax_me372cl_chip_proc_debug_level_dump(struct file *filp1, const char *buf, unsigned long len, void *data)
@@ -4368,12 +4414,21 @@ firmware_upgrade_done:
 	return len;
 }
 
+static int proc_chip_debug_level_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_me372cl_chip_proc_debug_level_show, NULL);
+}
+
+static const struct file_operations debug_level_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_debug_level_open,
+		.read = seq_read,
+        .write = himax_me372cl_chip_proc_debug_level_dump,
+};
+
 static void himax_me372cl_chip_create_proc_debug_level(void)
 {
-	himax_me372cl_proc_debug_level = create_proc_entry(HIMAX_ME372CL_PROC_DEBUG_LEVEL, 0666, NULL);
+	himax_me372cl_proc_debug_level = proc_create(HIMAX_ME372CL_PROC_DEBUG_LEVEL, 0666, NULL, &debug_level_fops);
 	if(himax_me372cl_proc_debug_level){
-		himax_me372cl_proc_debug_level->read_proc = himax_me372cl_chip_proc_debug_level_show;
-		himax_me372cl_proc_debug_level->write_proc = himax_me372cl_chip_proc_debug_level_dump;
 	}
 	else{
 		printk(KERN_ERR "[Himax_ME372CL] %s: proc debug level create failed!\n", __func__);
@@ -6388,7 +6443,7 @@ static void himax_ts_flash_work_func(struct work_struct *work)
 }
 #endif
 
-static ssize_t himax_me372cl_chip_proc_flash_show(char *buf, char **start, off_t off, int count1, int *eof, void *data)
+static ssize_t himax_me372cl_chip_proc_flash_show(struct seq_file *buf, void *v)
 {
 	int ret = 0;
 	int loop_i;
@@ -6407,62 +6462,62 @@ static ssize_t himax_me372cl_chip_proc_flash_show(char *buf, char **start, off_t
 	
 	if(local_flash_fail)
 	{
-		ret += sprintf(buf+ret, "FlashStart:Fail \n");
-		ret += sprintf(buf + ret, "FlashEnd");
-		ret += sprintf(buf + ret, "\n");
-		return ret;
+		seq_printf(buf, "FlashStart:Fail \n");
+		seq_printf(buf, "FlashEnd");
+		seq_printf(buf, "\n");
+		return 0;
 	}
 	
 	if(!local_flash_complete)
 	{
-		ret += sprintf(buf+ret, "FlashStart:Ongoing:0x%2.2x \n",flash_progress);
-		ret += sprintf(buf + ret, "FlashEnd");
-		ret += sprintf(buf + ret, "\n");
-		return ret;
+		seq_printf(buf, "FlashStart:Ongoing:0x%2.2x \n",flash_progress);
+		seq_printf(buf, "FlashEnd");
+		seq_printf(buf, "\n");
+		return 0;
 	}
 	
 	if(local_flash_command == 1 && local_flash_complete)
 	{
-		ret += sprintf(buf+ret, "FlashStart:Complete \n");
-		ret += sprintf(buf + ret, "FlashEnd");
-		ret += sprintf(buf + ret, "\n");
-		return ret;
+		seq_printf(buf, "FlashStart:Complete \n");
+		seq_printf(buf, "FlashEnd");
+		seq_printf(buf, "\n");
+		return 0;
 	}
 	
 	if(local_flash_command == 3 && local_flash_complete)
 	{
-		ret += sprintf(buf+ret, "FlashStart: \n");
+		seq_printf(buf, "FlashStart: \n");
 		for(loop_i = 0; loop_i < 128; loop_i++)
 		{
-			ret += sprintf(buf + ret, "x%2.2x", flash_buffer[loop_i]);
+			seq_printf(buf, "x%2.2x", flash_buffer[loop_i]);
 			if((loop_i % 16) == 15)
 			{
-				ret += sprintf(buf + ret, "\n");
+				seq_printf(buf, "\n");
 			}
 		}
-		ret += sprintf(buf + ret, "FlashEnd");
-		ret += sprintf(buf + ret, "\n");
-		return ret;
+		seq_printf(buf, "FlashEnd");
+		seq_printf(buf, "\n");
+		return 0;
 	}
 	
 	//flash command == 0 , report the data
 	local_flash_read_step = getFlashReadStep();
 	
-	ret += sprintf(buf+ret, "FlashStart:%2.2x \n",local_flash_read_step);
+	seq_printf(buf, "FlashStart:%2.2x \n",local_flash_read_step);
 	
 	for (loop_i = 0; loop_i < 1024; loop_i++) 
 	{
-		ret += sprintf(buf + ret, "x%2.2X", flash_buffer[local_flash_read_step*1024 + loop_i]);
+		seq_printf(buf, "x%2.2X", flash_buffer[local_flash_read_step*1024 + loop_i]);
 		
 		if ((loop_i % 16) == 15)
 		{
-			ret += sprintf(buf + ret, "\n");
+			seq_printf(buf, "\n");
 		}
 	}
 	
-	ret += sprintf(buf + ret, "FlashEnd");
-	ret += sprintf(buf + ret, "\n");
-	return ret;
+	seq_printf(buf, "FlashEnd");
+	seq_printf(buf, "\n");
+	return 0;
 }
 
 static ssize_t himax_me372cl_chip_proc_flash_store(struct file *filp1, const char *buf, unsigned long len, void *data)
@@ -6592,12 +6647,21 @@ static ssize_t himax_me372cl_chip_proc_flash_store(struct file *filp1, const cha
 	return len;
 }
 
+static int proc_chip_flash_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_me372cl_chip_proc_flash_show, NULL);
+}
+
+static const struct file_operations flash_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_flash_open,
+		.read = seq_read,
+        .write = himax_me372cl_chip_proc_flash_store,
+};
+
 static void himax_me372cl_chip_create_proc_flash_dump(void)
 {
-	himax_me372cl_proc_flash_dump = create_proc_entry(HIMAX_ME372CL_PROC_FLASH_DUMP, 0666, NULL);
+	himax_me372cl_proc_flash_dump = proc_create(HIMAX_ME372CL_PROC_FLASH_DUMP, 0666, NULL, &flash_fops);
 	if(himax_me372cl_proc_flash_dump){
-		himax_me372cl_proc_flash_dump->read_proc = himax_me372cl_chip_proc_flash_show;
-		himax_me372cl_proc_flash_dump->write_proc = himax_me372cl_chip_proc_flash_store;
 	}
 	else{
 		printk(KERN_ERR "[Himax_ME372CL] %s: proc debug level create failed!\n", __func__);
@@ -7234,6 +7298,12 @@ static int himax_touch_sysfs_init(void)
 	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_himax_check_sum failed\n");
 	    return ret;
 	}
+	ret = sysfs_create_file(android_touch_kobj, &dev_attr_tp_fw_upgrade.attr);
+	if (ret)
+	{
+	    printk(KERN_ERR "[Himax]: sysfs_create_file dev_attr_tp_fw_upgrade failed\n");
+	    return ret;
+	}
 	//add by Josh -------
 	return 0 ;
 }
@@ -7276,7 +7346,10 @@ static void himax_touch_sysfs_deinit(void)
 	sysfs_remove_file(android_touch_kobj, &dev_attr_debug_log.attr);
 	
 	sysfs_remove_file(android_touch_kobj, &dev_attr_himax_check_sum.attr);
+	
+	sysfs_remove_file(android_touch_kobj, &dev_attr_tp_fw_upgrade.attr);
 	//add by Josh -------
+	
 	
 	kobject_del(android_touch_kobj);
 }
@@ -7286,6 +7359,110 @@ static void himax_touch_sysfs_deinit(void)
 //	Segment : Upgrade firmware from kernel image 
 //	By Josh
 //=============================================================================================================		
+static int himax_CRC_check(void)
+{	
+	int err=0;
+	uint8_t cmd[5];
+
+	// reset
+	himax_hw_reset();
+
+	//add by leo for checking register 0xD1 to avoid i2c fail when CRC check ++
+	if( i2c_himax_read(himax_data->client, 0xD1, cmd, 4, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c_himax_read 0xD1 failed line: %d\n", __func__, __LINE__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	printk(KERN_ERR "[Himax] %s: register D1 is 0x%02X, 0x%02X, 0x%02X, 0x%02X\n", __func__, cmd[0], cmd[1], cmd[2], cmd[3]);
+	if( cmd[0] == 0 && cmd[1] == 0 && cmd[2] == 0 && cmd[3] == 0 )
+	{
+		printk(KERN_ERR "[Himax] %s: skip CRC check due to PAD touch power off\n", __func__);
+		goto himax_CRC_check_finished;
+	}
+	//add by leo for checking register 0xD1 to avoid i2c fail when CRC check --
+
+	if((i2c_smbus_write_i2c_block_data(himax_data->client, 0x81, 0, &cmd[0]))< 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	mdelay(120);
+
+	//Set Flash Clock Rate
+	if( i2c_himax_read(himax_data->client, 0x7F, cmd, 5, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	cmd[3] = 0x02;
+	
+	if( i2c_himax_write(himax_data->client, 0x7F ,&cmd[0], 5, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	
+	//Enable Flash
+	himax_FlashMode(1);
+	
+	//Select CRC Mode
+	cmd[0] = 0x05;
+	cmd[1] = 0x00;
+	cmd[2] = 0x00;
+	if( i2c_himax_write(himax_data->client, 0xD2 ,&cmd[0], 3, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	} 
+	
+	//Enable CRC Function
+	cmd[0] = 0x01;
+	if( i2c_himax_write(himax_data->client, 0xE5 ,&cmd[0], 1, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	
+	//Must delay 30 ms
+	msleep(30);
+	
+	//Read HW CRC
+	if( i2c_himax_read(himax_data->client, 0xAD, cmd, 4, DEFAULT_RETRY_CNT) < 0)
+	{
+		printk(KERN_ERR "[Himax] %s: i2c access fail!\n", __func__);
+		goto himax_CRC_check_i2c_fail;
+	}
+	
+	if( cmd[0] == 0 && cmd[1] == 0 && cmd[2] == 0 && cmd[3] == 0 )
+	{
+		himax_FlashMode(0);
+		printk("[Himax] %s: HX_TP_BIN_CHECKSUM_CRC: Compare the checksum.\n", __func__);
+		//return 1;
+	}
+	else 
+	{
+		himax_FlashMode(0);
+		printk("[Himax] %s: HX_TP_BIN_CHECKSUM_CRC: Check Fail!\n", __func__);
+		goto himax_CRC_check_fail;
+	}
+
+	err = himax_ts_poweron(); 
+	if(err == 0){
+		printk(KERN_ERR "[Himax] %s: power on \n",__func__);
+	}else{
+		printk(KERN_ERR "[Himax] %s: power on error = %d.\n",__func__, err);
+		goto himax_CRC_check_i2c_fail;
+	}
+
+himax_CRC_check_finished:
+	return 1;
+himax_CRC_check_fail:
+	return 4;
+himax_CRC_check_i2c_fail:
+	return -1;
+
+}
+
 static int update_touch_progress(int update_progress)
 {
 	if(himax_data->AP_progress < update_progress || update_progress == 0)
@@ -7357,7 +7534,7 @@ static int himax_firmware_check(void)
     int upgrade_firmware_checksum = 0;
     char upgrade_config_ver[8];
     int upgrade_config_checksum = 0;
-    int i = 0, open_fail = 1;
+    int i = 0, open_fail = 1,CRC_result = 0;
     
 	for(i = 1; i <= 3; i++)
 	{		
@@ -7395,7 +7572,16 @@ static int himax_firmware_check(void)
 			return 2;
 		}
 	}
-				
+	
+	CRC_result = himax_CRC_check();
+	if(CRC_result == 4){
+		printk("[Himax]: CRC check fail, need to upgrade touch firmware.\n");
+		return 0;
+	}else if(CRC_result == -1){
+		printk("[Himax]: I2C fail, skip upgrade touch firmware.\n");
+		return 1;
+	}
+	
 	printk("[Himax] %s: upgrade bin files start len %d: %02X, %02X, %02X, %02X.\n", __func__, result, upgrade_fw[0], upgrade_fw[1], upgrade_fw[2], upgrade_fw[3]);
 	printk("[Himax] %s: upgrade bin files version: %02X %02X.\n", __func__, upgrade_fw[0x0085], upgrade_fw[0x0086]);
 	printk("[Himax] %s: upgrade bin files config version: %02X.\n", __func__, upgrade_fw[0x00B7]);
@@ -7662,6 +7848,22 @@ static int himax_chip_self_firmware_upgrade(struct work_struct *dat)
 	printk("[Himax]:Start firmware upgrade.\n");
 	himax_firmware_upgrade(SELF);
 	return 0;
+}
+
+static ssize_t himax_fw_upgrade(struct device *dev, struct device_attribute *attr, char *buf, size_t count)
+{
+	printk("[Himax]:Start firmware upgrade.\n");
+	himax_firmware_upgrade(SELF);
+	return count;	
+}
+
+static ssize_t himax_fw_check(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	printk("[Himax]:fw_update_complete : %s", fw_update_complete ? "true" : "false");
+ 	if(fw_update_complete == true)
+	return sprintf(buf, "0\n");
+	else
+	return sprintf(buf, "1\n");
 }
 	
 //=============================================================================================================
@@ -8429,10 +8631,21 @@ static int himax_ts_register_interrupt(struct i2c_client *client)
 //----[ i2c ]---------------------------------------------------------------------------------------------start
 static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *id)
 {
-	//struct himax_i2c_platform_data *pdata;
+	struct himax_i2c_platform_data *pdata;
 	int err = 0, i = 0;
 
 	printk("[Himax] %s ++ \n",__func__);
+	
+	// add by josh for skip COS/POS ++
+    if(entry_mode==4) {
+        printk("[Himax] In COS, skip\n");
+        return;
+    }else if(entry_mode==3) {
+        printk("[Himax] In POS, skip\n");
+        return;
+    }
+    //add by josh for skip COS/POS --
+	
 	//*********************************************************************************************************
 	// Check i2c functionality
 	//*********************************************************************************************************
@@ -8461,17 +8674,17 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	himax_data->tp_firmware_upgrade_proceed = 0;
 	himax_data->need_upgrade_fw = 0;
 	i2c_set_clientdata(client, himax_data);
-	/*pdata = client->dev.platform_data;
+	pdata = client->dev.platform_data;
 	if (likely(pdata != NULL)) {
 		himax_data->intr_gpio = pdata->intr_gpio;
 		himax_data->rst_gpio = pdata->rst_gpio;
-	}*/
+	}
 	printk("[Himax] %s: intr_gpio =%d, rst_gpio=%d \n", __func__, himax_data->intr_gpio, himax_data->rst_gpio);
 	printk("[Himax] %s: himax_ts_data allocate OK. \n",__func__);	
 	//*********************************************************************************************************
 	// TODO Interrupt Pin
 	//*********************************************************************************************************
-	himax_data->intr_gpio = HIMAX_INT_GPIO;
+	//himax_data->intr_gpio = HIMAX_INT_GPIO;
 	if( gpio_request(himax_data->intr_gpio, "HimaxTouch-irq") != 0 )
 	{
 		printk("[Himax]: interrupt gpio %d request fail.\n",HIMAX_PWR_GPIO);
@@ -8490,7 +8703,7 @@ static int himax_ts_probe(struct i2c_client *client,const struct i2c_device_id *
 	//*********************************************************************************************************
 	// TODO Reset Pin
 	//*********************************************************************************************************
-	himax_data->rst_gpio = HIMAX_RST_GPIO;
+	//himax_data->rst_gpio = HIMAX_RST_GPIO;
 	if( gpio_request(HIMAX_RST_GPIO, "HimaxTouch-reset") != 0)
 	{
 		printk("[Himax]: reset gpio %d request fail.\n",HIMAX_PWR_GPIO);
@@ -8951,7 +9164,7 @@ static struct i2c_driver himax_ts_driver =
 //	return err;
 //}	
 
-static int __devinit himax_ts_init(void)
+static int himax_ts_init(void)
 {
 	if(Read_PROJ_ID() == PROJ_ID_ME372CL && Read_HW_ID() != HW_ID_SR1){
 		printk(KERN_INFO "[himax] hx8528_ME372CL %s\n", __func__);
@@ -8983,7 +9196,7 @@ MODULE_LICENSE("GPL");
 //
 //=============================================================================================================
 
-static int himax_me372cl_cable_status(int status)
+int himax_me372cl_cable_status(int status)
 {
     uint8_t buf0[2] = {0};
 	

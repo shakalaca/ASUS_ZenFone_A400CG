@@ -32,10 +32,6 @@
 #include <linux/regulator/driver.h>
 
 #include <asm/intel-mid.h>
-#include <linux/HWVersion.h>
-
-extern int Read_PROJ_ID(void);
-extern int Read_HW_ID(void);
 
 /****** Clovertrail SoC ******/
 
@@ -419,7 +415,6 @@ static int _mmc1_reconnect_shim(void)
    }
 
    pr_info("%s: mmc1.vmmc recover original enctrl 0x%x, 0x%x\n",
-
            __func__, enctrl0_orig, enctrl1_orig);
 out:
    return err;
@@ -484,10 +479,8 @@ static struct platform_device vccsdio_device = {
 
 static int __init regulator_init(void)
 {
-	if ((PROJ_ID_ME175CG == Read_PROJ_ID()) && (HW_ID_SR1 == Read_HW_ID())){
-		vccsdio_data.constraints.always_on= 1;
-		vccsdio_data.constraints.force_boot_off = 0;
-	}
+	if (intel_mid_identify_cpu() != INTEL_MID_CPU_CHIP_CLOVERVIEW)
+		return 0;
 
 	if (INTEL_MID_BOARD(2, PHONE, CLVTP, VB, PRO)
 	    || INTEL_MID_BOARD(2, PHONE, CLVTP, VB, ENG)

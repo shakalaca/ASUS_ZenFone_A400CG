@@ -71,6 +71,8 @@ static int is_asrc5_changed;
 
 static int headphone_retry_time = 0;
 static int dac_is_unmute = 0;
+static int rt5640_index_write(struct snd_soc_codec *codec,
+                unsigned int reg, unsigned int value);
 
 // Jericho eq
 static  int Hal_user_scenario_mode;
@@ -83,8 +85,10 @@ static struct snd_soc_codec *rt5640_codec;
 static int ret_codec_status = 0;
 static ssize_t codec_show(struct device *dev, struct device_attribute *attr,
 		char *buf);
+static ssize_t codec_store(struct device *dev,struct device_attribute *attr, 
+	    	const char *buf, size_t count);
 
-static DEVICE_ATTR(audio_codec_status, S_IWUSR | S_IRUGO, codec_show, NULL);
+static DEVICE_ATTR(audio_codec_status, S_IWUSR | S_IRUGO, codec_show, codec_store);
 
 static ssize_t codec_show(struct device *dev, struct device_attribute *attr,
 		char *buf)
@@ -95,12 +99,26 @@ static ssize_t codec_show(struct device *dev, struct device_attribute *attr,
 		return sprintf(buf, "0\n");
 }
 
+static ssize_t codec_store(struct device *dev,struct device_attribute *attr, 
+	    	const char *buf, size_t count)
+{
+	return 0;
+}
+
 #ifdef CONFIG_EEPROM_PADSTATION
 static int p72g_atd_device = 0;
+static ssize_t p72g_device_show(struct device *dev, struct device_attribute *attr,
+		char *buf);
 static ssize_t p72g_device_store(struct device *dev, struct device_attribute *attr,
                         const char *buf, size_t count);
 
-static DEVICE_ATTR(p72g_device_status, S_IWUSR | S_IRUGO, NULL, p72g_device_store);
+static DEVICE_ATTR(p72g_device_status, S_IWUSR | S_IRUGO, p72g_device_show, p72g_device_store);
+
+static ssize_t p72g_device_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	return 0;
+}
 
 static ssize_t p72g_device_store(struct device *dev, struct device_attribute *attr,
                 const char *buf, size_t count)
@@ -145,7 +163,7 @@ struct rt5640_init_reg {
 };
 
 static struct timer_list mclk_check_timer;
-struct delayed_work hp_amp_work, spk_amp_l_work, spk_amp_r_work;
+struct delayed_work hp_amp_work, spk_amp_l_work, spk_amp_r_work, DAC_unmute_work;
 struct work_struct  mclk_check_work;
 
 static struct rt5640_init_reg init_list[] = {
@@ -200,12 +218,16 @@ static struct rt5640_init_reg init_list[] = {
 //	{RT5640_SPO_R_MIXER	, 0x1800},//DAC -> SPORMIX
 //	{RT5640_I2S1_SDP	, 0xD000},//change IIS1 and IIS2
 	/*record*/
-	{RT5640_IN1_IN2		, 0x0000},//IN1 boost 0db and single ended mode, IN3 boost 20dB and single ended mode
+#ifdef CONFIG_EEPROM_PADSTATION
+	{RT5640_IN1_IN2		, 0x0100},//IN1 boost 0db and single ended mode, IN3 boost 20dB and single ended mode
+#else	
+	{RT5640_IN1_IN2		, 0x0000},//IN1 boost 0db and single ended mode
+#endif
 	{RT5640_IN3_IN4		, 0x0140},//IN2 boost 20db and differential mode
 	{RT5640_REC_R2_MIXER	, 0x007f},//Mic2 -> RECMIXR
 //	{RT5640_REC_L2_MIXER	, 0x006f},//Mic2 -> RECMIXL
 //	{RT5640_REC_R2_MIXER	, 0x006f},//Mic2 -> RECMIXR
-#ifdef CONFIG_SWITCH_DOCK
+#ifdef CONFIG_EEPROM_PADSTATION
 	{RT5640_REC_L2_MIXER	, 0x007d},//Mic2 -> RECMIXR
 	{RT5640_STO_ADC_MIXER	, 0x7440},//DMIC2 -> Stereo ADC Mixer 
 	{RT5640_MONO_ADC_MIXER	, 0x7454},//DMIC2 -> Mono ADC Mixer
@@ -247,9 +269,14 @@ static int rt5640_reg_init(struct snd_soc_codec *codec)
 		snd_soc_write(codec, init_list[i].reg, init_list[i].val);
 	
 	// joe_cheng : change class d amp ratio to 2.55x for PR and MP
-	if ( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 6 || HW_ID == 1)) || PROJ_ID == PROJ_ID_A400CG ) {	
+	if ( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 6 || HW_ID == 1)) || PROJ_ID == PROJ_ID_A400CG) {	
 		snd_soc_write(codec, RT5640_CLS_D_OUT, 0x6000);
 	}
+ 
+        if ( PROJ_ID == PROJ_ID_ME175CG ) {
+                rt5640_index_write(codec, RT5640_WND_3, 0x3259);
+                snd_soc_write(codec, RT5640_IN1_IN2, 0x1100);
+        }
 
 	return 0;
 }
@@ -735,20 +762,26 @@ int rt5640_headset_detect(struct snd_soc_codec *codec, int jack_insert)
 		// joe_cheng : Workaround for TT#331186, TT#333088
 		if (jack_type == RT5640_HEADPHO_DET) {
 			if (headphone_retry_time < 3 && 
-			   ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0 || (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1000) != 0))
+			   ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0 || (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1000) != 0)) {
 				snd_soc_update_bits(codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, 0x0);
+                                schedule_delayed_work(&DAC_unmute_work,msecs_to_jiffies(800));
+                        }
 		}
 		if (jack_type == RT5640_HEADSET_DET) {
-			if ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0 || (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1000) != 0)
+			if ((snd_soc_read(codec, RT5640_PWR_DIG1) & 0x0800) != 0 || (snd_soc_read(codec, RT5640_PWR_DIG1) & 0x1000) != 0) {
 				snd_soc_update_bits(codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, 0x0);
+                                schedule_delayed_work(&DAC_unmute_work,msecs_to_jiffies(800));
+                        }
 		}
 	} else {
 		snd_soc_update_bits(codec, RT5640_MICBIAS,
 			RT5640_MIC1_OVCD_MASK,
 			RT5640_MIC1_OVCD_DIS);
+                if (PROJ_ID != PROJ_ID_ME175CG)
 		snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
 			RT5640_PWR_LDO2, 0);
 		
+                cancel_delayed_work_sync(&DAC_unmute_work);
 		jack_type = RT5640_NO_JACK;
 		headphone_retry_time = 0;
 		dac_is_unmute = 0;
@@ -1019,6 +1052,12 @@ static int rt5640_vol_rescale_get(struct snd_kcontrol *kcontrol,
           ucontrol->value.integer.value[1] = ME175CG_RT5640_VOL_RSCL_MAX -
                 (val & RT5640_R_VOL_MASK);
         }
+        else if(PROJ_ID == PROJ_ID_ME372CL) {
+          ucontrol->value.integer.value[0] = ME372CL_RT5640_VOL_RSCL_MAX -
+                ((val & RT5640_L_VOL_MASK) >> mc->shift);
+          ucontrol->value.integer.value[1] = ME372CL_RT5640_VOL_RSCL_MAX -
+                (val & RT5640_R_VOL_MASK);
+	}
 	else { 
           ucontrol->value.integer.value[0] = RT5640_VOL_RSCL_MAX -
 		((val & RT5640_L_VOL_MASK) >> mc->shift);
@@ -1039,6 +1078,10 @@ static int rt5640_vol_rescale_put(struct snd_kcontrol *kcontrol,
         if(PROJ_ID == PROJ_ID_ME175CG) {
           val = ME175CG_RT5640_VOL_RSCL_MAX - ucontrol->value.integer.value[0];
           val2 = ME175CG_RT5640_VOL_RSCL_MAX - ucontrol->value.integer.value[1];
+        }
+        else if(PROJ_ID == PROJ_ID_ME372CL) {
+          val = ME372CL_RT5640_VOL_RSCL_MAX - ucontrol->value.integer.value[0];
+          val2 = ME372CL_RT5640_VOL_RSCL_MAX - ucontrol->value.integer.value[1];
         }
         else {
 	  val = RT5640_VOL_RSCL_MAX - ucontrol->value.integer.value[0];
@@ -1085,6 +1128,9 @@ static const struct snd_kcontrol_new rt5640_snd_controls[] = {
 	SOC_ENUM("IN1 Mode Control",  rt5640_in1_mode_enum),
 	SOC_SINGLE_TLV("IN1 Boost", RT5640_IN1_IN2,
 		RT5640_BST_SFT1, 8, 0, bst_tlv),
+	SOC_ENUM("IN3 Mode Control",  rt5640_in1_mode_enum),
+	SOC_SINGLE_TLV("IN3 Boost", RT5640_IN1_IN2,
+		RT5640_BST_SFT2, 8, 0, bst_tlv),
 	SOC_ENUM("IN2 Mode Control", rt5640_in2_mode_enum),
 	SOC_SINGLE_TLV("IN2 Boost", RT5640_IN3_IN4,
 		RT5640_BST_SFT2, 8, 0, bst_tlv),
@@ -1595,8 +1641,10 @@ static int rt5640_adc_event(struct snd_soc_dapm_widget *w,
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
                 if (PROJ_ID == PROJ_ID_GEMINI) {
+#if defined(CONFIG_ME302C_SPC_PWR_SET)			
                         gpio_set_value(PIN_3VSUS_EN, 1);
                         pr_debug("%s : 3v pull high %d\n", __func__, gpio_get_value(PIN_3VSUS_EN));
+#endif
 
                         snd_soc_write(codec, RT5640_DRC_AGC_1, 0xe206);
                         snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
@@ -1605,25 +1653,31 @@ static int rt5640_adc_event(struct snd_soc_dapm_widget *w,
 
                 // Enable the micbias and LDO for ME175CG Board-mic
                 if (PROJ_ID == PROJ_ID_ME175CG) {
+                        if(gpio_get_value(JACK_DETECT_PIN) != 0) {
+                          snd_soc_write(codec, RT5640_DRC_AGC_1, 0xe226);
+                          snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+                          snd_soc_write(codec, RT5640_DRC_AGC_3, 0xa657);
+                        }
                         snd_soc_update_bits(codec, RT5640_PWR_ANLG1,RT5640_PWR_LDO2, RT5640_PWR_LDO2);
                         snd_soc_update_bits(codec, RT5640_PWR_ANLG2, RT5640_PWR_MB1, RT5640_PWR_MB1);
-                        snd_soc_write(codec, RT5640_IN1_IN2, 0x1100);
                         gpio_set_value(MIC2_BIAS_EN, 1);
                 }
 
+                if (PROJ_ID == PROJ_ID_PF400CG || PROJ_ID == PROJ_ID_A400CG) {
 #ifdef USE_EQ		
-		if (output_device_from_hal() == 0x40000) {
+		  if (output_device_from_hal() == 0x40000) {
 //			rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, P72G_MIC, true);
 			snd_soc_write(codec, RT5640_DRC_AGC_1, 0xe226);
 			snd_soc_write(codec, RT5640_DRC_AGC_2, 0x33b1);
 			snd_soc_write(codec, RT5640_DRC_AGC_3, 0xa557);			
-		} /*else if (output_device_from_hal() == 0x100000) {
+		  } /*else if (output_device_from_hal() == 0x100000) {
 			//rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, HEADSET_MIC, true);
 			snd_soc_write(codec, RT5640_DRC_AGC_1, 0xe226);
 			snd_soc_write(codec, RT5640_DRC_AGC_2, 0x33b2);
 			snd_soc_write(codec, RT5640_DRC_AGC_3, 0xa557);			
-		}*/
+		  }*/
 #endif
+                }
 		rt5640_index_update_bits(codec,
 			RT5640_CHOP_DAC_ADC, 0x1000, 0x1000);
 #ifdef CONFIG_EEPROM_PADSTATION
@@ -1634,8 +1688,10 @@ static int rt5640_adc_event(struct snd_soc_dapm_widget *w,
 
 	case SND_SOC_DAPM_POST_PMD:
                 if (PROJ_ID == PROJ_ID_GEMINI) {
+#if defined(CONFIG_ME302C_SPC_PWR_SET)			
                         gpio_set_value(PIN_3VSUS_EN, 0);
                         pr_debug("%s : 3v pull low %d\n", __func__, gpio_get_value(PIN_3VSUS_EN));
+#endif
 
                         snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
                         snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
@@ -1647,23 +1703,29 @@ static int rt5640_adc_event(struct snd_soc_dapm_widget *w,
                         if(gpio_get_value(JACK_DETECT_PIN) != 0) {
                           snd_soc_update_bits(codec, RT5640_PWR_ANLG1,RT5640_PWR_LDO2, 0);
                           snd_soc_update_bits(codec, RT5640_PWR_ANLG2, RT5640_PWR_MB1, 0);
+                          snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
+                          snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+                          snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
                         }
                         gpio_set_value(MIC2_BIAS_EN, 0);
                 }
+     
+                if (PROJ_ID == PROJ_ID_PF400CG || PROJ_ID == PROJ_ID_A400CG) {
 #ifdef USE_EQ		
-		snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
-		snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
-		snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
+		  snd_soc_write(codec, RT5640_DRC_AGC_1, 0x2206);
+		  snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+		  snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);
 #endif
 	/*	
-		if (output_device_from_hal() == 0x40000) {
+		  if (output_device_from_hal() == 0x40000) {
 			rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, P72G_MIC, false);
 			//rt5640_update_drc_agc_mode(codec, NONE, P72G_MIC, false);
-		} else if (output_device_from_hal() == 0x100000) {
+		  } else if (output_device_from_hal() == 0x100000) {
 			rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, HEADSET_MIC, false);
 			//rt5640_update_drc_agc_mode(codec, NONE, HEADSET_MIC, false);
-		}
+		  }
 	*/
+                }
 		rt5640_index_update_bits(codec,
 			RT5640_CHOP_DAC_ADC, 0x1000, 0x0000);
 #ifdef CONFIG_EEPROM_PADSTATION
@@ -1780,13 +1842,21 @@ static int rt5640_spk_l_event(struct snd_soc_dapm_widget *w,
 	switch (event) {
 		case SND_SOC_DAPM_POST_PMU:
 #ifdef USE_EQ
-			rt5640_update_eqmode(codec, Hal_user_scenario_mode, A12_SPEAKER);
-//			rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, A12_SPEAKER, true);
-		        if (Hal_user_scenario_mode == RINGTONE) {
+                        if (PROJ_ID == PROJ_ID_ME175CG) {
+                                rt5640_update_eqmode(codec, PLAYBACK, A12_SPEAKER);
+                        }
+
+                        if (PROJ_ID == PROJ_ID_PF400CG || PROJ_ID == PROJ_ID_A400CG) {
+			  //printk("joe %s : pad version %d\n", __func__, AX_MicroP_getHWID());
+                          if (Hal_user_scenario_mode != RINGTONE)
+			        rt5640_update_eqmode(codec, Hal_user_scenario_mode, A12_SPEAKER);
+
+			  if (Hal_user_scenario_mode == RINGTONE) {
 				snd_soc_write(codec, RT5640_DRC_AGC_1, 0x6006);
 				snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1fe8);
-				snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
-			}
+		  		snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
+			  }
+                        }
 #endif
 			schedule_delayed_work(&spk_amp_l_work,
 					msecs_to_jiffies(50));
@@ -1794,16 +1864,23 @@ static int rt5640_spk_l_event(struct snd_soc_dapm_widget *w,
 
 		case SND_SOC_DAPM_PRE_PMD:
 #ifdef USE_EQ
-			rt5640_update_eqmode(codec, NONE, NONE);
-//			rt5640_update_drc_agc_mode(codec, NONE, A12_SPEAKER);
-//			rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, A12_SPEAKER, false);
-		        if (Hal_user_scenario_mode == RINGTONE) {
-				snd_soc_write(codec, RT5640_DRC_AGC_1, 0x0206);
+                        if (PROJ_ID == PROJ_ID_ME175CG) {
+                                 rt5640_update_eqmode(codec, NONE, NONE);
+                        }
+
+                        if (PROJ_ID == PROJ_ID_PF400CG || PROJ_ID == PROJ_ID_A400CG) {
+                          if (Hal_user_scenario_mode != RINGTONE)
+			        rt5640_update_eqmode(codec, NONE, NONE);
+//			  rt5640_update_drc_agc_mode(codec, NONE, A12_SPEAKER);
+//			  rt5640_update_drc_agc_mode(codec, Hal_user_scenario_mode, A12_SPEAKER, false);
+		          if (Hal_user_scenario_mode == RINGTONE) {
+			  	snd_soc_write(codec, RT5640_DRC_AGC_1, 0x0206);
 				snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
 				snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
-			} else if(Hal_user_scenario_mode == RECORD) {
+			  } else if(Hal_user_scenario_mode == RECORD) {
 				printk("%s : don't update drc for ringtone\n", __func__);
-			}
+			  }
+                        }
 #endif
 			cancel_delayed_work_sync(&spk_amp_l_work);
 			snd_soc_update_bits(codec, RT5640_PWR_DIG1,
@@ -1826,8 +1903,14 @@ static int rt5640_spk_r_event(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 		case SND_SOC_DAPM_POST_PMU:
-			schedule_delayed_work(&spk_amp_r_work,
-					msecs_to_jiffies(1000));
+                        if (PROJ_ID == PROJ_ID_ME372CL){
+                           schedule_delayed_work(&spk_amp_r_work,
+                                           msecs_to_jiffies(50));
+                        }
+                        else{  
+			   schedule_delayed_work(&spk_amp_r_work,
+					   msecs_to_jiffies(1000));
+                        }
 			break;
 
 		case SND_SOC_DAPM_PRE_PMD:
@@ -2069,7 +2152,6 @@ void hp_amp_power(struct snd_soc_codec *codec, int on)
 static void rt5640_pmu_depop(struct snd_soc_codec *codec)
 {
 	hp_amp_power(codec, 1);
-	// Add workqueue for pop sound occurs when changing to sequence depop
 	schedule_delayed_work(&hp_amp_work,msecs_to_jiffies(90));
 	/* headphone unmute sequence */
 	/*
@@ -2094,9 +2176,6 @@ static void rt5640_pmu_depop(struct snd_soc_codec *codec)
 		RT5640_HP_R_SMT_MASK, RT5640_HP_SG_DIS |
 		RT5640_HP_L_SMT_DIS | RT5640_HP_R_SMT_DIS);
 	*/
-//	msleep(5);
-//	snd_soc_update_bits(codec, RT5640_HP_VOL,
-//		RT5640_L_MUTE | RT5640_R_MUTE, 0);
 
 }
 
@@ -2138,7 +2217,6 @@ static int rt5640_hp_event(struct snd_soc_dapm_widget *w,
 #ifdef USE_EQ   
 //		rt5640_update_eqmode(codec, Hal_user_scenario_mode, HEADPHONE);
 #endif
-
 		rt5640_pmu_depop(codec);
 		break;
 
@@ -2189,90 +2267,44 @@ static int rt5640_lout_event(struct snd_soc_dapm_widget *w,
 		hp_amp_power(codec,1);
 		snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
 			RT5640_PWR_LM, RT5640_PWR_LM);
-/*#ifdef USE_EQ
-		rt5640_update_eqmode(codec, Hal_user_scenario_mode, P72G_SPEAKER);
-#endif*/
+#ifdef USE_EQ
+		rt5640_update_eqmode(codec, Hal_user_scenario_mode, A12_SPEAKER);
+		if (Hal_user_scenario_mode == RINGTONE) {
+			snd_soc_write(codec, RT5640_DRC_AGC_1, 0x6006);
+			snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1fe8);
+			snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
+		}
+#endif
 #ifdef CONFIG_EEPROM_PADSTATION		
+		pr_debug("%s: Hal_user_scenario_mode %d\n", __func__, Hal_user_scenario_mode);
 		snd_soc_update_bits(codec, RT5640_GEN_CTRL1, 0x4000, 0x4000);
-		/*
-		if (PROJ_ID == PROJ_ID_PF400CG) { 
-			pr_info("P72G HW ID %d\n", AX_MicroP_getHWID());
-			if (AX_MicroP_getHWID() == 3 || AX_MicroP_getHWID() == 1 || AX_MicroP_getHWID() == 2) { // ER1-1, ER2, PR => differential
-				snd_soc_update_bits(codec, RT5640_GEN_CTRL1, 0x4000, 0x4000);
-				if (p72g_atd_device == 1) { // RCV test
-					//AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
-					AX_MicroP_setRCV_EN(1);
-					p72g_atd_device = 0;
-					pr_info("%s : p72g_atd_device = 1, set RCV_SEL on\n", __func__);
-				} else if (p72g_atd_device == 2) { // SPK test
-					//AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
-					AX_MicroP_setSPK_EN(1);
-					p72g_atd_device = 0;
-					pr_info("%s : p72g_atd_device = 2, set SPK_SEL on\n", __func__);
-				} else if (output_device_from_hal() == 0x2) {
-					//AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
-					AX_MicroP_setSPK_EN(1);
-					pr_info("%s : set SPK_SEL on\n", __func__);
-				} else if (output_device_from_hal() == 0x1) {
-					//AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
-					AX_MicroP_setRCV_EN(1);
-					pr_info("%s : set RCV_SEL on\n", __func__);
-				} else {
-					//AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
-					//AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 1);
-					AX_MicroP_setSPK_EN(1);
-					AX_MicroP_setRCV_EN(1);
-					pr_info("%s : set SPK_SEL and RCV_SEL on\n", __func__);
+		if (AX_MicroP_getHWID() == 3) { // MP
+			if (snd_soc_read(codec, RT5640_OUTPUT) == 0x0808 && output_device_from_hal() == 0x1) {
+				if (Hal_user_scenario_mode == 6 ) {
+					pr_debug("%s : Update MX-03 to 0000\n", __func__);
+					snd_soc_write(codec, RT5640_OUTPUT, 0x0000);
+				} else if (Hal_user_scenario_mode == 3) {
+					pr_debug("%s : Update MX-03 to 0404\n", __func__);
+					snd_soc_write(codec, RT5640_OUTPUT, 0x0404);
 				}
-			} else { // SR(2), ER1-2(0) => single-end
-				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 1);
-				if (p72g_atd_device == 1) { // RCV test
-					snd_soc_update_bits(codec, RT5640_OUTPUT, 0x0080, 0x0080);
-					p72g_atd_device = 0;
-					pr_info("%s : p72g_atd_device 1 enable RCV, mute LOUTR\n", __func__);
-				} else if (p72g_atd_device == 2) { // SPK test
-					snd_soc_update_bits(codec, RT5640_OUTPUT, 0x8000, 0x8000);
-					p72g_atd_device = 0;
-					pr_info("%s : p72g_atd_device 2 enable SPK, mute LOUTL\n", __func__);
-				} else if (output_device_from_hal() == 0x2) { // LOUTR -> P72G Spk, LOUTL : off, LOUTR : on
-					snd_soc_update_bits(codec, RT5640_OUTPUT, 0x8000, 0x8000);
-					pr_info("%s : enable SPK, mute LOUTL\n", __func__);
-				} else if (output_device_from_hal() == 0x1) { // LOUTL -> P72G Rcv, LOUTL : on, LOUTR: off
-					snd_soc_update_bits(codec, RT5640_OUTPUT, 0x0080, 0x0080);
-					pr_info("%s : enable RCV, mute LOUTR\n", __func__);
-				} else {
-					snd_soc_update_bits(codec, RT5640_OUTPUT, 0x8080, 0x0);
-					pr_info("%s : enable SPK and RCV\n", __func__);
-				}
-			}
-		}*/
+			} 
+		} 
 #endif
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-/*#ifdef USE_EQ
+#ifdef USE_EQ
 		rt5640_update_eqmode(codec, NONE, NONE);
-#endif*/
+		if (Hal_user_scenario_mode == RINGTONE) {
+			snd_soc_write(codec, RT5640_DRC_AGC_1, 0x0206);
+			snd_soc_write(codec, RT5640_DRC_AGC_2, 0x1f00);
+			snd_soc_write(codec, RT5640_DRC_AGC_3, 0x0000);			
+		} else if(Hal_user_scenario_mode == RECORD) {
+			printk("%s : don't update drc for ringtone\n", __func__);
+		}
+#endif
 #ifdef CONFIG_EEPROM_PADSTATION		
 		snd_soc_update_bits(codec, RT5640_GEN_CTRL1, 0x4000, 0x0000);
-		/*
-		if (PROJ_ID == PROJ_ID_PF400CG) {
-			pr_info("P72G HW ID %d\n", AX_MicroP_getHWID());
-			// ER1-1, ER2, PR => differential
-			if (AX_MicroP_getHWID() == 3 || AX_MicroP_getHWID() == 1 || AX_MicroP_getHWID() == 2) { 
-				snd_soc_update_bits(codec, RT5640_GEN_CTRL1, 0x4000, 0x0000);
-				//AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 0);
-				//AX_MicroP_setGPIOOutputPin(OUT_up_RCV_SEL, 0);
-				AX_MicroP_setSPK_EN(0);
-				AX_MicroP_setRCV_EN(0);
-				p72g_atd_device = 0;
-				pr_info("%s : set SPK_SEL and RCV_SEL off\n", __func__);
-			} else { // SR, ER1-2 => single-end
-				AX_MicroP_setGPIOOutputPin(OUT_up_SPK_SEL, 0);
-				snd_soc_update_bits(codec, RT5640_OUTPUT, 0x8080, 0x8080);
-				pr_info("%s : mute LOUTL and LOUTR\n", __func__);
-			}
-		}*/
 #endif
 		snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
 			RT5640_PWR_LM, 0);
@@ -2448,6 +2480,7 @@ static int rt5640_inr_event(struct snd_soc_dapm_widget *w,
 
 	return 0;
 }
+
 static const struct snd_soc_dapm_widget rt5640_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY_S("ASRC enable", 2, SND_SOC_NOPM, 0, 0,
 		rt5640_asrc_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD), 
@@ -2751,14 +2784,13 @@ static const struct snd_soc_dapm_widget rt5640_dapm_widgets[] = {
 };
 
 static const struct snd_soc_dapm_route rt5640_dapm_routes[] = {
-	// Add for headset depop
 	{"INL VOL", NULL, "I2S1"},
 	{"INR VOL", NULL, "I2S1"},
 	{"INL VOL", NULL, "DAC L1 power"},
 	{"INR VOL", NULL, "DAC R1 power"},
 	{"INL VOL", NULL, "ASRC enable"},
 	{"INR VOL", NULL, "ASRC enable"},
-
+	
 	// joe_cheng : micbias1 will be disabled even if headset is still connected.
 	// When starting AMIC recording, LDO2 will be closed and then enabled. 
 	// This causes button interrupt. And music player will be activated.
@@ -3773,7 +3805,7 @@ static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 #ifdef USE_ASRC
 			snd_soc_write(codec, RT5640_GEN_CTRL1, 0x3f71); 
 #else
-			snd_soc_write(codec, RT5640_GEN_CTRL1, 0x3701);
+			snd_soc_write(codec, RT5640_GEN_CTRL1, 0x3f01);
 #endif
 			if (0x5 <= rt5640->v_code) {
 				snd_soc_update_bits(codec, RT5640_JD_CTRL,
@@ -3824,12 +3856,12 @@ static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 
 static void do_hp_amp(struct work_struct *work)
 {
-        pr_debug("%s MX-61h %x\n", __func__, snd_soc_read(rt5640_codec, RT5640_PWR_DIG1));
-        // joe_cheng : Workaround for TT#331186, TT#333088
-        if ((snd_soc_read(rt5640_codec, RT5640_PWR_DIG1) & 0x18c0) == 0) {
-                snd_soc_update_bits(rt5640_codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1);
-        }
-        //msleep(20);
+	pr_debug("%s MX-61h %x\n", __func__, snd_soc_read(rt5640_codec, RT5640_PWR_DIG1));
+	// joe_cheng : Workaround for TT#331186, TT#333088
+	if ((snd_soc_read(rt5640_codec, RT5640_PWR_DIG1) & 0x18c0) == 0) {
+		snd_soc_update_bits(rt5640_codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1);
+	}
+//	msleep(20);
 	snd_soc_update_bits(rt5640_codec, RT5640_DEPOP_M3,
 		RT5640_CP_FQ1_MASK | RT5640_CP_FQ2_MASK | RT5640_CP_FQ3_MASK,
 		(RT5640_CP_FQ_192_KHZ << RT5640_CP_FQ1_SFT) |
@@ -3883,6 +3915,20 @@ static void do_spk_amp_l(struct work_struct *work)
 			RT5640_PWR_CLS_D, RT5640_PWR_CLS_D);
 }
 
+static void do_DAC_unmute(struct work_struct *work)
+{
+        pr_info("%s\n", __func__);
+
+        if ((snd_soc_read(rt5640_codec, RT5640_HP_VOL) & 0x8080) == 0) {
+        rt5640_pmd_depop(rt5640_codec);
+        // joe_cheng : Remove hp_amp_work for TT#353209, and the pop noise could be avoid by mute DAC
+        pr_err("Alexx rt5640_pmu_depop UNMUTE DAC");
+        snd_soc_update_bits(rt5640_codec, RT5640_PWR_DIG1, RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1,
+                                                                   RT5640_PWR_DAC_L1 | RT5640_PWR_DAC_R1);
+        rt5640_pmu_depop(rt5640_codec);
+        }
+}
+
 static int rt5640_probe(struct snd_soc_codec *codec)
 {
 	struct rt5640_priv *rt5640 = snd_soc_codec_get_drvdata(codec);
@@ -3901,9 +3947,21 @@ static int rt5640_probe(struct snd_soc_codec *codec)
 		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
 		return ret;
 	}
-        
+
+        //ME175CG +3VSUS Enable
+        if( PROJ_ID == PROJ_ID_ME175CG && (HW_ID == 6)) {
+                ret = gpio_request_one(ME175CG_PIN_3VSUS_EN, GPIOF_DIR_OUT, "ME175CG_PIN_3VSUS_EN");
+                if (ret) {
+                        pr_err("%s() : Failed to request ME175CG PIN_3VSUS_EN\n", __func__);
+                }
+                gpio_set_value(ME175CG_PIN_3VSUS_EN, 1);
+                pr_info("%s() : Enable ME175CG PIN_3VSUS_EN\n", __func__);
+        } else {
+                pr_info("%s() : No PIN_3VSUS_EN\n", __func__);
+        }
+ 
 	// PF400CG ER2:2, PR:6, MP:1
-        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1))  || PROJ_ID == PROJ_ID_A400CG ) {
+        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1)) || PROJ_ID == PROJ_ID_A400CG) {
                 ret = gpio_request_one(PF400CG_P_SPK_EN_5, GPIOF_DIR_OUT, "P_SPK_EN_5");
                 if (ret) {
                         pr_err("%s() : Failed to request PF400CG P_SPK_EN_5\n", __func__);
@@ -4019,6 +4077,7 @@ static int rt5640_probe(struct snd_soc_codec *codec)
 	INIT_DELAYED_WORK(&hp_amp_work, do_hp_amp);
         INIT_DELAYED_WORK(&spk_amp_l_work, do_spk_amp_l);
         INIT_DELAYED_WORK(&spk_amp_r_work, do_spk_amp_r);
+        INIT_DELAYED_WORK(&DAC_unmute_work, do_DAC_unmute);
 	
 	pr_info("rt5640_probe return 0\n"); //bard
 
@@ -4051,7 +4110,7 @@ static int rt5640_suspend(struct snd_soc_codec *codec, pm_message_t state)
 		gpio_set_value(PIN_5VSUS_EN, 0);
 		pr_debug("%s : 5v pull low %d\n", __func__, gpio_get_value(PIN_5VSUS_EN));
 	}
-        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1))  || PROJ_ID == PROJ_ID_A400CG ) {
+        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1)) || PROJ_ID == PROJ_ID_A400CG) {
 	        gpio_set_value(PF400CG_P_SPK_EN_5, 0);
 		pr_debug("%s : 5v pull low %d\n", __func__, gpio_get_value(PF400CG_P_SPK_EN_5));
 	}
@@ -4092,7 +4151,7 @@ static int rt5640_resume(struct snd_soc_codec *codec)
 		gpio_set_value(PIN_5VSUS_EN, 1);
 		pr_debug("%s : 5v pull high %d\n", __func__, gpio_get_value(PIN_5VSUS_EN));
 	}
-        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1))  || PROJ_ID == PROJ_ID_A400CG ) {
+        if( (PROJ_ID == PROJ_ID_PF400CG && (HW_ID == 2 || HW_ID==6 || HW_ID == 1)) || PROJ_ID == PROJ_ID_A400CG) {
 	        gpio_set_value(PF400CG_P_SPK_EN_5, 1);
 		pr_debug("%s : 5v pull low %d\n", __func__, gpio_get_value(PF400CG_P_SPK_EN_5));
 	}
@@ -4212,7 +4271,7 @@ static const struct i2c_device_id rt5640_i2c_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, rt5640_i2c_id);
 
-static int __devinit rt5640_i2c_probe(struct i2c_client *i2c,
+static int rt5640_i2c_probe(struct i2c_client *i2c,
 		    const struct i2c_device_id *id)
 {
 	struct rt5640_priv *rt5640;
@@ -4232,7 +4291,7 @@ static int __devinit rt5640_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static int __devexit rt5640_i2c_remove(struct i2c_client *i2c)
+static int rt5640_i2c_remove(struct i2c_client *i2c)
 {
 	snd_soc_unregister_codec(&i2c->dev);
 	kfree(i2c_get_clientdata(i2c));
@@ -4256,7 +4315,7 @@ struct i2c_driver rt5640_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = rt5640_i2c_probe,
-	.remove   = __devexit_p(rt5640_i2c_remove),
+	.remove   = rt5640_i2c_remove,
 	.shutdown = rt5640_i2c_shutdown,
 	.id_table = rt5640_i2c_id,
 };

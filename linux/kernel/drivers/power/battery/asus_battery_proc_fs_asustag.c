@@ -118,6 +118,7 @@ int asus_battery_register_proc_fs_test(void)
     tmp_batt_info = batt_info;
     mutex_unlock(&batt_info_mutex);
 
+#ifndef CONFIG_NEW_PROC_FS
     if (tmp_batt_info.test_flag & TEST_INFO_PROC_DUMP) {
         entry = create_proc_entry("asus_battery_info", 0640, NULL);
         if (!entry) {
@@ -134,6 +135,7 @@ int asus_battery_register_proc_fs_test(void)
         }
         entry->read_proc = asus_battery_profile_read;
     }
+#endif
 
     return 0;
 }

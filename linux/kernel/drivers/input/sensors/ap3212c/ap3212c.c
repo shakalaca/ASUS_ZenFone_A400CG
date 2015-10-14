@@ -27,6 +27,9 @@
 #include <linux/earlysuspend.h>//add by leo for early_suspend ++
 #include <linux/proc_fs.h>//add by leo for proc file ++
 #include <linux/HWVersion.h>
+// add by alp for proc file ++
+#include <linux/seq_file.h>
+// add by alp for proc file --
 
 //add by leo for read build version ++
 /*
@@ -46,6 +49,7 @@ extern int build_version;
 #define AP3212C_I2C_DEVICE_NAME "ap3212c"
 #define DRIVER_VERSION		"1.0.0.0"
 static int  AP3212C_INTERRUPT_GPIO=0;	//pro_int#=63
+static unsigned char Calibration_Time = 0;
 
 /* Register Address Info */
 #define SYSTEM_CONFIG 	0x00
@@ -78,7 +82,7 @@ static int  AP3212C_INTERRUPT_GPIO=0;	//pro_int#=63
 #define PS_THDL_H		0x2B	//PS Low Threshold Higher Byte
 #define PS_THDH_L		0x2C	//PS High Threshold Lower  Byte
 #define PS_THDH_H		0x2D	//PS High Threshold HigherByte
-
+#define AON_CORE_SHIFT  96
 struct ap3212c_platform_data
 {
     int gpio;
@@ -154,8 +158,15 @@ static boolean PS_AlreadyVendorCalibration = FALSE;	//add by leo for proximity v
 /* Sensors Threshold Info */
 //#define	ALS_LEVEL	18
 //static int Default_als_threshold_lux[ALS_LEVEL+1]={0,5,30,60,100,150,200,250,300,350,450,550,700,900,1100,1300,1500,2000,65535};
+#ifdef CONFIG_ME372CG
 #define	ALS_LEVEL	11
 static int Default_als_threshold_lux[ALS_LEVEL+1]= {0,15,30,50,100,300,550,900,1100,1500,2200,65535};
+#endif
+#ifdef CONFIG_ME372CL
+#define	ALS_LEVEL	16
+static int Default_als_threshold_lux[ALS_LEVEL+1]= {0,50,100,200,300,400,500,650,800,1000,1500,2000,3000,4000,5000,7000,10000};
+#endif
+
 static int Default_als_threshold_adc[ALS_LEVEL+1]= {0};
 static int als_threshold_lux[ALS_LEVEL+1]= {0};
 static int als_threshold_adc[ALS_LEVEL+1]= {0};
@@ -188,6 +199,7 @@ static int limit_PS_CrossTalkValue = 200; //add by leo for proximity vendor cali
 #define PROXIMITYSENSOR_IOCTL_GET_STATUS		_IOR(PROXIMITYSENSOR_IOCTL_MAGIC, 3, int *)
 #define PROXIMITYSENSOR_IOCTL_CALIBRATION	_IOW(PROXIMITYSENSOR_IOCTL_MAGIC, 4, int *) // modify by leo for high/low threshold calibration ++
 #define PROXIMITYSENSOR_IOCTL_VCALIBRATION	_IOR(PROXIMITYSENSOR_IOCTL_MAGIC, 5, int *) // add by leo for proximity vendor calibration ++
+#define PROXIMITYSENSOR_IOCTL_CALIBRATION_READ  _IOR(PROXIMITYSENSOR_IOCTL_MAGIC, 6, int *) // add byJeffrey for proximity 
 
 static int als_enable(struct ap3212c_i2c_data *ap3212c_data,int  power);
 static int ps_enable(struct ap3212c_i2c_data *ap3212c_data,int  power);
@@ -196,6 +208,8 @@ static int ps_set_threshold(int high_thd,int low_thd);
 static int als_get_calibration_value(struct ap3212c_i2c_data *ap3212c_data);
 static int ps_get_calibration_value(struct ap3212c_i2c_data *ap3212c_data);
 static int ps_get_vendor_calibration_value(void);	// add by leo for proximity vendor calibration ++
+static int ps_get_crosstalk_0_10_byte(int clear0byte);	// add by Jeffrey 2014/04/24
+static int ps_get_crosstalk_0_byte(void);	    // add by Jeffrey 2014/04/24
 static int als_calibration(struct ap3212c_i2c_data *ap3212c_data, int iControl);
 static int ps_calibration(struct ap3212c_i2c_data *ap3212c_data, int iControl);
 static int ps_vendor_calibration(void);	// add by leo for proximity vendor calibration ++
@@ -205,6 +219,7 @@ static void ap3212c_later_resume(struct early_suspend *h);
 //static int clear_interrupt_flag(void);
 static int ap3212c_calibration_lightsensor(struct ap3212c_i2c_data *ap3212c_data);// add by leo for proc file ++
 static int ap3212c_calibration_proximity(struct ap3212c_i2c_data *ap3212c_data);// add by leo for proc file ++
+static int ap3212c_Modify_crosstalk_ini(int cmd, int offset, int modify_or_Cloar0byte); // add by Jeffrey 2014/04/24
 
 //extern int proximity_sensor_status(int status); // add by leo for proximity notify touch
 extern int Read_PROJ_ID(void);
@@ -219,17 +234,67 @@ static struct proc_dir_entry *ap3212c_proc_file;
 #define ALS_DEBUGMSG		0
 #define PS_DEBUGMSG		0
 #define AP3212C_STATUSMSG	1
+#define SWITCH_WHITE_BLACK_GPIO 76
+#define SWITCH_MP_GPIO          78
+#define READ_CMD                1
+#define WRITE_CMD               2
+#define PS_CROSSTALK_HIGHEST_LIMIT  1000
 static unsigned int debug = 0;
-
 //=========================================================================================
+static int ap3212c_Modify_crosstalk_ini(int cmd, int offset, int modify_or_Cloar0byte)
+{
+    int org_write_value = 0;
+    int PS_CrossTalk_Moify = 0;
+    char PS_VCValue_Midify[CalibrationValue_len] = {0};
+    struct file *fp=NULL;
+    mm_segment_t old_fs;
+    if(cmd == WRITE_CMD)
+    {
+        org_write_value = ps_get_vendor_calibration_value();
+        sprintf(PS_VCValue_Midify,"%010d&%010d",offset, org_write_value);
+        if(offset != 0)
+        {
+            PS_VCValue_Midify[0] = '1';
+            if(AP3212C_STATUSMSG)
+                printk("[%s] offset != 0 PS_VCValue_Midify[0] %c\n",__FUNCTION__,PS_VCValue_Midify[0]);
+        }
+        else
+        {
+            if(AP3212C_STATUSMSG)
+                printk("[%s] offset == 0 PS_VCValue_Midify[0] %c\n",__FUNCTION__,PS_VCValue_Midify[0]);
+        }
+        fp=filp_open(PS_CROSSTALK_FILE_PATH,O_RDWR|O_CREAT,S_IRWXU|S_IRWXG|S_IRWXO);
+        if (IS_ERR_OR_NULL(fp))
+        {
+            if(AP3212C_STATUSMSG) printk("[%s]		File Open Failed \n",__FUNCTION__);
+            return -ENOENT;
+        }
+        if(fp->f_op != NULL && fp->f_op->write != NULL)
+        {
+            old_fs = get_fs();
+            set_fs(KERNEL_DS);
+
+            fp->f_op->write(fp,PS_VCValue_Midify,CalibrationValue_len,&fp->f_pos);
+
+            set_fs(old_fs);
+        }
+        filp_close(fp,NULL);
+        return 0;
+    }
+    else if(cmd == READ_CMD)
+    {
+        PS_CrossTalk_Moify = ps_get_crosstalk_0_10_byte(modify_or_Cloar0byte);
+        return PS_CrossTalk_Moify;
+    }
+}
 
 // add by leo for proc file ++
-static ssize_t ap3212c_register_read(char *page, char **start, off_t off, int count, int *eof, void *idata)
+static ssize_t ap3212c_register_read(struct seq_file *buf, void *v )
 {
     ssize_t sprintf_count = 0;
-    if(AP3212C_STATUSMSG) printk( "[%s]	debug = %d \n",__FUNCTION__,debug);
+    if(AP3212C_STATUSMSG) seq_printf(buf,"ap3212c debug = %d \n",debug);
     debug = (debug==1)?0:1; //switch debug message
-    sprintf_count += sprintf(page + sprintf_count, "debug meaasge (%s)\n", ((debug==1)?"on":"off"));
+    sprintf_count += sprintf("debug meaasge \n", ((debug==1)?"on":"off"));
     return sprintf_count;
 }
 static ssize_t ap3212c_register_write(struct file *filp, const char __user *buff, unsigned long len, void *idata)
@@ -553,19 +618,30 @@ static ssize_t ap3212c_register_write(struct file *filp, const char __user *buff
     return len;
 }
 
+// add by alp for proc file ++
+static int ap3212c_register_open(struct inode *inode, struct file *file)
+{
+    return single_open(file,ap3212c_register_read,NULL);
+}
+
+static const struct file_operations ap3212c_register_fops =
+{
+    .owner = THIS_MODULE,
+    .open = ap3212c_register_open,
+    .read = seq_read,
+    .write = ap3212c_register_write,
+};
+
 void ap3212c_create_proc_file(void)
 {
-    ap3212c_proc_file = create_proc_entry(AP3212C_PROC_FILE, 0666, NULL);
-    if(ap3212c_proc_file)
-    {
-        ap3212c_proc_file->read_proc = ap3212c_register_read;
-        ap3212c_proc_file->write_proc = ap3212c_register_write;
-    }
-    else
+    ap3212c_proc_file = proc_create(AP3212C_PROC_FILE, 0666, NULL,&ap3212c_register_fops);
+    if(!ap3212c_proc_file)
     {
         if(AP3212C_STATUSMSG) printk( "[%s]	create_proc_entry failed\n",__FUNCTION__);
     }
 }
+// add by alp for proc file --
+
 void ap3212c_remove_proc_file(void)
 {
     extern struct proc_dir_entry proc_root;
@@ -651,7 +727,7 @@ static int ap3212c_setup_irq(struct ap3212c_i2c_data *ap3212c_data)
         goto gpio_to_irq_err;
     }
 
-    err = request_threaded_irq(ap3212c_data->irq, NULL, ap3212c_interrupt_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_PERCPU | IRQF_FORCE_RESUME ,"ap3212c_interrupt",NULL);
+    err = request_threaded_irq(ap3212c_data->irq, NULL, ap3212c_interrupt_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_PERCPU | IRQF_FORCE_RESUME | IRQF_ONESHOT ,"ap3212c_interrupt",NULL);
     if (err)
     {
         dev_err(&ap3212c_i2c_client->adapter->dev,"Can NOT Register IRQ : %d , err:%d\n", ap3212c_data->irq, err);
@@ -1161,8 +1237,8 @@ static ssize_t ps_high_threshold_store(struct device *dev, struct device_attribu
     }
 
     PS_THDH = ((PS_THDH_HByte<<2)|(PS_THDH_LByte & 0x03));
-    if(AP3212C_STATUSMSG) printk( "[%s]		ps_set_high_threshold, PS_THDH=%d\n",__FUNCTION__,(int)PS_THDH);
-
+    if(AP3212C_STATUSMSG)
+        printk( "[%s]		ps_set_high_threshold, PS_THDH=%d\n",__FUNCTION__,(int)PS_THDH);
     return count;
 }
 static DEVICE_ATTR(ps_hthd, S_IWUSR | S_IRUGO , NULL , ps_high_threshold_store);
@@ -1723,7 +1799,19 @@ static long als_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             value_LByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, ALS_DATA_LOW);
             value_HByte = i2c_smbus_read_byte_data(ap3212c_i2c_client, ALS_DATA_HIGH);
             ADC_Data = ((value_HByte << 8) | value_LByte);
-            ap3212c_data->als_luxvalue = ADC_Data*625/10000*ALS_CalibrationValue_standard/ALS_CalibrationValue_real;
+            //ap3212c_data->als_luxvalue = ADC_Data*625/10000*ALS_CalibrationValue_standard/ALS_CalibrationValue_real;
+            if(Calibration_Time == 0)
+            {
+                ap3212c_data->als_luxvalue = ADC_Data*625/10000*1000/75;
+                printk( "[%s]	Calibration_Time (%d)\n",__FUNCTION__,Calibration_Time);
+                Calibration_Time = 1;
+
+            }
+            else
+            {
+                ap3212c_data->als_luxvalue = ADC_Data*625/10000*ALS_CalibrationValue_standard/ALS_CalibrationValue_real;
+                printk( "[%s]	Calibration_Time (%d)\n",__FUNCTION__,Calibration_Time);
+            }
 
             if(unlikely(debug))printk( " [%s]	return %d (lux) \n",__FUNCTION__,ap3212c_data->als_luxvalue);
             return put_user(ap3212c_data->als_luxvalue, (unsigned long __user *)arg);
@@ -1922,6 +2010,7 @@ static int ps_release(struct inode *inode, struct file *file)
 static long ps_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     int err=0, val=0, control=0;
+    int ps_crosstalk_offset_value_IO = 0;
     unsigned int value_LByte=0, value_HByte=0;
     unsigned long RAW_Data=0;
     struct ap3212c_i2c_data *ap3212c_data = data;
@@ -2044,7 +2133,17 @@ static long ps_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
             return put_user(PS_VendorCalibrationValue, (unsigned long __user *)arg);
             break;
+        case PROXIMITYSENSOR_IOCTL_CALIBRATION_READ:
+            ps_crosstalk_offset_value_IO = ap3212c_Modify_crosstalk_ini(READ_CMD,0,0);
+            if(ps_crosstalk_offset_value_IO < 0)
+            {
+                if(AP3212C_STATUSMSG) printk( "[%s]	Read PS Vendor Calibration.ini Failed (%d)\n",__FUNCTION__,ps_crosstalk_offset_value_IO);
+                return err;
+            }
+            printk( "[%s]	ps_crosstalk_offset_value is = %d\n",__FUNCTION__,ps_crosstalk_offset_value_IO);
 
+            return put_user(ps_crosstalk_offset_value_IO, (unsigned long __user *)arg);
+            break;
         default:
             if(unlikely(debug))printk( "[%s]	Incorrect Cmd  (%d) \n",__FUNCTION__, _IOC_NR(cmd));
             return -EINVAL;
@@ -2110,7 +2209,8 @@ register_ps_input_device_err:
 static int ps_enable(struct ap3212c_i2c_data *ap3212c_data,int  power)
 {
     int SystemMode=0, ret=0;
-
+    int ps_crosstalk_offset_value = 0;
+    int PS_CrossTalk_o_byte = 0;
 //add by leo for proximity cross talk calibration ++
     if((power==POWER_ON)&&(PS_AlreadyVendorCalibration==FALSE)&&(PS_VendorCalibrationRetryCount>0))
     {
@@ -2120,22 +2220,37 @@ static int ps_enable(struct ap3212c_i2c_data *ap3212c_data,int  power)
         {
             if(AP3212C_STATUSMSG) printk( "[%s]			PS Vendor Calibration  (get cross talk value) Failed (%d)\n",__FUNCTION__,ret);
         }
-        /*
-        		else{
-        			if(PS_VendorCalibrationValue >= (PS_LOW_THD-20)){
-        				if(AP3212C_STATUSMSG) printk( "[%s]	Failed, PS Cross Talk (%d) > PS_LOW_THD-20 (%d)\n",__FUNCTION__,PS_VendorCalibrationValue,PS_LOW_THD-20);
-        				return -EDOM;
-        			}
-        			PS_HIGH_THD = Default_PS_ThresholdValue - PS_VendorCalibrationValue;
-        			PS_LOW_THD = Default_PS_ThresholdValue - PS_VendorCalibrationValue;
+        if( gpio_get_value(SWITCH_WHITE_BLACK_GPIO + AON_CORE_SHIFT) == 0)
+        {
 
-        			ret = ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
-        			if(ret < 0)  {
-        				if(unlikely(debug))printk( "[%s]	ps_set_threshold (%d, %d) Failed\n",__FUNCTION__,PS_HIGH_THD, PS_LOW_THD);
-        				return ret;
-        			}
-        		}
-        */
+            // White shape ER2 = PR = MP
+            PS_CrossTalk_o_byte = ps_get_crosstalk_0_byte();
+            if(PS_CrossTalk_o_byte == '1')
+            {
+                ps_crosstalk_offset_value = ap3212c_Modify_crosstalk_ini(READ_CMD,0,1);
+                printk( "[%s] ps_crosstalk_offset_value (%d)\n",__FUNCTION__,ps_crosstalk_offset_value);
+                if(gpio_get_value(SWITCH_MP_GPIO + AON_CORE_SHIFT) == 0)
+                {
+                    PS_HIGH_THD = 215 + ps_crosstalk_offset_value;
+                    PS_LOW_THD  = 170 + ps_crosstalk_offset_value;
+                }
+                else
+                {
+                    // MP Limit (white)
+                    PS_HIGH_THD = 225 + ps_crosstalk_offset_value;
+                    PS_LOW_THD  = 170 + ps_crosstalk_offset_value;
+                }
+                ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+                printk( "[%s] GPIO %d is Low(white) PS_HIGH_THD is %d and PS_LOW_THD is %d\n",__FUNCTION__,76+96,PS_HIGH_THD,PS_LOW_THD);
+            }
+        }
+        else
+        {
+            PS_HIGH_THD = 205;
+            PS_LOW_THD  = 170;
+            ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+            printk( "[%s] GPIO %d is High(black) PS_HIGH_THD is %d and PS_LOW_THD is %d\n",__FUNCTION__,76+96,PS_HIGH_THD,PS_LOW_THD);
+        }
     }
 
 //add by leo for calibration ++
@@ -2244,8 +2359,8 @@ static int ps_initial(struct ap3212c_i2c_data *ap3212c_data)
     if(AP3212C_STATUSMSG) printk( "[%s]			PS_LED_CONTROL = 0x%x\n",__FUNCTION__,PS_LEDControl);
 
 
-    ret = i2c_smbus_write_byte_data(ap3212c_i2c_client, PS_CONFIG, 0xe4);//RS integrated time select:1110 (15T), PS gain:10, PS persist(interrupt filter):00
-    if(ret< 0)
+    ret = i2c_smbus_write_byte_data(ap3212c_i2c_client, PS_CONFIG, 0xe0);//RS integrated time select:1110 (15T), PS gain:10, PS persist(interrupt filter):00
+    if(ret< 0)                                                            // Gain 2  -> 1 ME372CL factory suggestion 2013/12/23 Jeffrey Tseng
     {
         if(AP3212C_STATUSMSG) printk( "[%s]	Write PS_CONFIG Failed\n",__FUNCTION__);
         return ret;
@@ -2258,8 +2373,47 @@ static int ps_initial(struct ap3212c_i2c_data *ap3212c_data)
         return PS_Configuration;
     }
     if(unlikely(debug))printk( "[%s]			ps_initial finished, PS_CONFIG = 0x%x\n",__FUNCTION__,PS_Configuration);
+    if(Read_PROJ_ID() == PROJ_ID_ME372CL)
+    {
+        if((Read_HW_ID() == HW_ID_ER) || (Read_HW_ID() == HW_ID_SR1) || (Read_HW_ID() == HW_ID_SR2))
+        {
+            printk( "[%s] Read_HW_ID() == HW_ID_ER_HW_ID_ER2_HW_ID_SR1_HW_ID_SR2 \n",__FUNCTION__);
+            ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+        }
+        else
+        {
+            if( gpio_get_value(SWITCH_WHITE_BLACK_GPIO + AON_CORE_SHIFT) == 0)
+            {
 
-    ret = ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+                // White shape ER2 = PR = MP
+                if(gpio_get_value(SWITCH_MP_GPIO + AON_CORE_SHIFT) == 0)
+                {
+                    // MP A large number(white)
+                    PS_HIGH_THD = 215;
+                    PS_LOW_THD  = 170;
+                }
+                else
+                {
+                    // MP Limit (white)
+                    PS_HIGH_THD = 225;
+                    PS_LOW_THD  = 170;
+                }
+                ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+                printk( "[%s] GPIO %d is Low(white) PS_HIGH_THD is %d and PS_LOW_THD is %d\n",__FUNCTION__,76+96,PS_HIGH_THD,PS_LOW_THD);
+            }
+            else
+            {
+                PS_HIGH_THD = 205;
+                PS_LOW_THD  = 170;
+                ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+                printk( "[%s] GPIO %d is High(black) PS_HIGH_THD is %d and PS_LOW_THD is %d\n",__FUNCTION__,76+96,PS_HIGH_THD,PS_LOW_THD);
+            }
+        }
+    }
+    else{
+        printk( "alp.D : ME372CG use the default threshold\n");
+        ps_set_threshold(PS_HIGH_THD, PS_LOW_THD);
+    }
     if(ret < 0)
     {
         if(AP3212C_STATUSMSG) printk( "[%s]	ps_set_threshold (%d, %d) Failed\n",__FUNCTION__,PS_HIGH_THD, PS_LOW_THD);
@@ -2545,7 +2699,7 @@ static int ps_get_calibration_value(struct ap3212c_i2c_data *ap3212c_data)
 static int ps_vendor_calibration(void)
 {
 
-    int i=0,temp=0;
+    int i=0,temp=0, ps_crosstalk_0_9_byte = 0;
     unsigned int value_LByte=0, value_HByte=0;
     unsigned long RAW_Data=0;
     int ret=0,PS_CrossTalk=0;
@@ -2588,8 +2742,25 @@ static int ps_vendor_calibration(void)
     if(AP3212C_STATUSMSG) printk( "[%s]		PS Cross Talk = %d\n",__FUNCTION__,PS_CrossTalk);
 
     // check the crosstalk value
-    if(PS_CrossTalk>limit_PS_CrossTalkValue)return -EDOM;
-
+    //if(PS_CrossTalk>limit_PS_CrossTalkValue)return -EDOM;
+    // check the crosstalk value
+    if(PS_CrossTalk > PS_CROSSTALK_HIGHEST_LIMIT)
+    {
+        printk( "PS_CrossTalk is OVer 1000\n",__FUNCTION__);
+        return -EDOM;
+    }
+    // compensate crosstalk
+    if(PS_CrossTalk > limit_PS_CrossTalkValue)
+    {
+        ap3212c_Modify_crosstalk_ini(WRITE_CMD,(PS_CrossTalk - limit_PS_CrossTalkValue),0);
+        PS_CrossTalk = limit_PS_CrossTalkValue;
+        printk( "[%s]	PS_CrossTalk > limit_PS_CrossTalkValue and PS_CrossTalk = %d\n",__FUNCTION__,PS_CrossTalk);
+    }
+    else
+    {
+        printk( "[%s]	PS_CrossTalk < limit_PS_CrossTalkValue and PS_CrossTalk = %d\n",__FUNCTION__,PS_CrossTalk);
+        ap3212c_Modify_crosstalk_ini(WRITE_CMD,0,0);
+    }
     //Write cross talk value into PS Vendor Calibration Register
     PS_VCALI_HByte = PS_CrossTalk >> 1;
     PS_VCALI_LByte = PS_CrossTalk & 0x01;
@@ -2617,7 +2788,9 @@ static int ps_vendor_calibration(void)
     if(AP3212C_STATUSMSG) printk( "[%s]		PS Vendor Calibration Register =%d\n",__FUNCTION__,PS_CrossTalk);
 
     //Backup cross talk value in data/sensors/ps_crosstalk.ini
-    sprintf(PS_VCValue,"%010d&%010d",PS_CrossTalk, PS_CrossTalk);
+    ps_crosstalk_0_9_byte = ap3212c_Modify_crosstalk_ini(READ_CMD,0,0);
+    printk( "[%s]ps_crosstalk_0_9_byte =%d\n",__FUNCTION__,ps_crosstalk_0_9_byte);
+    sprintf(PS_VCValue,"%010d&%010d",ps_crosstalk_0_9_byte, PS_CrossTalk);
 
     fp=filp_open(PS_CROSSTALK_FILE_PATH,O_RDWR|O_CREAT,S_IRWXU|S_IRWXG|S_IRWXO);
     if (IS_ERR_OR_NULL(fp))
@@ -2635,7 +2808,7 @@ static int ps_vendor_calibration(void)
         set_fs(old_fs);
     }
     filp_close(fp,NULL);
-
+    printk( "[%s]	PS_CrossTalk is =%d\n",__FUNCTION__,PS_CrossTalk);
     return PS_CrossTalk;
 }
 
@@ -2699,7 +2872,124 @@ static int ps_get_vendor_calibration_value(void)
     return PS_CrossTalk ;
 }
 // add by leo for proximity vendor calibration --
+static int ps_get_crosstalk_0_byte(void)
+{
+    int ilen=0,i=0;
+    int PS_CrossTalk = 0;
+    char PS_VCValue[CalibrationValue_len] = {0};
+    char PS_VCValue_real[CValue_len] = {0};
+    struct file *fp=NULL;
+    mm_segment_t old_fs;
 
+    fp=filp_open(PS_CROSSTALK_FILE_PATH,O_RDWR|O_CREAT,S_IRWXU|S_IRWXG|S_IRWXO);
+    if (IS_ERR_OR_NULL(fp))
+    {
+        if(AP3212C_STATUSMSG) printk("[%s]	File Open Failed \n",__FUNCTION__);
+        return -ENOENT;
+    }
+
+    if(fp->f_op != NULL && fp->f_op->read != NULL)
+    {
+
+        old_fs = get_fs();
+        set_fs(KERNEL_DS);
+
+        ilen = fp->f_op->read(fp,PS_VCValue,CalibrationValue_len,&fp->f_pos);
+        if(unlikely(debug))printk("[%s]	fp->f_op->read (len = %d) \n",__FUNCTION__,ilen);
+
+        set_fs(old_fs);
+    }
+    filp_close(fp,NULL);
+
+    if(ilen!=CalibrationValue_len)
+    {
+        if(AP3212C_STATUSMSG) printk("[%s]Can Not Find PS Vendor Calibration Value (len = %d)\n",__FUNCTION__,ilen);
+        return -EBADMSG;
+    }
+
+    for(i = 0; i < CalibrationValue_len; i++)
+    {
+        if(i < 1)
+        {
+            PS_VCValue_real[i]=PS_VCValue[i];
+            printk("[%s]PS_VCValue_real[%d] is %d\n",__FUNCTION__,i,PS_VCValue_real[i]);
+        }
+    }
+    PS_CrossTalk = PS_VCValue_real[0];
+    if(PS_CrossTalk == '1')
+    {
+        printk("[%s]PS_CrossTalk of 0_byte is %d\n",__FUNCTION__,PS_CrossTalk);
+    }
+    else
+    {
+        printk("[%s]PS_CrossTalk of 0_byte is %d\n",__FUNCTION__,PS_CrossTalk);
+    }
+    return PS_CrossTalk ;
+}
+static int ps_get_crosstalk_0_10_byte(int clear0byte)
+{
+
+    int ilen=0,i=0;
+    int PS_CrossTalk=0;
+    char PS_VCValue[CalibrationValue_len] = {0};
+    char PS_VCValue_real[CValue_len] = {0};
+    struct file *fp=NULL;
+    mm_segment_t old_fs;
+
+    fp=filp_open(PS_CROSSTALK_FILE_PATH,O_RDWR|O_CREAT,S_IRWXU|S_IRWXG|S_IRWXO);
+    if (IS_ERR_OR_NULL(fp))
+    {
+        if(AP3212C_STATUSMSG) printk("[%s]	File Open Failed \n",__FUNCTION__);
+        return -ENOENT;
+    }
+
+    if(fp->f_op != NULL && fp->f_op->read != NULL)
+    {
+
+        old_fs = get_fs();
+        set_fs(KERNEL_DS);
+
+        ilen = fp->f_op->read(fp,PS_VCValue,CalibrationValue_len,&fp->f_pos);
+        if(unlikely(debug))printk("[%s]	fp->f_op->read (len = %d) \n",__FUNCTION__,ilen);
+
+        set_fs(old_fs);
+    }
+    filp_close(fp,NULL);
+
+    if(ilen!=CalibrationValue_len)
+    {
+        if(AP3212C_STATUSMSG) printk("[%s]Can Not Find PS Vendor Calibration Value (len = %d)\n",__FUNCTION__,ilen);
+        return -EBADMSG;
+    }
+
+    for(i = 0; i < CalibrationValue_len; i++)
+    {
+        if(i < CValue_len)
+        {
+            PS_VCValue_real[i]=PS_VCValue[i];
+            printk("[%s]PS_VCValue_real[%d] is %d\n",__FUNCTION__,i,PS_VCValue_real[i]);
+        }
+    }
+    if(clear0byte == 1)
+    {
+        PS_VCValue_real[0] = '0';
+        printk("[%s]PS_VCValue_real[%d] is %d\n",__FUNCTION__,0,PS_VCValue_real[0]);
+
+    }
+
+    PS_CrossTalk = CharToInt(PS_VCValue_real);
+    if(PS_CrossTalk > 0)
+    {
+        printk("[%s]PS_CrossTalk > 0 %d \n",__FUNCTION__,PS_CrossTalk);
+
+    }
+    else if(PS_CrossTalk == 0)
+    {
+        printk("[%s]PS_CrossTalk == 0 %d \n",__FUNCTION__,PS_CrossTalk);
+    }
+    return PS_CrossTalk ;
+}
+// add by Jeffrey for proximity vendor calibration --
 static int als_set_threshold(int ilevel)
 {
     int ret1=0,ret2=0,ret3=0,ret4=0;
@@ -2990,7 +3280,7 @@ static int ap3212c_i2c_probe(struct i2c_client *client, const struct i2c_device_
     struct ap3212c_i2c_data *ap3212c_data=NULL;
 
     if(AP3212C_STATUSMSG) printk("====================== \n");
-    if(AP3212C_STATUSMSG) printk( "[%s]		build version = %d\n",__FUNCTION__,build_version); //add by leo for read build version
+    if(AP3212C_STATUSMSG) printk( "[%s]	build version = %d\n",__FUNCTION__,build_version); //add by leo for read build version
 
     if(!(ap3212c_data = kzalloc(sizeof(struct ap3212c_i2c_data), GFP_KERNEL)))
     {
@@ -3027,7 +3317,7 @@ static int ap3212c_i2c_probe(struct i2c_client *client, const struct i2c_device_
         ret = -ENOMEM;
         if(build_version!=1)goto create_singlethread_workqueue_err;
     }
-    INIT_DELAYED_WORK_DEFERRABLE(&ap3212c_work, ap3212c_work_function);
+    INIT_DEFERRABLE_WORK(&ap3212c_work, ap3212c_work_function);
 
     /* Initialize Setting */
     ap3212c_create_proc_file(); // add by leo for proc file ++
@@ -3124,7 +3414,7 @@ static int ap3212c_resume(struct i2c_client *client)
     return 0;
 }
 
-static int __devexit ap3212c_i2c_remove(struct i2c_client *client)
+static int ap3212c_i2c_remove(struct i2c_client *client)
 {
     struct ap3212c_i2c_data *ap3212c_data =data;
 
@@ -3156,7 +3446,7 @@ static struct i2c_driver ap3212c_i2c_driver =
     .probe = 		ap3212c_i2c_probe,
     .suspend	=	ap3212c_suspend,
     .resume	=	ap3212c_resume,
-    .remove	=	__devexit_p(ap3212c_i2c_remove),
+    .remove	=	ap3212c_i2c_remove,
     .id_table = 	ap3212c_i2c_idtable,
 
 };
@@ -3165,18 +3455,19 @@ static int __init ap3212c_init(void)
 {
     int ret=0;
 
-	if(build_version!=1){
-	    if(Read_PROJ_ID() == PROJ_ID_ME372CG_CD)
-			return 0;
-    	if(Read_PROJ_ID() == PROJ_ID_ME372CL)
-	    {
-    	    if((Read_HW_ID() == HW_ID_SR1) || (Read_HW_ID() == HW_ID_SR2))
-	        {
-            	printk(" ME372CL function don't work now!!\n",__FUNCTION__);
-        	    return 0;
-    	    }
-	    }
-	}
+    if(build_version!=1)
+    {
+        if(Read_PROJ_ID() == PROJ_ID_ME372CG_CD)
+            return 0;
+        if(Read_PROJ_ID() == PROJ_ID_ME372CL)
+        {
+            if((Read_HW_ID() == HW_ID_SR1) || (Read_HW_ID() == HW_ID_SR2))
+            {
+                printk(" ME372CL function don't work now!!\n",__FUNCTION__);
+                return 0;
+            }
+        }
+    }
     ret = i2c_add_driver(&ap3212c_i2c_driver);
     if ( ret != 0 )
     {

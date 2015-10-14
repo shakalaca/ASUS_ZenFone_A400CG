@@ -54,6 +54,8 @@ enum {
 	POWER_SUPPLY_HEALTH_OVERVOLTAGE,
 	POWER_SUPPLY_HEALTH_UNSPEC_FAILURE,
 	POWER_SUPPLY_HEALTH_COLD,
+	POWER_SUPPLY_HEALTH_WATCHDOG_TIMER_EXPIRE,
+	POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE,
 };
 
 enum {
@@ -96,6 +98,7 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_AUTHENTIC,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
@@ -117,6 +120,10 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_CHARGE_NOW,
 	POWER_SUPPLY_PROP_CHARGE_AVG,
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
 	POWER_SUPPLY_CHARGE_CURRENT_LIMIT,
 	POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT,
 	POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX,
@@ -132,11 +139,17 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_ENERGY_NOW,
 	POWER_SUPPLY_PROP_ENERGY_AVG,
 	POWER_SUPPLY_PROP_CAPACITY, /* in percents! */
+	POWER_SUPPLY_PROP_CAPACITY_ALERT_MIN, /* in percents! */
+	POWER_SUPPLY_PROP_CAPACITY_ALERT_MAX, /* in percents! */
 	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
 	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_TEMP_ALERT_MIN,
+	POWER_SUPPLY_PROP_TEMP_ALERT_MAX,
 	POWER_SUPPLY_PROP_MAX_TEMP,
 	POWER_SUPPLY_PROP_MIN_TEMP,
 	POWER_SUPPLY_PROP_TEMP_AMBIENT,
+	POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MIN,
+	POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MAX,
 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW,
 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
@@ -160,7 +173,7 @@ POWER_SUPPLY_PROP_UG31XX_DEBUG,
 	POWER_SUPPLY_PROP_MANUFACTURER,
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 /* chris added: */
-#if defined(CONFIG_ME302C_BATTERY) || defined(CONFIG_ME372CG_BATTERY) || defined(CONFIG_TX201LA_BATTERY_EC) || defined(CONFIG_ME372CL_BATTERY) || defined(CONFIG_ME175CG_BATTERY) || defined(CONFIG_PF400CG_BATTERY)|| defined(CONFIG_A400CG_BATTERY)
+#if defined(CONFIG_ME302C_BATTERY) || defined(CONFIG_ME372CG_BATTERY) || defined(CONFIG_TX201LA_BATTERY_EC) || defined(CONFIG_ME372CL_BATTERY) || defined(CONFIG_ME175CG_BATTERY) || defined(CONFIG_PF400CG_BATTERY)|| defined(CONFIG_A400CG_BATTERY) || defined(CONFIG_A450CG_BATTERY)
 	POWER_SUPPLY_PROP_BATTERY_ID,
 	POWER_SUPPLY_PROP_FIRMWARE_VERSION,
 	#if defined(CONFIG_ME302C_BATTERY_BQ27520) || defined(CONFIG_ME372CG_BATTERY_BQ27520) || defined(CONFIG_TX201LA_BATTERY_EC) || defined(CONFIG_ME372CL_BATTERY)
@@ -197,9 +210,9 @@ enum power_supply_charger_event {
 };
 
 struct power_supply_charger_cap {
-	enum power_supply_charger_event	chrg_evt;
-	enum power_supply_type		chrg_type;
-	unsigned int			mA;	/* input current limit */
+	enum power_supply_charger_event chrg_evt;
+	enum power_supply_type chrg_type;
+	unsigned int mA; /* input current limit */
 };
 
 enum power_supply_charger_cable_type {
@@ -221,7 +234,7 @@ enum power_supply_charger_cable_type {
 struct power_supply_cable_props {
 	enum power_supply_charger_event	chrg_evt;
 	enum power_supply_charger_cable_type chrg_type;
-	unsigned int			mA;	/* input current limit */
+	unsigned int ma;   /* input current limit */
 };
 
 #define POWER_SUPPLY_CHARGER_TYPE_USB \
@@ -238,7 +251,9 @@ union power_supply_propval {
 };
 
 enum power_supply_notifier_events {
+	POWER_SUPPLY_EVENT_NONE,
 	POWER_SUPPLY_PROP_CHANGED,
+	POWER_SUPPLY_BATTERY_EVENT,
 	POWER_SUPPLY_CABLE_EVENT,
 };
 
@@ -255,6 +270,7 @@ struct power_supply_throttle {
 	enum psy_throttle_action throttle_action;
 	unsigned throttle_val;
 };
+
 struct power_supply {
 	const char *name;
 	enum power_supply_type type;
@@ -266,6 +282,11 @@ struct power_supply {
 	size_t num_supplicants;
 	struct power_supply_throttle *throttle_states;
 	size_t num_throttle_states;
+	char **supplied_from;
+	size_t num_supplies;
+#ifdef CONFIG_OF
+	struct device_node *of_node;
+#endif
 
 	int (*get_property)(struct power_supply *psy,
 			    enum power_supply_property psp,
@@ -275,6 +296,8 @@ struct power_supply {
 			    const union power_supply_propval *val);
 	int (*property_is_writeable)(struct power_supply *psy,
 				     enum power_supply_property psp);
+	int (*property_is_privileged_read)(struct power_supply *psy,
+					enum power_supply_property psp);
 	void (*external_power_changed)(struct power_supply *psy);
 	void (*set_charged)(struct power_supply *psy);
 	void (*charging_port_changed)(struct power_supply *psy,
@@ -286,12 +309,12 @@ struct power_supply {
 	/* private */
 	struct device *dev;
 	struct work_struct changed_work;
+	spinlock_t changed_lock;
+	bool changed;
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *tzd;
 	struct thermal_cooling_device *tcd;
 #endif
-	spinlock_t changed_lock;
-	bool changed;
 
 #ifdef CONFIG_LEDS_TRIGGERS
 	struct led_trigger *charging_full_trig;
@@ -329,7 +352,7 @@ struct power_supply_info {
 extern struct atomic_notifier_head    power_supply_notifier;
 extern int power_supply_reg_notifier(struct notifier_block *nb);
 extern void power_supply_unreg_notifier(struct notifier_block *nb);
-extern struct power_supply *power_supply_get_by_name(char *name);
+extern struct power_supply *power_supply_get_by_name(const char *name);
 extern void power_supply_changed(struct power_supply *psy);
 extern int power_supply_am_i_supplied(struct power_supply *psy);
 extern int power_supply_is_battery_connected(void);
@@ -362,6 +385,8 @@ static inline bool power_supply_is_amp_property(enum power_supply_property psp)
 	case POWER_SUPPLY_PROP_CHARGE_NOW:
 	case POWER_SUPPLY_PROP_CHARGE_AVG:
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 	case POWER_SUPPLY_PROP_CURRENT_AVG:
@@ -389,6 +414,8 @@ static inline bool power_supply_is_watt_property(enum power_supply_property psp)
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_POWER_NOW:
 		return 1;
 	default:

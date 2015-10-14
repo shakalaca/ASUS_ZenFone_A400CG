@@ -63,7 +63,7 @@ static int ar0543_raw_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 	//For duel SIM--
 
 
-	if((PROJECT_ID == PROJ_ID_ME175CG) || (PROJECT_ID == PROJ_ID_A400CG))
+	if((PROJECT_ID == PROJ_ID_ME175CG) || (PROJECT_ID == PROJ_ID_A400CG) || (PROJECT_ID == PROJ_ID_A450CG))
 		reset_gpio_pin = 161; //ME175CG
 	else
 		reset_gpio_pin = 177; //ME372CG_CR
@@ -79,7 +79,7 @@ static int ar0543_raw_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 	}
 
 	if((PCB_ID1 != 0) /*|| (PROJECT_ID == PROJ_ID_A400CG)*/){
-		printk(KERN_ALERT "ME175CG Duel SIM SKU / A400CG: Change to vprog2\n");
+		printk(KERN_ALERT "ME175CG Duel SIM SKU / A400CG / A450CG: Change to vprog2\n");
 	}else{
 		if (camera_sensor_2_8v < 0) {
 			ret = camera_sensor_gpio(GP_CORE_014, GP_SENSOR_2_8V,
@@ -99,7 +99,8 @@ static int ar0543_raw_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 		msleep(20);
 
 		if((PCB_ID1 != 0) || 
-                   ((PROJECT_ID == PROJ_ID_A400CG) && (HW_ID != HW_ID_SR1) && (HW_ID != HW_ID_SR2))){
+                   ((PROJECT_ID == PROJ_ID_A400CG) && (HW_ID != HW_ID_SR1) && (HW_ID != HW_ID_SR2)) || 
+                    (PROJECT_ID == PROJ_ID_A450CG) || (PROJECT_ID ==PROJ_ID_TX201LAF)){
 			if (!camera_vprog2_on) {
 				ret = regulator_enable(vprog2_reg);
 				msleep(1);
@@ -126,7 +127,8 @@ static int ar0543_raw_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 	} else {
 		gpio_set_value(camera_reset, 0);
 		if((PCB_ID1 != 0) || 
-                   ((PROJECT_ID == PROJ_ID_A400CG) && (HW_ID != HW_ID_SR1) && (HW_ID != HW_ID_SR2))){
+                   ((PROJECT_ID == PROJ_ID_A400CG) && (HW_ID != HW_ID_SR1) && (HW_ID != HW_ID_SR2)) || 
+                    (PROJECT_ID == PROJ_ID_A450CG) || (PROJECT_ID ==PROJ_ID_TX201LAF)){
 			if (camera_vprog2_on) {
 				ret = regulator_disable(vprog2_reg);
 				if (!ret) {
@@ -215,7 +217,7 @@ static int ar0543_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 			if (!camera_vprog1_on) {
 				ret = regulator_enable(vprog1_reg);
 
-				if(PROJECT_ID == PROJ_ID_A400CG){
+				if(PROJECT_ID == PROJ_ID_A400CG || PROJECT_ID == PROJ_ID_A450CG || PROJECT_ID == PROJ_ID_TX201LAF){
 					usleep_range(2000,3000);
 				}else{
 					msleep(20);
@@ -272,7 +274,8 @@ static int ar0543_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 static int ar0543_raw_csi_configure(struct v4l2_subdev *sd, int flag)
 {
 	static const int LANES = 2;
-#ifdef CONFIG_ME175CG
+
+#if defined(CONFIG_ME175CG) || defined(CONFIG_A450CG) || defined(CONFIG_TX201LAF)
 	return camera_sensor_csi(sd, ATOMISP_CAMERA_PORT_PRIMARY, LANES,
 		ATOMISP_INPUT_FORMAT_RAW_10, atomisp_bayer_order_gbrg, flag);
 #else
@@ -303,7 +306,7 @@ static int ar0543_raw_platform_init(struct i2c_client *client)
 		regulator_put(vprog1_reg);
 	}
 
-#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_TX201LAF)
 	vprog2_reg = regulator_get(&client->dev, "vprog2");
         if (IS_ERR(vprog2_reg)) {
                 dev_err(&client->dev, "regulator_get failed\n");
@@ -328,7 +331,7 @@ static int ar0543_raw_platform_deinit(void)
 {
 	regulator_put(vprog1_reg);
 
-#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG)
+#if defined(CONFIG_ME175CG) || defined(CONFIG_A400CG) || defined(CONFIG_A450CG) || defined(CONFIG_TX201LAF)
 	regulator_put(vprog2_reg);
 #endif
 	return 0;

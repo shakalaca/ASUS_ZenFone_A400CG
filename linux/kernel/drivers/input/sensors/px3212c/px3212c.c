@@ -198,7 +198,7 @@ static int px3212c_get_systemMode(void); // add by tom for get system mode ++
 
 // add by leo for proc file ++
 #define	PX3212C_PROC_FILE	"px3212c_debug"
-static struct proc_dir_entry *px3212c_proc_file;
+//static struct proc_dir_entry *px3212c_proc_file;
 // add by leo for proc file --
 
 #define PX3212C_DEBUGMSG 	0
@@ -209,9 +209,6 @@ static unsigned int debug = 0;
 
 /* Calibration Info*/
 static int px3212c_calibration_init(void);
-// add by tom for Check whether correct value
-static int IsCorrectCrosstalk=FALSE;
-static int IsCorrectThreshold=FALSE;
 	
 /* EC notity */
 // If equal "1" when proximity sensor is Enable
@@ -242,7 +239,8 @@ static ssize_t px3212c_register_write(struct file *filp, const char __user *buff
 	static u8 temp[4]={0};
 	static u8 total_input[80]={0};
 	struct px3212c_i2c_data *px3212c_data = data;
-			
+	u8* input_cmd = (char*)kcalloc(count,sizeof(char),GFP_KERNEL);
+	
 	if (len >= 80) {
 		if(PX3212C_STATUSMSG) printk(KERN_INFO "%s: no command exceeds 80 chars.\n", __func__);
 		return -EFAULT;
@@ -413,7 +411,7 @@ static ssize_t px3212c_register_write(struct file *filp, const char __user *buff
 		temp[3] = messages[iloop*5 + 5];
 		sscanf(temp, "%x", &total_input[iloop]);
 	}
-	u8* input_cmd = (char*)kcalloc(count,sizeof(char),GFP_KERNEL);
+	
 
 	if(PX3212C_STATUSMSG) printk("[%s]	input_cmd = %s ",__FUNCTION__,cmd==1?"write":"read");
 	for(i=0;i<count;i++){
@@ -446,7 +444,7 @@ static ssize_t px3212c_register_write(struct file *filp, const char __user *buff
 
 	return len;
 }
-
+/*
 void px3212c_create_proc_file(void)
 {
 	px3212c_proc_file = create_proc_entry(PX3212C_PROC_FILE, 0666, NULL);
@@ -458,6 +456,7 @@ void px3212c_create_proc_file(void)
 		if(PX3212C_STATUSMSG) printk( "[%s]	create_proc_entry failed\n",__FUNCTION__);
 	}
 }
+
 void px3212c_remove_proc_file(void)
 {
     extern struct proc_dir_entry proc_root;
@@ -465,7 +464,7 @@ void px3212c_remove_proc_file(void)
     remove_proc_entry(PX3212C_PROC_FILE, &proc_root);
 }
 // add by leo for proc file --
-
+*/
 /*
 static int px3212c_setup_power(struct px3212c_i2c_data *px3212c_data)
 {
@@ -540,7 +539,7 @@ static int px3212c_default_calibration_proximity(void){
 					return ret;
 				}
 			}
-			
+			return ret;
 }
 static int px3212c_calibration_proximity(struct px3212c_i2c_data *px3212c_data){
 
@@ -573,16 +572,18 @@ static int px3212c_calibration_proximity(struct px3212c_i2c_data *px3212c_data){
 				return ret;
 			}
 			PS_AlreadyCalibration=TRUE;
+			return 0;
 		}
 	}
-	return 1;
+	return 0;
 }
 
 //add by leo for proximity cross talk calibration ++
 static int px3212c_vendor_calibration_proximity(struct px3212c_i2c_data *px3212c_data){
 
-	int ret=0,PS_CrossTalk=0, iRetry=CalibrationRetryTimes;;
 	unsigned int PS_VCALI_HByte=0, PS_VCALI_LByte=0;
+	int ret=0,PS_CrossTalk=0, iRetry=CalibrationRetryTimes;;
+	
 
 	if(unlikely(debug))printk( "[%s]	PS Vendor Calibration Retry %d times.\n",__FUNCTION__,(iRetry-PS_VendorCalibrationRetryCount));
 	PS_VendorCalibrationRetryCount --;
@@ -1116,7 +1117,7 @@ static ssize_t Set_dump(struct device *dev, struct device_attribute *attr,const 
 	int PS_Configuration=0, PS_LEDControl=0, PS_MeanTime=0;
 	unsigned long RAW_Data=0;
 	struct px3212c_i2c_data *px3212c_data = data;
-	unsigned char temp[11] = {0};
+
 	int ret=0;
 	sscanf (buf, "%x", &option);
 	switch(option){
@@ -1146,8 +1147,7 @@ static ssize_t Set_dump(struct device *dev, struct device_attribute *attr,const 
 		    ret = i2c_smbus_read_byte_data(px3212c_i2c_client, SYSTEM_CONFIG);
 			if(ret < 0)  {
 				if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Read Status Failed \n",__FUNCTION__);
-				BUG();
-				return sprintf(buf,"PX3212C I2C Failed !!");
+				return ret;
 			}
 			if(PX3212C_STATUSMSG) printk( "[%s]			PX3212C ps_enable = 0x%x \n", __FUNCTION__,ret);
 
@@ -1155,8 +1155,7 @@ static ssize_t Set_dump(struct device *dev, struct device_attribute *attr,const 
 			value_HByte = i2c_smbus_read_byte_data(px3212c_i2c_client, PS_DATA_HIGH);
 			if(value_LByte<0||value_HByte<0)  {
 				if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Read PS_DATA Failed \n",__FUNCTION__);
-				BUG();
-				return sprintf(buf,"PX3212C Read Raw Data Failed !!");
+				return ret;
 			}
 			RAW_Data = (((value_HByte & 0x3f) << 4) | (value_LByte & 0x0f)); //0x3f = 0011 1111; 0x0f = 0000 1111
 			if(PX3212C_STATUSMSG) printk( "[%s]			PX3212C PS DATA = %d\n",__FUNCTION__,(int)RAW_Data);
@@ -1264,8 +1263,13 @@ static ssize_t Show_dump(struct device *dev,struct device_attribute *attr,char *
 	unsigned char ECValue[11]={0};
 	unsigned char ECValue_print[12]={0};
 	unsigned char PS_CValue_low[CValue_len] = {0}, PS_CValue_high[CValue_len] = {0};
-	struct px3212c_i2c_data *px3212c_data = data;
-	
+
+	int PS_CrossTalk=0;
+	unsigned int PS_VCALI_HByte=0, PS_VCALI_LByte=0;
+	unsigned int PS_THDH_LByte=0, PS_THDH_HByte=0;
+	unsigned int PS_THDL_LByte=0, PS_THDL_HByte=0;
+	unsigned long PS_THDH=0, PS_THDL=0;
+		
 	if(IsLinkedPad == 1) ret = i2c_smbus_read_byte_data(px3212c_i2c_client, SYSTEM_CONFIG);
 	if(PX3212C_STATUSMSG) printk( "[%s]	================Dump Start=============== \n",__FUNCTION__);
 	if(PX3212C_STATUSMSG) printk( "[%s]	PX3212C IsEnableSensor = %d \n",__FUNCTION__,IsEnableSensor);
@@ -1280,8 +1284,6 @@ static ssize_t Show_dump(struct device *dev,struct device_attribute *attr,char *
 		for(i = 0 ; i < 11 ; i ++) ECValue_print[i] = ECValue[i];
 		ECValue_print[11] = '\0';
 		if(PX3212C_STATUSMSG) printk( "[%s]	PX3212C Crosstalk from EC = %s \n", __FUNCTION__,ECValue_print);
-		int PS_CrossTalk=0;
-		unsigned int PS_VCALI_HByte=0, PS_VCALI_LByte=0;
 
 		PS_VCALI_HByte = i2c_smbus_read_byte_data(px3212c_i2c_client, PS_VCALI_H);
 		PS_VCALI_LByte = i2c_smbus_read_byte_data(px3212c_i2c_client, PS_VCALI_L);
@@ -1310,9 +1312,7 @@ static ssize_t Show_dump(struct device *dev,struct device_attribute *attr,char *
 
 		if(PX3212C_STATUSMSG)printk("[%s] PX3212C Threshold from EC (int) = (%d, %d) \n",__FUNCTION__,PS_HighThresholdValue,PS_LowThresholdValue);
 
-		unsigned int PS_THDH_LByte=0, PS_THDH_HByte=0;
-		unsigned int PS_THDL_LByte=0, PS_THDL_HByte=0;
-		unsigned long PS_THDH=0, PS_THDL=0;
+
 		
 		PS_THDH_HByte = i2c_smbus_read_byte_data(px3212c_i2c_client, PS_THDH_H);
 		PS_THDH_LByte = i2c_smbus_read_byte_data(px3212c_i2c_client, PS_THDH_L);
@@ -1321,7 +1321,7 @@ static ssize_t Show_dump(struct device *dev,struct device_attribute *attr,char *
 
 		PS_THDH = ((PS_THDH_HByte<<2)|(PS_THDH_LByte & 0x03));
 		PS_THDL = ((PS_THDL_HByte <<2)|(PS_THDL_LByte & 0x03));
-		if(PX3212C_STATUSMSG)printk("[%s] PX3212C Threshold from Register = (%d, %d) \n",__FUNCTION__,PS_THDH,PS_THDL);
+		if(PX3212C_STATUSMSG)printk("[%s] PX3212C Threshold from Register = (%lu, %lu) \n",__FUNCTION__,PS_THDH,PS_THDL);
 	}
 	else
 	{
@@ -1401,6 +1401,28 @@ static ssize_t px3003b_set_configuration(struct device *dev, struct device_attri
 static DEVICE_ATTR(ps_conf, (S_IWUSR|S_IRUGO) ,px3003b_get_configuration,px3003b_set_configuration);
 // add by tom for set configuration --
 
+// enable / disable irq ++ 
+static ssize_t ps_power_show(struct device *dev, struct device_attribute *attr, char *buf){
+
+       return sprintf(buf," Please use echo 1 or 0 > ps_irq !\n");
+}
+
+static ssize_t ps_power_store(struct device *dev, struct device_attribute *attr,const char *buf, size_t count){
+    int temp=0;
+    sscanf (buf, "%x", &temp);
+       
+    if (temp == 1){
+        AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,1) ;
+               if(PX3212C_STATUSMSG) printk( "[%s]     Set Power ON\n",__FUNCTION__);
+       }else{
+        AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,0) ;
+               if(PX3212C_STATUSMSG) printk( "[%s]     Set Power OFF\n",__FUNCTION__);
+       }
+       return count;
+}
+static DEVICE_ATTR(ps_power, (S_IWUSR|S_IRUGO), ps_power_show, ps_power_store);
+// enable / disable irq --
+
 //=========================================================================================
 
 static struct attribute *px3212c_attributes[] = {
@@ -1426,6 +1448,7 @@ static struct attribute *px3212c_attributes[] = {
 	&dev_attr_ps_crosstalk_limit.attr,	//add by leo for modify MAX proximity crosstalk value ++
 	&dev_attr_dump.attr,				//add by tom for dump message
 	&dev_attr_ps_conf.attr,				//add by tom for set configuration
+	&dev_attr_ps_power.attr,				//add by tom for open/close sensor
 	NULL
 };
 static const struct attribute_group px3212c_attr_group = {
@@ -1476,7 +1499,7 @@ static int ps_release(struct inode *inode, struct file *file)
 
 static long ps_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	int err=0, val=0, control=0 ,ret=0 ,retry=1;
+	int err=0, val=0, control=0 ,ret=0 ;
 	unsigned int value_LByte=0, value_HByte=0;
 	unsigned long RAW_Data=0;
 	struct px3212c_i2c_data *px3212c_data = data;
@@ -1709,7 +1732,32 @@ register_ps_input_device_err:
 
 static int ps_enable(struct px3212c_i2c_data *px3212c_data,int  power)
 {
-	int SystemMode=0, ret=0;
+	int SystemMode = 0, ret = 0;
+	int retry = 3;
+	// add by tom for open sensor power ++
+	if(power == POWER_ON)
+	{
+		AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,1);
+		if(PX3212C_STATUSMSG) printk( "[%s]         Proximity Power ON\n",__FUNCTION__);		
+		msleep(30);
+		while(retry > 0) 
+		{
+			ret = ps_initial();
+			ret = px3212c_calibration_init();
+			if(ret < 0)
+			{
+				if(PX3212C_STATUSMSG) printk( "[%s]         Power Fail (%d) Retry %d \n",__FUNCTION__,ret,retry);				
+				AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,1);
+				msleep(30);
+			}
+			else
+			{
+				break;
+			}
+			retry--;
+		}
+	}
+	// add by tom for open sensor power --
 
 	if((power==POWER_ON)&&(PS_AlreadyVendorCalibration==FALSE)&&(PS_VendorCalibrationRetryCount>0)){
 		//if(unlikely(debug))printk( "[%s]	PS_CalibrationCrossTalk==FALSE\n",__FUNCTION__);
@@ -1785,6 +1833,17 @@ static int ps_enable(struct px3212c_i2c_data *px3212c_data,int  power)
 	SystemMode = i2c_smbus_read_byte_data(px3212c_i2c_client, SYSTEM_CONFIG);
 	if(unlikely(debug)) printk( "[px3212c_%s]		PX3212C After Status : %s , SystemMode = 0x%x \n",__FUNCTION__,(px3212c_data->ps_power_state==POWER_OFF)?"POWER_OFF":"POWER_ON",SystemMode);
 	if(PX3212C_STATUSMSG) printk( "[px3212c_%s]		PX3212C Now Status : %s, SystemMode = 0x%x \n",__FUNCTION__,(px3212c_data->ps_power_state==POWER_OFF)?"POWER_OFF":"POWER_ON",SystemMode);
+
+	// add by tom for close sensor power ++
+	if(power == POWER_OFF)
+	{
+		AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,0);
+		PS_AlreadyVendorCalibration = false;
+		PS_VendorCalibrationRetryCount = CalibrationRetryTimes;
+		if(PX3212C_STATUSMSG) printk( "[%s]         Proximity Power OFF\n",__FUNCTION__);		
+	}
+	// add by tom for close sensor power --
+
 	
 	return 0;
 }
@@ -1828,7 +1887,7 @@ static int ps_initial(void)
         if(PX3212C_STATUSMSG) printk( "[%s]	Read PS_MEAN_TIME Failed (%d)\n",__FUNCTION__,PS_MeanTime);
         return PS_MeanTime;
     }
-    if(PX3212C_STATUSMSG) printk( "[%s]			PS_MEAN_TIME = 0x%x\n",__FUNCTION__,PS_MeanTime);
+    
 
 
 	ret = i2c_smbus_write_byte_data(px3212c_i2c_client, PS_LED_CONTROL, 0x33);//PS_LED_CONTROL(0x21) 0011 0011, LED pulse:11 (3 pulse), LED driver ratio:11 (100%)
@@ -1842,10 +1901,10 @@ static int ps_initial(void)
 		if(PX3212C_STATUSMSG) printk( "[%s]	Read PS_LED_CONTROL Failed\n",__FUNCTION__);
 		return PS_LEDControl;
 	}
-	if(PX3212C_STATUSMSG) printk( "[%s]			PS_LED_CONTROL = 0x%x\n",__FUNCTION__,PS_LEDControl);
+	
 
 
-	ret = i2c_smbus_write_byte_data(px3212c_i2c_client, PS_CONFIG, 0x0a);//PS_CONFIG(0x20) RS integrated time select:1111 (15T), PS gain:11, PS persist(interrupt filter):00
+	ret = i2c_smbus_write_byte_data(px3212c_i2c_client, PS_CONFIG, 0x08);//PS_CONFIG(0x20) RS integrated time select:1111 (15T), PS gain:11, PS persist(interrupt filter):00
 	if(ret< 0)  {
 		if(PX3212C_STATUSMSG) printk( "[%s]	Write PS_CONFIG Failed\n",__FUNCTION__);
 		return ret;
@@ -1856,7 +1915,7 @@ static int ps_initial(void)
 		if(PX3212C_STATUSMSG) printk( "[%s]	Read PS_CONFIG Failed\n",__FUNCTION__);
 		return PS_Configuration;
 	}
-	if(unlikely(debug))printk( "[%s]			ps_initial finished, PS_CONFIG = 0x%x\n",__FUNCTION__,PS_Configuration);
+	if(unlikely(debug))printk( "[%s]			ps_initial : PS_CONFIG = 0x%x, PS_MEAN_TIME = 0x%x, PS_LED_CONTROL = 0x%x\n",__FUNCTION__,PS_Configuration,PS_MeanTime,PS_LEDControl);
 
 	PS_AlreadyVendorCalibration = FALSE;
 	PS_AlreadyCalibration = FALSE;
@@ -1880,7 +1939,7 @@ static int ps_calibration(struct px3212c_i2c_data *px3212c_data, int iControl){
 	unsigned int value_LByte=0, value_HByte=0;
 	unsigned long RAW_Data=0;
 	unsigned char PS_CValue[CalibrationValue_len]={0};
-
+	int ret = 0 ;
 	if(unlikely(debug)) printk("[%s]		===========PX3212C Calibration Threshold Start============= \n",__FUNCTION__);	
 	if(iControl==0){
 		PS_LowThresholdValue=Default_PS_ThresholdValue;
@@ -1914,7 +1973,7 @@ static int ps_calibration(struct px3212c_i2c_data *px3212c_data, int iControl){
 
 	// set EC value
 	sprintf(PS_CValue,"%05d&%05d",PS_HighThresholdValue, PS_LowThresholdValue);
-	int ret = AX_MicroP_set_Proxm_threshold(PS_CValue);
+	ret = AX_MicroP_set_Proxm_threshold(PS_CValue);
 	if(ret < 0){
 		if(PX3212C_STATUSMSG) printk("[%s]			AX_MicroP_set_Proxm_threshold() Failed (%d)\n",__FUNCTION__,ret);	
 	}
@@ -1926,17 +1985,20 @@ static int ps_calibration(struct px3212c_i2c_data *px3212c_data, int iControl){
 }
 
 static int ps_get_calibration_value(struct px3212c_i2c_data *px3212c_data){
-	if(unlikely(debug)) printk("[%s]		===========PX3212C Calibration Threshold Start============= \n",__FUNCTION__);	
-	int ilen=0,i=0;
+	
+	int i = 0 , ret = 0;
 	int PS_LowThresholdValue=0, PS_HighThresholdValue=0;
 	unsigned char PS_CValue[CalibrationValue_len] = {0};
 	unsigned char PS_CValue_low[CValue_len] = {0}, PS_CValue_high[CValue_len] = {0};
 
-	int ret = AX_MicroP_get_Proxm_threshold(PS_CValue);
+	if(unlikely(debug)) printk("[%s]		===========PX3212C Calibration Threshold Start============= \n",__FUNCTION__);	
+
+	ret = AX_MicroP_get_Proxm_threshold(PS_CValue);
 	if(ret < 0){
 		if(PX3212C_STATUSMSG) printk("[%s]			AX_MicroP_get_Proxm_threshold() Failed (%d)\n",__FUNCTION__,ret);	
 		return -EBADMSG;
 	}
+	
 	
 	if(PS_CValue[5]!='&')
 	{
@@ -2051,14 +2113,14 @@ static int ps_vendor_calibration(void){
 
 static int ps_get_vendor_calibration_value(void){
 	
-	int ilen=0,i=0;
+	int i=0;
 	int PS_CrossTalk=0;
 	char PS_VCValue[CalibrationValue_len] = {0};
 	char PS_VCValue_real[CValue_len] = {0};
-
+	int ret = 0;
 	if(unlikely(debug)) printk("[%s]		===========PX3212C Get Crosstalk Start============= \n",__FUNCTION__);
 	
-	int ret = AX_MicroP_get_Proxm_crosstalk(PS_VCValue);
+	ret = AX_MicroP_get_Proxm_crosstalk(PS_VCValue);
 	if(ret < 0){
 		if(PX3212C_STATUSMSG) printk("[%s]			AX_MicroP_get_Proxm_threshold() Failed (%d)\n",__FUNCTION__,ret);	
 		return -EBADMSG;
@@ -2183,6 +2245,9 @@ static int px3212c_EC_event_notify(struct notifier_block *this, unsigned long ev
 	switch (event){
 			// pad in 
 			case P01_ADD: 
+				// add by tom for open power 
+				AX_MicroP_setGPIOOutputPin(OUT_up_PROXM_PWR_EN,1);
+				
 				ret = px3212c_check_device(data); 
 				if (ret<0){
 					if(PX3212C_STATUSMSG) printk("[%s]		check_device Failed (%d)\n",__FUNCTION__,ret);
@@ -2198,9 +2263,13 @@ static int px3212c_EC_event_notify(struct notifier_block *this, unsigned long ev
 				// add by tom for set Calibration value ++
 				ret = px3212c_calibration_init();
 				if(ret < 0)
+				{
 					if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Set Calibration Failed \n",__FUNCTION__);
-				else 
-					if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Set Calibration Success , Threshold (H/L) =  %d / %d , Crosstalk = %d  \n",__FUNCTION__,PS_HighCalibrationValue,PS_LowCalibrationValue,PS_VendorCalibrationValue);
+				}
+				else
+				{
+					if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Set Calibration Success , Threshold (H/L) =  %d / %d , Crosstalk = %d  \n",__FUNCTION__,PS_Default_High_Threshold,PS_Default_Low_Threshold,PS_VendorCalibrationValue);
+				}
 				// add by tom for set Calibration value --
 				
 				// Proximity sensor is Disable from HAL
@@ -2213,8 +2282,8 @@ static int px3212c_EC_event_notify(struct notifier_block *this, unsigned long ev
 							if(PX3212C_STATUSMSG) printk( "[%s]	PX3212C Shut down Failed \n",__FUNCTION__);
 							goto px3212c_err;
 					}
-					ret = i2c_smbus_read_byte_data(px3212c_i2c_client, SYSTEM_CONFIG);
-					if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Sensor : %s  \n",__FUNCTION__,(ret==0x02)?"POWER_ON":"POWER_OFF");
+					//ret = i2c_smbus_read_byte_data(px3212c_i2c_client, SYSTEM_CONFIG);
+					if(PX3212C_STATUSMSG) printk( "[%s]		PX3212C Sensor : %s  \n",__FUNCTION__,(data->ps_power_state==0x02)?"POWER_ON":"POWER_OFF");
 					
 					
 					// Debug Message
@@ -2327,14 +2396,14 @@ static int px3212c_EC_event_notify(struct notifier_block *this, unsigned long ev
 //px3212c_work_function: 1.find out which sensor occured the interrupt	2.read PS DATA 3.enable irq
 static void px3212c_work_function(struct work_struct *work)
 {
-	// Debug Message
-	if(unlikely(debug))printk( "[%s]		interruptStatus = %d \n",__FUNCTION__,interruptStatus);
-
 	int err = 0;
 	int SystemMode=0;
 	unsigned int value_LByte=0, value_HByte=0;
 	unsigned long RAW_Data=0;
 	struct px3212c_i2c_data *px3212c_data=data;
+
+	// Debug Message
+	if(unlikely(debug))printk( "[%s]		interruptStatus = %d \n",__FUNCTION__,interruptStatus);
 
 	wake_lock(&px3212c_data->wake_lock);
 
@@ -2444,10 +2513,10 @@ static int px3212c_i2c_probe(struct i2c_client *client, const struct i2c_device_
 		ret = -ENOMEM;
 		if(build_version!=1)goto create_singlethread_workqueue_err;
 	}
-	INIT_DELAYED_WORK_DEFERRABLE(&px3212c_work, px3212c_work_function);
+	INIT_DELAYED_WORK(&px3212c_work, px3212c_work_function);
 
 	/* Initialize Setting */
-	px3212c_create_proc_file(); // add by leo for proc file ++
+	//px3212c_create_proc_file(); // add by leo for proc file ++
 
 	ps_setup(px3212c_data);
 
@@ -2470,9 +2539,8 @@ static int px3212c_i2c_probe(struct i2c_client *client, const struct i2c_device_
 	return 0;
 
 sysfs_create_group_err:
-	px3212c_remove_proc_file(); // add by leo for proc file ++
+	//px3212c_remove_proc_file(); // add by leo for proc file ++
 create_singlethread_workqueue_err:
-px3212c_check_device_err:
 	wake_lock_destroy(&px3212c_data->wake_lock);
 	kfree(px3212c_data);
 	return ret;
@@ -2535,12 +2603,12 @@ static int px3212c_resume(struct i2c_client *client)
 	return 0;
 }
 
-static int __devexit px3212c_i2c_remove(struct i2c_client *client)
+static int px3212c_i2c_remove(struct i2c_client *client)
 {
 	struct px3212c_i2c_data *px3212c_data =data;
 	
 	if(PX3212C_STATUSMSG) printk( "[%s] \n", __FUNCTION__);
-	px3212c_remove_proc_file(); // add by leo for proc file ++
+	//px3212c_remove_proc_file(); // add by leo for proc file ++
 	sysfs_remove_group(&client->dev.kobj, &px3212c_attr_group);
 	px3212c_data = i2c_get_clientdata(client);
 	px3212c_i2c_client = NULL;
@@ -2565,7 +2633,7 @@ static struct i2c_driver px3212c_i2c_driver = {
 	.probe = 		px3212c_i2c_probe,
 	.suspend	=	px3212c_suspend,
 	.resume	=	px3212c_resume,
-	.remove	=	__devexit_p(px3212c_i2c_remove),
+	.remove	=	px3212c_i2c_remove,
 	.id_table = 	px3212c_i2c_idtable,
 	
 };

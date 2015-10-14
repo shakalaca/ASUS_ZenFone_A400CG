@@ -21,14 +21,15 @@ struct rt56xx_cmd {
 };
 
 struct rt56xx_ops {
-	int (*index_write)(struct snd_soc_codec *codec,
-		unsigned int reg, unsigned int value);
-	unsigned int (*index_read)(struct snd_soc_codec *codec,
-				unsigned int reg);
-	int (*index_update_bits)(struct snd_soc_codec *codec,
-		unsigned int reg, unsigned int mask, unsigned int value);
-	int (*ioctl_common)(struct snd_hwdep *hw, struct file *file,
-			unsigned int cmd, unsigned long arg);
+	int (*index_write) (struct snd_soc_codec *codec,
+			    unsigned int reg, unsigned int value);
+	unsigned int (*index_read) (struct snd_soc_codec *codec,
+				    unsigned int reg);
+	int (*index_update_bits) (struct snd_soc_codec *codec,
+				  unsigned int reg, unsigned int mask,
+				  unsigned int value);
+	int (*ioctl_common) (struct snd_hwdep *hw, struct file *file,
+			     unsigned int cmd, unsigned long arg);
 };
 
 enum {

@@ -81,3 +81,12 @@ typedef struct OtpDataST {
  */
 extern void UpiConvertOtp(OtpDataType *data);
 
+/**
+ * @brief UpiPrintOtpVersion
+ *
+ *  Print OTP module version
+ *
+ * @return  NULL
+ */
+extern void UpiPrintOtpVersion(void);
+

@@ -24,21 +24,14 @@
 #include "platform_mid_pwm.h"
 
 static struct intel_mid_pwm_device_data mfld_pwms[] = {
-	[PWM_RED_LED] = {
-		.reg_clkdiv0 = 0x64,
-		.reg_clkdiv1 = 0x63,
-		.reg_dutycyc = 0x68,
+	[PWM_LED] = {
+		.reg_clkdiv0 = 0x62,
+		.reg_clkdiv1 = 0x61,
+		.reg_dutycyc = 0x67,
 		.val_clkdiv1 = 0x00,
 		.val_clkdiv0 = 0x03,
 	},
-	[PWM_GREEN_LED] = {
-		.reg_clkdiv0 = 0x66,
-		.reg_clkdiv1 = 0x65,
-		.reg_dutycyc = 0x69,
-		.val_clkdiv1 = 0x00,
-		.val_clkdiv0 = 0x03,
-	},
-	/*[PWM_VIBRATOR] = {
+	[PWM_VIBRATOR] = {
 		.reg_clkdiv0 = 0x64,
 		.reg_clkdiv1 = 0x63,
 		.reg_dutycyc = 0x68,
@@ -51,25 +44,18 @@ static struct intel_mid_pwm_device_data mfld_pwms[] = {
 		.reg_dutycyc = 0x69,
 		.val_clkdiv1 = 0x00,
 		.val_clkdiv0 = 0x03,
-	},*/
+	},
 };
 
 static struct intel_mid_pwm_device_data ctp_pwms[] = {
-	[PWM_RED_LED] = {
-		.reg_clkdiv0 = 0x64,
-		.reg_clkdiv1 = 0x63,
-		.reg_dutycyc = 0x68,
+	[PWM_LED] = {
+		.reg_clkdiv0 = 0x62,
+		.reg_clkdiv1 = 0x61,
+		.reg_dutycyc = 0x67,
 		.val_clkdiv1 = 0x00,
-		.val_clkdiv0 = 0x03,
+		.val_clkdiv0 = 0x00,
 	},
-	[PWM_GREEN_LED] = {
-		.reg_clkdiv0 = 0x66,
-		.reg_clkdiv1 = 0x65,
-		.reg_dutycyc = 0x69,
-		.val_clkdiv1 = 0x00,
-		.val_clkdiv0 = 0x03,
-	},
-	/*[PWM_VIBRATOR] = {
+	[PWM_VIBRATOR] = {
 		.reg_clkdiv0 = 0x64,
 		.reg_clkdiv1 = 0x63,
 		.reg_dutycyc = 0x68,
@@ -82,7 +68,7 @@ static struct intel_mid_pwm_device_data ctp_pwms[] = {
 		.reg_dutycyc = 0x69,
 		.val_clkdiv1 = 0x00,
 		.val_clkdiv0 = 0x03,
-	},*/
+	},
 };
 
 static struct intel_mid_pwm_platform_data pdata[] = {
@@ -134,9 +120,6 @@ static int __init intel_mid_pwm_init(void)
 		platform_device_put(pdev);
 		return -1;
 	}
-
-	register_rpmsg_service("rpmsg_mid_pwm", RPROC_SCU,
-				RP_MSIC_PWM);
 
 	return 0;
 }

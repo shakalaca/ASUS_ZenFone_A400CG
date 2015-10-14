@@ -25,7 +25,15 @@
     
   #else   ///< else of uG31xx_BOOT_LOADER
 
-    #include "ug31xx_gauge.h"
+    #ifdef  ANDROID_SHELL_ALGORITHM
+
+      #include "upi_algorithm.h"
+      
+    #else   ///< else of ANDROID_SHELL_ALGORITHM
+    
+      #include "ug31xx_gauge.h"
+    
+    #endif  ///< end of ANDROID_SHELL_ALGORITHM
 
   #endif	///< end of uG31xx_BOOT_LOADER
 
@@ -34,7 +42,9 @@
 #else   ///< else of uG31xx_OS_WINDOWS
 
   #define UG31XX_DRIVER_VERSION       (_UPI_NULL_)
-  #define UG31XX_DRIVER_RELEASE_DATE  (_T("Windows No Release Date"))
+  #define UG31XX_DRIVER_VERSION_STR   (_T("Windows"))
+  #define UG31XX_DRIVER_RELEASE_NOTE  (_T("API"))
+  #define UG31XX_DRIVER_RELEASE_DATE  (_T("No Release Date"))
   
 #endif  ///< end of uG31xx_OS_WINDOWS
 

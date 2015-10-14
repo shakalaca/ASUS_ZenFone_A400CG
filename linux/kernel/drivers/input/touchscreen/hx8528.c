@@ -361,7 +361,8 @@ extern int Read_HW_ID(void);
 extern int Read_PROJ_ID(void);
 extern unsigned int entry_mode;
 extern unsigned int factory_mode;
-extern int check_cable_status(void);
+//extern int check_cable_status(void);
+
 
 static struct attribute *himax_attr[] = {
 	&dev_attr_register.attr,
@@ -4534,7 +4535,7 @@ static void himax_ts_work_func(struct work_struct *work)
 					ESD_COUNTER = 0;
 #endif					
 				}
-				reset_count--;
+				if(reset_count >= 0) reset_count--;
 				touch_count = 0;
 				if (unlikely(himax_debug_flag))
 				{
@@ -5360,10 +5361,11 @@ return -1;
 }
 
 #ifdef	CONFIG_PROC_FS
-static ssize_t himax_chip_proc_read(char *page, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_read(struct seq_file *buf, void *v)
 {
 //	printk("[Himax]%s: now touch firmware:%s. \n", __func__, himax_chip->himax_version);
-	return sprintf(page, "%s\n", himax_chip->himax_version);
+	seq_printf(buf,"%s\n", himax_chip->himax_version);
+	return 0;
 }
 
 static ssize_t himax_chip_proc_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
@@ -5391,7 +5393,7 @@ static ssize_t himax_chip_proc_write(struct file *filp, const char __user *buff,
 	return len;
 }
 
-static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_diag_read(struct seq_file *buf, void *v)
 {
 	size_t string_count = 0;
     uint32_t loop_i;
@@ -5400,40 +5402,40 @@ static ssize_t himax_chip_proc_diag_read(char *buf, char **start, off_t off, int
     mutual_num = x_channel * y_channel;
     self_num = x_channel + y_channel;
     width = x_channel;
-    string_count += sprintf(buf + string_count, "Channel: %4d, %4d\n\n", x_channel, y_channel);
+    seq_printf(buf, "Channel: %4d, %4d\n\n", x_channel, y_channel);
 
     if (diag_command >= 1 && diag_command <= 6) {
         if (diag_command < 4) {
             for (loop_i = 0; loop_i < mutual_num; loop_i++) {
-                string_count += sprintf(buf + string_count, "%4d", diag_mutual[loop_i]);
+               seq_printf(buf, "%4d", diag_mutual[loop_i]);
                 if ((loop_i % width) == (width - 1)) {
-                    string_count += sprintf(buf + string_count, " %3d\n", diag_self[width + loop_i/width]);
+                    seq_printf(buf, " %3d\n", diag_self[width + loop_i/width]);
                 }
             }
-            string_count += sprintf(buf + string_count, "\n");
+			seq_printf(buf, "\n");
             for (loop_i = 0; loop_i < width; loop_i++) {
-                string_count += sprintf(buf + string_count, "%4d", diag_self[loop_i]);
+                seq_printf(buf, "%4d", diag_self[loop_i]);
                 if (((loop_i) % width) == (width - 1))
                 {
-                    string_count += sprintf(buf + string_count, "\n");
+                    seq_printf(buf, "\n");
                 }
             }
         } else if (diag_command > 4) {
             for (loop_i = 0; loop_i < self_num; loop_i++) {
-                string_count += sprintf(buf + string_count, "%4d", diag_self[loop_i]);
+                seq_printf(buf, "%4d", diag_self[loop_i]);
                 if (((loop_i - mutual_num) % width) == (width - 1))
-                    string_count += sprintf(buf + string_count, "\n");
+                    seq_printf(buf, "\n");
             }
         } else {
             for (loop_i = 0; loop_i < mutual_num; loop_i++) {
-                string_count += sprintf(buf + string_count, "%4d", diag_mutual[loop_i]);
+                seq_printf(buf, "%4d", diag_mutual[loop_i]);
                 if ((loop_i % width) == (width - 1))
-                    string_count += sprintf(buf + string_count, "\n");
+                    seq_printf(buf, "\n");
             }
         }
     }
 	
-	return string_count;
+	return 0;
 }
 
 static ssize_t himax_chip_proc_diag_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
@@ -5505,12 +5507,21 @@ static ssize_t himax_chip_proc_diag_write(struct file *filp, const char __user *
 	return len;
 }
 
+static int proc_chip_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_read, NULL);
+}
+
+static const struct file_operations proc_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_open,
+		.read = seq_read,
+        .write = himax_chip_proc_write,
+};
+
 void himax_chip_create_proc_file(void)
 {
-	himax_proc_file = create_proc_entry(HIMAX_PROC_FILE, 0666, NULL);
+	himax_proc_file = proc_create(HIMAX_PROC_FILE, 0666, NULL, &proc_fops);
 	if(himax_proc_file){
-		himax_proc_file->read_proc = himax_chip_proc_read;
-		himax_proc_file->write_proc = himax_chip_proc_write;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc file create failed!\n", __func__);
@@ -5524,13 +5535,21 @@ void himax_chip_remove_proc_file(void)
     remove_proc_entry(HIMAX_PROC_FILE, &proc_root);
 }
 
+static int proc_chip_diag_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_diag_read, NULL);
+}
+
+static const struct file_operations diag_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_diag_open,
+		.read = seq_read,
+        .write = himax_chip_proc_diag_write,
+};
+
 void himax_chip_create_proc_diag_file(void)
 {
-	himax_proc_diag_file = create_proc_entry(HIMAX_PROC_DIAG_FILE, 0666, NULL);
-	if(himax_proc_diag_file){
-		himax_proc_diag_file->read_proc = himax_chip_proc_diag_read;
-		himax_proc_diag_file->write_proc = himax_chip_proc_diag_write;
-	}
+	himax_proc_diag_file = proc_create(HIMAX_PROC_DIAG_FILE, 0666, NULL, &diag_fops);
+	if(himax_proc_diag_file){	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc diag file create failed!\n", __func__);
 	}
@@ -5763,12 +5782,20 @@ static ssize_t himax_chip_proc_config_read(char *buf, char **start, off_t off, i
 	return 0;
 }
 
+static int proc_chip_config_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_config_read, NULL);
+}
+
+static const struct file_operations proc_config_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_config_open,
+		.read = seq_read,
+};
+
 void himax_chip_create_proc_config_file(void)
 {
-	himax_proc_config_file = create_proc_entry(HIMAX_PROC_CONFIG_FILE, 0666, NULL);
+	himax_proc_config_file = proc_create(HIMAX_PROC_CONFIG_FILE, 0666, NULL, &proc_config_fops);
 	if(himax_proc_config_file){
-		himax_proc_config_file->read_proc = himax_chip_proc_config_read;
-		//himax_proc_config_file->write_proc = himax_chip_proc_config_write;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
@@ -5784,7 +5811,7 @@ void himax_chip_remove_proc_config_file(void)
 // add by leo for loading config files from .txt by proc --
 
 // add by Josh for Read/Write register by proc 2013/06/04 ++
-static ssize_t himax_chip_proc_register_read(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_register_read(struct seq_file *buf, void *v)
 {
     int ret = 0;
     uint8_t udata[96] = { 0 }, loop_i;
@@ -5793,17 +5820,17 @@ static ssize_t himax_chip_proc_register_read(char *buf, char **start, off_t off,
 
     if (i2c_smbus_read_i2c_block_data(touch_i2c, himax_command, 96, &udata[0]) < 0) {
         printk(KERN_WARNING "[Himax] %s: read fail\n", __func__);
-        return ret;
+        return 0;
     }
 
-    ret += sprintf(buf, "command: %x\n", himax_command);
+    seq_printf(buf, "command: %x\n", himax_command);
     for (loop_i = 0; loop_i < 96; loop_i++) {
-        ret += sprintf(buf + ret, "0x%2.2X ", udata[loop_i]);
+       seq_printf(buf, "0x%2.2X ", udata[loop_i]);
         if ((loop_i % 16) == 15)
-            ret += sprintf(buf + ret, "\n");
+            seq_printf(buf, "\n");
     }
-    ret += sprintf(buf + ret, "\n");
-    return ret;
+    seq_printf(buf, "\n");
+    return 0;
 }
 static ssize_t himax_chip_proc_register_write(struct file *filp, const char *buf, unsigned long len, void *data)
 {
@@ -5849,12 +5876,21 @@ static ssize_t himax_chip_proc_register_write(struct file *filp, const char *buf
     return len;
 }
 
+static int proc_chip_register_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_register_read, NULL);
+}
+
+static const struct file_operations register_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_register_open,
+		.read = seq_read,
+        .write = himax_chip_proc_register_write,
+};
+
 void himax_chip_create_proc_register(void)
 {
-	himax_proc_register = create_proc_entry(HIMAX_PROC_REGISTER, 0666, NULL);
+	himax_proc_register = proc_create(HIMAX_PROC_REGISTER, 0666, NULL, &register_fops);
 	if(himax_proc_register){
-		himax_proc_register->read_proc = himax_chip_proc_register_read;
-		himax_proc_register->write_proc = himax_chip_proc_register_write;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
@@ -5874,7 +5910,7 @@ void himax_chip_remove_proc_register(void)
 
 //add by Josh for self_test poweron & fw_upgrade by proc 2013/07/15 ++
 
-static ssize_t himax_chip_proc_self_test(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_self_test(struct seq_file *buf, void *v)
 {
 	int val=0x00;
 	uint8_t returndata[16];
@@ -5882,12 +5918,14 @@ static ssize_t himax_chip_proc_self_test(char *buf, char **start, off_t off, int
 	val = himax_chip_self_test(returndata);
 	if(val == 0)
 	{
-		return sprintf(buf, "%d\n",val);
+		seq_printf(buf, "%d\n",val);
+		return 0;
 	}
 	else
 	{
-		return sprintf(buf, "%d, Error code= 0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n"
+		seq_printf(buf, "%d, Error code= 0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n"
 		,val, returndata[0],returndata[1],returndata[2],returndata[3],returndata[4],returndata[5],returndata[6],returndata[7],returndata[8],returndata[9],returndata[10],returndata[11],returndata[12],returndata[13],returndata[14],returndata[15]);
+		return 0;
 	}
 }
 
@@ -5939,12 +5977,21 @@ static ssize_t himax_chip_proc_self_test_setting(struct file *filp, const char *
 	return len;
 }
 
+static int proc_chip_self_test_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_self_test, NULL);
+}
+
+static const struct file_operations self_test_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_self_test_open,
+		.read = seq_read,
+        .write = himax_chip_proc_self_test_setting,
+};
+
 void himax_chip_create_proc_self_test(void)
 {
-	himax_proc_self_test = create_proc_entry(HIMAX_PROC_SELF_TEST, 0666, NULL);
+	himax_proc_self_test = proc_create(HIMAX_PROC_SELF_TEST, 0666, NULL, &self_test_fops);
 	if(himax_proc_self_test){
-		himax_proc_self_test->read_proc = himax_chip_proc_self_test;
-		himax_proc_self_test->write_proc = himax_chip_proc_self_test_setting;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
@@ -5958,7 +6005,7 @@ void himax_chip_remove_proc_self_test(void)
     remove_proc_entry(HIMAX_PROC_SELF_TEST, &proc_root);
 }
 
-static ssize_t himax_chip_proc_poweron(char *buf, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t himax_chip_proc_poweron(struct seq_file *buf, void *v)
 {
 	int len = 0;
 	printk(KERN_INFO "[Himax]: adb cat himax_chip_poweron by proc\n");
@@ -5975,7 +6022,8 @@ static ssize_t himax_chip_proc_poweron(char *buf, char **start, off_t off, int c
 	himax_ts_poweron(himax_chip);
 
 	printk(KERN_INFO "[Himax]: adb cat himax_chip_poweron done by proc.\n");
-	return sprintf(buf, "%d \n", len);
+	seq_printf(buf, "%d \n", len);
+	return 0;
 
 }
 
@@ -6127,12 +6175,21 @@ firmware_upgrade_done:
 	return len;
 }
 
+static int proc_chip_fw_upgrade_open(struct inode *inode, struct  file *file) {
+  return single_open(file, himax_chip_proc_poweron, NULL);
+}
+
+static const struct file_operations fw_upgrade_fops = {
+        .owner = THIS_MODULE,
+		.open = proc_chip_fw_upgrade_open,
+		.read = seq_read,
+        .write = himax_chip_proc_fw_upgrade,
+};
+
 void himax_chip_create_proc_poweron_and_fw_upgrade(void)
 {
-	himax_proc_poweron_and_fw_upgrade = create_proc_entry(HIMAX_PROC_POWERON_AND_FW_UPGRADE, 0666, NULL);
+	himax_proc_poweron_and_fw_upgrade = proc_create(HIMAX_PROC_POWERON_AND_FW_UPGRADE, 0666, NULL, &fw_upgrade_fops);
 	if(himax_proc_poweron_and_fw_upgrade){
-		himax_proc_poweron_and_fw_upgrade->read_proc = himax_chip_proc_poweron;
-		himax_proc_poweron_and_fw_upgrade->write_proc = himax_chip_proc_fw_upgrade;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
@@ -6156,11 +6213,15 @@ static ssize_t himax_chip_proc_debug_flag(struct file *filp, const char *buf, un
 	return len;
 }
 
+static const struct file_operations debug_flag_fops = {
+        .owner = THIS_MODULE,
+        .write = himax_chip_proc_debug_flag,
+};
+
 void himax_chip_create_proc_debug_flag(void)
 {
-	himax_proc_debug_flag = create_proc_entry(HIMAX_PROC_DEBUG_FLAG, 0666, NULL);
+	himax_proc_debug_flag = proc_create(HIMAX_PROC_DEBUG_FLAG, 0666, NULL,&debug_flag_fops);
 	if(himax_proc_debug_flag){
-		himax_proc_debug_flag->write_proc = himax_chip_proc_debug_flag;
 	}
 	else{
 		printk(KERN_ERR "[Himax] %s: proc config file create failed!\n", __func__);
@@ -6201,6 +6262,16 @@ static int himax_ts_probe(struct i2c_client *client, const struct i2c_device_id 
     struct himax_i2c_platform_data *pdata;
     uint8_t tp_id0, tp_id1, tp_id2;
 
+	// add by josh for skip COS/POS ++
+    if(entry_mode==4) {
+        printk("[Himax] In COS, skip\n");
+        return;
+    }else if(entry_mode==3) {
+        printk("[Himax] In POS, skip\n");
+        return;
+    }
+    //add by josh for skip COS/POS --
+	
 #ifdef ESD_WORKAROUND	
 		reset_activate = 0;
 #endif
@@ -6491,8 +6562,8 @@ static int himax_ts_probe(struct i2c_client *client, const struct i2c_device_id 
 	}
 #endif
 
-	cable_status = check_cable_status();
-	hx8528_cable_status(cable_status);
+	/*cable_status = check_cable_status();
+	hx8528_cable_status(cable_status);*/
 #ifdef ENABLE_CHIP_STATUS_MONITOR
 	queue_delayed_work(himax_chip->himax_wq, &himax_chip->himax_chip_monitor, 45*HZ);	//for ESD solution
 #endif
@@ -6811,7 +6882,7 @@ static struct i2c_driver himax_ts_driver = {
     },
 };
 
-static int __devinit himax_ts_init(void)
+static int himax_ts_init(void)
 {
 	if(Read_PROJ_ID() == PROJ_ID_ME372CG){
 		printk(KERN_INFO "[Himax] %s\n", __func__);

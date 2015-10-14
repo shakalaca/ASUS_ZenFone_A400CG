@@ -25,11 +25,11 @@ _upi_bool_ MPK_active = _UPI_FALSE_;
 
 #if defined (uG31xx_OS_WINDOWS)
 
-  #define UG31XX_API_VERSION      (_T("UG31XX API $Rev: 605 $"))
+  #define UG31XX_API_VERSION      (_T("UG31XX API $Rev: 630 $"))
 
 #else
 
-  #define UG31XX_API_VERSION      ("UG31XX API $Rev: 605 $")
+  #define UG31XX_API_VERSION      ("UG31XX API $Rev: 630 $")
 
 #endif
 
@@ -925,7 +925,6 @@ GGSTATUS upiGG_Initial(char **pObj, GGBX_FILE_HEADER *pGGBXBuf, unsigned char Fo
 
   UpiLoadBatInfoFromIC(&pUg31xx->sysData);
   pUg31xx->measData.cycleCount = (ForceReset == 0) ? (_meas_u16_)pUg31xx->sysData.cycleCount : 0;
-  pUg31xx->measData.ccOffsetAdj = (ForceReset == 0) ? (_meas_s8_)pUg31xx->sysData.ccOffset : 0;
   pUg31xx->measData.cumuCap = 0;
   pUg31xx->capData.standbyDsgRatio = (ForceReset == 0) ? (_cap_u8_)pUg31xx->sysData.standbyDsgRatio : 0;
   /// Count total Time
@@ -997,6 +996,9 @@ GGSTATUS upiGG_Initial(char **pObj, GGBX_FILE_HEADER *pGGBXBuf, unsigned char Fo
 
     UpiSetupAdc(&pUg31xx->sysData);
     UpiSetupSystem(&pUg31xx->sysData);
+    /// [FC] : Reset ccOffset if gauge reset ; 05/20/2014
+    pUg31xx->sysData.ccOffset = 0;
+    pUg31xx->measData.ccOffsetAdj = 0;
 
     #ifdef  UG31XX_RESET_DATABASE
       pUg31xx->backupData.icDataAvailable = BACKUP_BOOL_TRUE;
@@ -2810,6 +2812,7 @@ static BackupFileReloadRsocThrdType BackupFileReloadRsocThrdTable[] = {
   pUg31xx->backupData.backupFileName = BackupFileName;
   pUg31xx->backupData.suspendFileName = SuspendFileName;
   UG31_LOGN("[%s]: Backup file routine START (%d)\n", __func__, pUg31xx->backupData.backupFileSts);
+  UpiBackupVoltage(&pUg31xx->backupData);
   UpiBackupData(&pUg31xx->backupData);
   UG31_LOGN("[%s]: Backup file routine END (%d)\n", __func__, pUg31xx->backupData.backupFileSts);
   if(pUg31xx->Options & LKM_OPTIONS_ENABLE_SUSPEND_DATA_LOG)
@@ -2907,6 +2910,7 @@ void upiGG_AlgorithmSimulatorInit(char **pObj, const wchar_t* GGBFilename,
   SYSTEM_RTN_CODE rtn;
   struct ug31xx_data *pUg31xx;
   _upi_s16_ deltaQC = 0;
+  _sys_u8_ *ptr;
 
 	*pObj = (char *)malloc(sizeof(struct ug31xx_data));
 	pUg31xx = (struct ug31xx_data *)(*pObj);
@@ -2925,8 +2929,10 @@ void upiGG_AlgorithmSimulatorInit(char **pObj, const wchar_t* GGBFilename,
     return;
   }
   // [FC] : Allocate buffer ; 07/08/2013
-  UpiAllocateTableBuf((_sys_u8_ **)&pUg31xx->capData.encriptTable, &pUg31xx->capData.tableSize);
-  UpiAllocateTableBuf((_sys_u8_ **)&pUg31xx->capData.encriptBuf, &pUg31xx->capData.tableSize);
+  ptr = (_sys_u8_ *)&pUg31xx->capData.encriptTable[0];
+  UpiAllocateTableBuf((_sys_u8_ **)&ptr, &pUg31xx->capData.tableSize);
+  ptr = (_sys_u8_ *)&pUg31xx->capData.encriptBuf[0];
+  UpiAllocateTableBuf((_sys_u8_ **)&ptr, &pUg31xx->capData.tableSize);
 
   pUg31xx->capData.ggbTable = &pUg31xx->cellTable;
   pUg31xx->capData.ggbParameter = &pUg31xx->cellParameter;
@@ -3230,12 +3236,8 @@ void upiGG_RecoveryMemory(char *pObj, const wchar_t* BackupFileName)
 {
   CFile fileObj;
   struct ug31xx_data *pUg31xx;
-  _cap_u8_ *encriptTable;    
-  _cap_u8_ *encriptBuf;
   
 	pUg31xx = (struct ug31xx_data *)pObj;
-  encriptTable = pUg31xx->capData.encriptTable;
-  encriptBuf = pUg31xx->capData.encriptBuf;
   
   if(fileObj.Open(BackupFileName, CFile::modeRead, NULL) == FALSE)
   {
@@ -3244,9 +3246,6 @@ void upiGG_RecoveryMemory(char *pObj, const wchar_t* BackupFileName)
 
   fileObj.Read(pObj, sizeof(struct ug31xx_data));
   fileObj.Close();
-
-  pUg31xx->capData.encriptTable = encriptTable;
-  pUg31xx->capData.encriptBuf = encriptBuf;
   
   pUg31xx->sysData.ggbParameter = &pUg31xx->cellParameter;
   pUg31xx->sysData.ggbCellTable = &pUg31xx->cellTable;
@@ -3436,11 +3435,21 @@ GGSTATUS upiGG_GetNtcStatus(char *pObj)
 
   if(MEAS_NTC_OPEN(pUg31xx->measData.status) == _UPI_TRUE_)
   {
+    #ifdef  STOP_IF_NTC_CHECK_FAIL
+    
+      UpiStopUg31xx();
+
+    #endif  ///< end of STOP_IF_NTC_CHECK_FAIL
     return (UG_MEAS_FAIL_NTC_OPEN);
   }
 
   if(MEAS_NTC_SHORT(pUg31xx->measData.status) == _UPI_TRUE_)
   {
+    #ifdef  STOP_IF_NTC_CHECK_FAIL
+    
+      UpiStopUg31xx();
+
+    #endif  ///< end of STOP_IF_NTC_CHECK_FAIL
     return (UG_MEAS_FAIL_NTC_SHORT);
   }
 
@@ -3655,7 +3664,8 @@ GGSTATUS upiGG_FetchExternalTemperature(char *pObj)
   return (UG_READ_DEVICE_INFO_SUCCESS);
 }
 
-#define MINIMUM_BOARD_OFFSET      (-20)
+#define MAXIMUM_BOARD_OFFSET      (127)
+#define MINIMUM_BOARD_OFFSET      (-127)
 
 /**
  * @brief upiGG_GetBoardOffset
@@ -3731,10 +3741,6 @@ void upiGG_GetBoardOffset(char *pObj, _upi_s16_ fullStep, _upi_s16_ upper, _upi_
     pUg31xx->measData.ccOffsetAdj = (_meas_s8_)avgCCOffset;
   }
 
-  if(pUg31xx->measData.ccOffsetAdj < MINIMUM_BOARD_OFFSET)
-  {
-    pUg31xx->measData.ccOffsetAdj = MINIMUM_BOARD_OFFSET;
-  }
   UG31_LOGE("[%s]: (%d) Board offset = %d (%d)\n", __func__, fullStep, pUg31xx->measData.ccOffsetAdj, rawCurr);
 }
 
@@ -4046,7 +4052,281 @@ struct ug31xx_uboot_interface ug31xx_uboot_module = {
 
 #else   ///< else of uG31xx_BOOT_LOADER
 
-#ifndef ANDROID_SHELL_ALGORITHM
+#ifdef  ANDROID_SHELL_ALGORITHM
+
+#define EXTERNAL_PROGRAM_PATH       ("/Removable/MicroSD/upi_fg")
+#define EXTERNAL_PROGRAM_KEY_START  (0x9306)
+#define EXTERNAL_PROGRAM_KEY_END    (0x8837)
+
+typedef struct UpiLibExtProgInterfaceST {
+  int rm;
+  int fcc;
+  int rsoc;
+} __attribute__((packed)) UpiLibExtProgInterfaceType;
+
+
+/**
+ * @brief upi_lib_exec_external_program
+ *
+ *  Execute external program
+ *
+ * @para  pObj  address of struct ug31xx_data
+ * @return  NULL
+ */
+void upi_lib_exec_external_program(struct ug31xx_data *pObj)
+{
+  UpiLibExtProgInterfaceType extProgData;
+  unsigned int tmpKey;
+  FILE *fp;
+
+  /// [AT-PM] : Open file from external program ; 03/17/2014
+  fp = NULL;
+  fp = fopen(EXTERNAL_PROGRAM_PATH, "rt");
+  if(fp == NULL)
+  {
+    return;
+  }
+
+  /// [AT-PM] : Get start key ; 03/17/2014
+  fscanf(fp, "%x", &tmpKey);
+  if(tmpKey != EXTERNAL_PROGRAM_KEY_START)
+  {
+    UG31_LOGE("[%s]: Start key check fail (%x)\n", __func__,
+              tmpKey);
+    return;
+  }
+
+  /// [AT-PM] : Get capacity data ; 03/17/2014
+  fscanf(fp, "%d,%d,%d", &extProgData.rm, &extProgData.fcc, &extProgData.rsoc);
+
+  /// [AT-PM] : Get end key ; 03/17/2014
+  fscanf(fp, "%x", &tmpKey);
+  if(tmpKey != EXTERNAL_PROGRAM_KEY_END)
+  {
+    UG31_LOGE("[%s]: End key check fail (%x)\n", __func__,
+              tmpKey);
+    return;
+  }
+
+  /// [AT-PM] : Use data from external program ; 03/16/2014
+  pObj->capData.rm = (_cap_u16_)extProgData.rm;
+  pObj->capData.fcc = (_cap_u16_)extProgData.fcc;
+  pObj->capData.rsoc = (_cap_u16_)extProgData.rsoc;
+  UG31_LOGE("[%s]: %d / %d = %d\n", __func__, 
+            pObj->capData.rm, 
+            pObj->capData.fcc, 
+            pObj->capData.rsoc);
+}
+
+/**
+ * @brief upi_lib_print_obj_version
+ *
+ *  Print obj version in log
+ *
+ * @return  NULL
+ */
+void upi_lib_print_obj_version(void)
+{
+  UG31_LOGE("[%s]: %s\n", __func__,
+            UG31XX_API_VERSION);
+
+  UpiPrintBackupVersion();
+  UpiPrintCapacityVersion();
+  UpiPrintMeasurementVersion();
+  UpiPrintOtpVersion();
+  UpiPrintSystemVersion();
+}
+
+/**
+ * @brief upi_lib_debug_switch
+ *
+ *  Debug switch API for user space program
+ *
+ * @para  op_options  operation from kernel
+ * @return  NULL
+ */
+void upi_lib_debug_switch(unsigned char op_option)
+{
+  upiGG_DebugSwitch(LKM_OPTIONS_DEBUG_LEVEL(op_option));
+}
+
+/**
+ * @brief PrintDebugLog
+ *
+ *  Print debug log for capacity module
+ *
+ * @para  ug31xx  address of struct ug31xx_data
+ * @para  action  string of kernel driver action
+ * @return  NULL
+ */
+void PrintDebugLog(struct ug31xx_data *ug31xx, const char *action)
+{
+  UG31_LOGE("<BATT> M:%s, P:%d(%d-%d)%%, V:%dmV, C:%dmA, T:%d.%dC(%d), S:0x%08x(%d%d%d), R:%dmAh, F:%dmAh, Q:%dmAh, CC:%d, P:%d.%d(%d-%d)s, BO:%d, %s:%s-%04x-%s:%s-%s (%d)\n",
+            action,
+            (int)ug31xx->capData.rsoc,
+            (int)ug31xx->capData.rsoc,
+            (int)ug31xx->capData.predictRsoc,
+            (int)ug31xx->measData.bat1Voltage,
+            (int)ug31xx->measData.curr,
+            (int)(ug31xx->measData.extTemperature/10),
+            (int)(((ug31xx->measData.extTemperature%10) < 0) ? 
+                  (ug31xx->measData.extTemperature*(-1)%10) : 
+                  (ug31xx->measData.extTemperature%10)),
+            (int)ug31xx->measData.intTemperature,
+            (unsigned int)ug31xx->capData.status,
+            (int)ug31xx->capData.fcSts,
+            (int)ug31xx->capData.fcStep100,
+            (int)ug31xx->capData.inSuspend,
+            (int)ug31xx->capData.rm,
+            (int)ug31xx->capData.fcc,
+            (int)ug31xx->measData.cumuCap,
+            (int)ug31xx->measData.cycleCount,
+            (int)(ug31xx->measData.deltaTime/1000),
+            (int)(ug31xx->measData.deltaTime%1000),
+            (int)ug31xx->capData.dsgCharge,
+            (int)ug31xx->capData.reverseCap,
+            (int)(ug31xx->cellParameter.adc1_pos_offset + ug31xx->measData.ccOffsetAdj),
+            UG31XX_DRIVER_VERSION_STR,
+            UG31XX_DRIVER_RELEASE_NOTE,
+            ug31xx->cellParameter.ggb_version,
+            ug31xx->cellParameter.customerSelfDef,
+            ug31xx->cellParameter.projectSelfDef,
+            UG31XX_DRIVER_RELEASE_DATE,
+            (int)ug31xx->capData.tableUpdateIdx);
+}
+
+/**
+ * @brief upi_lib_print_log
+ *
+ *  Print debug log
+ *
+ * @para  obj address of memory buffer from kernel
+ * @para  action  string of kernel driver action
+ * @return  NULL
+ */
+void upi_lib_print_log(char *obj, const char *action)
+{
+  struct ug31xx_data *pUg31xx;
+
+  pUg31xx = (struct ug31xx_data *)obj;
+
+  PrintDebugLog(pUg31xx, action);
+}
+
+static int upi_lib_first_update_capacity_delay = 5;
+
+/**
+ * @brief upi_lib_update_capacity
+ *
+ *  Capacity algorithm API for user space program
+ *
+ * @para  obj address of memory buffer from kernel
+ * @return  NULL
+ */
+void upi_lib_update_capacity(char *obj)
+{
+  struct ug31xx_data *pUg31xx;
+
+  pUg31xx = (struct ug31xx_data *)obj;
+  UG31_LOGI("[%s]: Time Tick = %d (%d)\n", __func__, pUg31xx->measData.lastTimeTick, pUg31xx->measData.lastCounter);
+
+  if(upi_lib_first_update_capacity_delay != 0)
+  {
+    upi_lib_first_update_capacity_delay = upi_lib_first_update_capacity_delay - 1;
+    UG31_LOGE("[%s]: First update capacity ... %d (%d -> %d)\n", __func__,
+              upi_lib_first_update_capacity_delay,
+              pUg31xx->measData.deltaTimeDaemon,
+              pUg31xx->measData.deltaTime);
+    pUg31xx->measData.deltaTimeDaemon = pUg31xx->measData.deltaTime;
+    return;
+  }
+  upiGG_ShellUpdateCapacity(obj);
+
+  upi_lib_exec_external_program(pUg31xx);
+}
+
+/**
+ * @brief upi_lib_backup_data
+ *
+ *  Backup data operation for user space program
+ *
+ * @para  obj address of memory buffer from kernel
+ * @para  backup_file address of backup filename
+ * @para  suspend_file  address of suspend filename
+ * @return  0 if success, 1 if driver version mismatch, -1 if not ready
+ */
+int upi_lib_backup_data(char *obj, char *backup_file, char *suspend_file)
+{
+  int rtn;
+  struct ug31xx_data *pUg31xx;
+
+  pUg31xx = (struct ug31xx_data *)obj;
+  UG31_LOGI("[%s]: Time Tick = %d (%d)\n", __func__, pUg31xx->measData.lastTimeTick, pUg31xx->measData.lastCounter);
+
+  upiGG_BackupFileSwitch(_UPI_TRUE_);
+  rtn = upiGG_BackupFileCheck(obj, backup_file, suspend_file);
+  upiGG_BackupFileSwitch(_UPI_FALSE_);
+
+  if(rtn == UG_CAP_DATA_VERSION_MISMATCH)
+  {
+    UG31_LOGE("[%s]: Driver version mismatched.\n", __func__);
+    return (1);
+  }
+  if(rtn == UG_CAP_DATA_NOT_READY)
+  {
+    UG31_LOGE("[%s]: Driver backup data not ready.\n", __func__);
+    return (-1);
+  }
+  return (0);
+}
+
+/**
+ * @brief upi_lib_malloc_memory
+ *
+ *  Malloc memory buffer for userspace program
+ *
+ * @para  obj address of memory buffer pointer
+ * @return  size of memory buffer
+ */
+int upi_lib_malloc_memory(char **obj)
+{
+  if((*obj) != NULL)
+  {
+    upi_free(*obj);
+  }
+  
+  *obj = (char *)upi_malloc(sizeof(struct ug31xx_data));
+  return (((*obj) == NULL) ? 0 : sizeof(struct ug31xx_data));
+}
+
+/**
+ * @brief upi_lib_get_memory_size
+ *
+ *  Get memory size used by userspace program
+ *
+ * @return  size of memory
+ */
+int upi_lib_get_memory_size(void)
+{
+  int total_size;
+  int rtn;
+
+  total_size = 0;
+  
+  rtn = (int)UpiGetBackupMemorySize();
+  total_size = total_size + rtn;
+
+  rtn = (int)UpiGetCapacityMemorySize();
+  total_size = total_size + rtn;
+
+  rtn = (int)UpiGetMeasurementMemorySize();
+  total_size = total_size + rtn;
+
+  UG31_LOGD("[%s]: Total memory size = %d\n", __func__, total_size);
+  return (total_size);
+}
+
+#else   ///< else of ANDROID_SHELL_ALGORITHM
 
 enum  LKM_OPERATION_MODE {
   LKM_OPERATION_MODE_NORMAL = 0,
@@ -4061,6 +4341,7 @@ enum  LKM_OPERATION_MODE {
 #define LKM_AVG_TEMPERATURE_INIT_WITH_25  (LKM_AVG_TEMPERATURE_COUNT/2)
 #define LKM_MAX_OPERATION_FAIL_CNT        (3)
 #define LKM_MAX_DECIMATE_RST_CNT          (10)
+#define LKM_MAX_RESET_DELTA_SOC           (10)
 
 static _upi_u8_ lkm_alarm_status;
 static _upi_u8_ lkm_battery_removed;
@@ -4577,9 +4858,10 @@ int lkm_update(char user_space_response)
  *  Reset linux kernel module
  *
  * @para  ggb address of ggb data
+ * @para  whether keep previous RSOC or not
  * @return  0 if success
  */
-int lkm_reset(char *ggb)
+int lkm_reset(char *ggb, char keep_rsoc)
 {
   GGSTATUS rtn;
   struct ug31xx_data *ug31xx;
@@ -4598,8 +4880,23 @@ int lkm_reset(char *ggb)
   ug31xx = (struct ug31xx_data *)lkm_gauge;
   ug31xx->Options = (_upi_u8_)lkm_options;
 
-  upiGG_SetCapacity(lkm_gauge, (_upi_u8_)rsoc);
-    
+	if(keep_rsoc == _UPI_TRUE_)
+	{
+	  if(rsoc >= (ug31xx->batteryInfo.RSOC))
+	  {
+	    if((rsoc - (ug31xx->batteryInfo.RSOC)) <= LKM_MAX_RESET_DELTA_SOC)
+	    {
+	      upiGG_SetCapacity(lkm_gauge, (_upi_u8_)rsoc);
+	   }
+	  }
+	  else
+	  {
+	    if(((ug31xx->batteryInfo.RSOC) - rsoc) <= LKM_MAX_RESET_DELTA_SOC)
+	    {
+	      upiGG_SetCapacity(lkm_gauge, (_upi_u8_)rsoc);
+	    }
+	  }
+	}
   lkm_set_version(ug31xx);
   
   lkm_alarm_status = 0;
@@ -4747,7 +5044,7 @@ char* lkm_get_version(void)
 #define UPI_POLLING_TIME_NEAR_UT        (10)
 #define UPI_POLLING_TIME_OT             (5)
 #define UPI_POLLING_TIME_UT             (5)
-#define UPI_POLLING_TIME_NEAR_OT_THRD   (450)
+#define UPI_POLLING_TIME_NEAR_OT_THRD   (400)
 #define UPI_POLLING_TIME_NEAR_UT_THRD   (50)
 #define UPI_POLLING_TIME_OT_THRD        (500)
 #define UPI_POLLING_TIME_UT_THRD        (0)
@@ -6427,6 +6724,21 @@ unsigned char lkm_get_decimate_rst_sts(void)
   return ((lkm_decimate_rst_cnt != 0) ? UG31XX_DECIMATE_RST_ACTIVE : UG31XX_DECIMATE_RST_NOT_ACTIVE);
 }
 
+/**
+ * @brief lkm_get_delta_time
+ *
+ * Get delta time
+ *
+ * @return delta time in msec
+ */
+int lkm_get_delta_time(void)
+{
+  struct ug31xx_data *ug31xx;
+
+  ug31xx = (struct ug31xx_data *)lkm_gauge;
+  return ((int)ug31xx->measData.deltaTime);
+}
+
 struct ug31xx_module_interface ug31_module = {
   .initial    = lkm_initial,
   .uninitial  = lkm_uninitial,
@@ -6482,6 +6794,7 @@ struct ug31xx_module_interface ug31_module = {
   .get_ggb_board_gain             = lkm_get_ggb_board_gain,
   .get_ggb_config                 = lkm_get_ggb_config,
   .get_decimate_rst_sts           = lkm_get_decimate_rst_sts,
+  .get_delta_time                 = lkm_get_delta_time,
 
   .set_backup_file                = lkm_set_backup_file,
   .set_charger_full               = lkm_set_charger_full,

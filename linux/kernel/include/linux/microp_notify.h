@@ -31,6 +31,7 @@ enum microp_msg{
     PAD_USB_OTG_DISABLE,
     P01_LOW_BATTERY,
     P01_BATTERY_STAT_CHANGE,
+    P01_APROM_CRASH,
 };
 
 /*

@@ -21,6 +21,11 @@
 // 2013.07.04 cheng_kao early_suspend ++
 #include <linux/earlysuspend.h>
 // 2013.07.04 cheng_kao early_suspend --
+#include <linux/HWVersion.h>
+
+// 2014.03.10 add by alp for proc file ++
+//#include <linux/seq_file.h>
+// 2014.03.10 add by alp for proc file --
 
 #define DRIVER_NAME "als3010"
 static struct kobject *als3010_kobj;
@@ -43,8 +48,12 @@ static struct als3010_device_data *als3010_dev = NULL;
 
 
 /*Proc Nodes*/
-#define PROC_DEBUG_MESSAGE_NAME	"als3010_debug"
-static struct proc_dir_entry *dbgProcFile;
+// 2014.03.10 add by alp for proc file ++
+/*
+#define ALS3010_PROC_FILE_NODE	"als3010"
+static struct proc_dir_entry *als3010_proc_file;
+*/
+// 2014.03.10 add by alp for proc file --
 
 /* Other */
 static int POWER_OFF 	= 0;
@@ -54,7 +63,7 @@ static unsigned int debug_msg = 0;
 
 #define ALS_DEBUGMSG	1
 #define ALS_VALUE_LEN	10
-#define ALS_CALIBRATION_FILE_PATH		"/data/als_calibration.ini"
+#define ALS_CALIBRATION_FILE_PATH		"/data/sensors/als_calibration.ini"
 
 /* Sensors IO Control Info */
 #define LIGHTSENSOR_IOCTL_MAGIC 'l'
@@ -77,9 +86,9 @@ static int als3010_threshold_level[ALS_LEVEL_GAP]	= {0,25,50,100,150,200,300,400
 static int als3010_threshold_Conut[ALS_LEVEL_GAP] = {0, 337, 674 ,1348, 2022, 2696, 4044, 5391 ,6739 , 8086, 9434, 10782, 12130, 13478, 16847, 20216, 65535};
 
 
-#define	ALS_LEVEL_BUFFER_LENGTH			36
-#define	ALS_THRESHOLD_BUFFER_LENGTH		38
-#define	ALS_CALI_VALUE_BUFFER_LENGTH	6
+#define	ALS_LEVEL_BUFFER_LENGTH			32
+#define	ALS_THRESHOLD_BUFFER_LENGTH		34
+#define	ALS_CALI_VALUE_BUFFER_LENGTH	4
 
 #define	ALS_CALI_DEFAULT_VALUE			1600
 
@@ -88,13 +97,26 @@ int als3010_set_level_table(int calivalue);
 int als3010_set_threshold_table(int calivalue);
 int als3010_set_calibration_value(int calivalue);
 
+//extern unsigned int factory_mode;
+
+extern unsigned int entry_mode;
 extern unsigned int factory_mode;
+extern int build_version;
+bool workaround_for_eng_mode = false;
+
 static int als3010_enable(int  power);
 
 #ifdef CONFIG_HID_ASUS_PAD_EC
-extern int ite_light_sensor_set_function(int cmd);
-extern int ite_light_sensor_set_table(unsigned char *buf);
-extern int ite_light_sensor_get_table(unsigned char *report_buf);
+#define	EC_ALS_ENABLE			0x01
+#define	EC_ALS_DISABLE			0x02
+#define	EC_ALS_REPORT			0x04
+#define	EC_ALS_RESET			0x80
+
+extern int ite_als_set_power_function(int cmd);
+extern int ite_als_set_calibration_data(unsigned char *buf);
+extern int ite_als_read_threshold_level_table(unsigned char *buf);
+extern int ite_als_read_threshold_table(unsigned char *buf);
+extern int ite_als_get_calibration_data(unsigned char *buf);
 #endif
 
 //=================================================================
@@ -104,7 +126,7 @@ static ssize_t als_status_check(struct device *dev, struct device_attribute *att
 	
 //	ret = als3010_enable(POWER_ON);
 #ifdef CONFIG_HID_ASUS_PAD_EC
-	ret=ite_light_sensor_set_function(0x02);
+	ret=ite_als_set_power_function(EC_ALS_ENABLE);
 		if(ret < 0)  {
 		printk( "[%s] %d: als_status_check enable (%d) failed \n",__FUNCTION__,__LINE__,POWER_ON);
 	}
@@ -114,7 +136,7 @@ static ssize_t als_status_check(struct device *dev, struct device_attribute *att
 
 //	ret = als3010_enable(POWER_OFF);
 #ifdef CONFIG_HID_ASUS_PAD_EC
-	ret=ite_light_sensor_set_function(0x04);
+	ret=ite_als_set_power_function(EC_ALS_DISABLE);
 	if(ret < 0)  {
 		printk( "[%s] %d: als_status_check disable (%d) failed \n",__FUNCTION__,__LINE__,POWER_OFF);
 	}
@@ -137,7 +159,7 @@ static ssize_t als_enable_store(struct device *dev, struct device_attribute *att
 	if(buf[0]=='1'){
 //		ret = als3010_enable(POWER_ON);
 #ifdef CONFIG_HID_ASUS_PAD_EC
-		ret=ite_light_sensor_set_function(0x02);
+		ret=ite_als_set_power_function(EC_ALS_ENABLE);
 		if(ret < 0)  {
 			printk( "[%s] %d: als_enable(%d) failed \n",__FUNCTION__,__LINE__,POWER_ON);
 		}	
@@ -145,7 +167,7 @@ static ssize_t als_enable_store(struct device *dev, struct device_attribute *att
 	}else if(buf[0]=='0'){
 //		ret = als3010_enable(POWER_OFF);
 #ifdef CONFIG_HID_ASUS_PAD_EC
-		ret=ite_light_sensor_set_function(0x04);
+		ret=ite_als_set_power_function(EC_ALS_DISABLE);
 		if(ret < 0)  {
 			printk( "[%s] %d: als_enable(%d) failed \n",__FUNCTION__,__LINE__,POWER_OFF);
 		}
@@ -159,6 +181,10 @@ static ssize_t als_start_calibration(struct device *dev, struct device_attribute
 	int err=0;
 	als3010_dev->cal_value = als3010_get_calibration();
 	printk( "als : cal_value=%d \n",als3010_dev->cal_value);
+	if(als3010_dev->cal_value==0){
+		als3010_dev->cal_value =ALS_CALI_DEFAULT_VALUE;
+		printk( "alp.D : use default value \n");
+	}
 	err= als3010_set_level_table(als3010_dev->cal_value);
 	err= als3010_set_threshold_table(als3010_dev->cal_value);
 	err= als3010_set_calibration_value(als3010_dev->cal_value);
@@ -169,11 +195,21 @@ static ssize_t als_start_calibration(struct device *dev, struct device_attribute
 static ssize_t als_get_all_table(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int err=0,iloop=0;
-	unsigned char buffer[ALS_MAX_BUFFER_LENGTH] ={0};
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-	err = ite_light_sensor_get_table(&buffer);
-	for(iloop = 0; iloop < ALS_GET_BUFFER_LENGTH; iloop++){
-		printk( "als : als_get_all_table buffer[%d]=%d \n",iloop ,buffer[iloop]);
+	unsigned char bufferA[ALS_LEVEL_BUFFER_LENGTH] ={0};
+	unsigned char bufferB[ALS_THRESHOLD_BUFFER_LENGTH] ={0};
+	unsigned char bufferC[ALS_CALI_VALUE_BUFFER_LENGTH+4] ={0};
+	err = ite_als_read_threshold_level_table(&bufferA);
+	for(iloop = 0; iloop < ALS_LEVEL_BUFFER_LENGTH; iloop++){
+		printk( "als : get cal_level buffer[%d]=%d \n",iloop ,bufferA[iloop]);
+	}
+	err = ite_als_read_threshold_table(&bufferB);
+	for(iloop = 0; iloop < ALS_THRESHOLD_BUFFER_LENGTH; iloop++){
+		printk( "als : get cal_threshold buffer[%d]=%d \n",iloop ,bufferB[iloop]);
+	}
+	err = ite_als_get_calibration_data(&bufferC);
+	for(iloop = 0; iloop < (ALS_CALI_VALUE_BUFFER_LENGTH+4); iloop++){
+		printk( "als : get cal_data buffer[%d]=%d \n",iloop ,bufferC[iloop]);
 	}
 #endif
 	return sprintf(buf,"als_get_all_table(%d) \n",err);
@@ -197,11 +233,13 @@ static const struct attribute_group als3010_attr_group = {
 };
 //=================================================================
 
-static ssize_t als3010_proc_debug_msg_read(char *buf, char **start, off_t off, int count, int *eof, void *data){
+//2014.03.10 add by alp for proc file ++
+/*
+static ssize_t ap3212c_register_read(struct seq_file *buf, void *v ){
 
 	return sprintf(buf, "debug_msg(%d)\n",debug_msg);
 }
-static ssize_t als3010_proc_debug_msg_write(struct file *filp, const char __user *buff, unsigned long len, void *data){
+static ssize_t als3010_register_write(struct file *filp, const char __user *buff, unsigned long len, void *idata){
 
 	char messages[80] = {0};
 			
@@ -230,24 +268,35 @@ static ssize_t als3010_proc_debug_msg_write(struct file *filp, const char __user
 	return len;
 }
 
+static int als3010_register_open(struct inode *inode, struct file *file)
+{
+	return single_open(file,ap3212c_register_read,NULL);
+}
+
+static const struct file_operations als3010_register_fops = {
+	.owner = THIS_MODULE,
+	.open = als3010_register_open,
+	.read = seq_read,
+	.write = als3010_register_write,
+};
+
 void als3010_create_proc_file(void)
 {
-	dbgProcFile = create_proc_entry(PROC_DEBUG_MESSAGE_NAME, 0660, NULL);
-	if (dbgProcFile == NULL){
-		remove_proc_entry(PROC_DEBUG_MESSAGE_NAME, NULL);
-		printk("[%s] %d: can't initialize /proc/%s\n",__FUNCTION__,__LINE__,PROC_DEBUG_MESSAGE_NAME);
-	}else{
-		dbgProcFile->read_proc = als3010_proc_debug_msg_read;
-		dbgProcFile->write_proc = als3010_proc_debug_msg_write;
-		printk("[%s] %d: /proc/%s created success\n",__FUNCTION__,__LINE__,PROC_DEBUG_MESSAGE_NAME);
-	}
+    als3010_proc_file = proc_create(ALS3010_PROC_FILE_NODE, 0666, NULL,&als3010_register_fops);
+    if(!als3010_proc_file)
+    {
+        if(AP3212C_STATUSMSG) printk( "[%s]	create_proc_entry failed\n",__FUNCTION__);
+    }
 }
 
 void als3010_remove_proc_file(void)
 {
     extern struct proc_dir_entry proc_root;
-    remove_proc_entry(PROC_DEBUG_MESSAGE_NAME, &proc_root);
+    remove_proc_entry(ALS3010_PROC_FILE_NODE, &proc_root);
 }
+*/
+//2014.03.10 add by alp for proc file --
+
 //=================================================================
 
 int als3010_get_calibration(void)
@@ -266,38 +315,35 @@ int als3010_get_calibration(void)
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 	ilen = fp->f_op->read(fp,c_data,ALS_VALUE_LEN,&fp->f_pos);
-	ivalue = c_data[2]*128+c_data[3];
+//	ivalue = c_data[2]*128+c_data[3];
+	ivalue = (c_data[0]-48)*10000+(c_data[1]-48)*1000+(c_data[2]-48)*100+(c_data[3]-48)*10+(c_data[4]-48);
 	if(ivalue>0)
 		ret = ivalue;
 	else 
 		ret = ALS_CALI_DEFAULT_VALUE;
-	if(ALS_DEBUGMSG) printk(KERN_INFO "als3010 : get calibration ivalue = %d \n",ivalue);
+	printk(KERN_INFO "als3010 : get calibration ivalue = %d \n",ivalue);
 	return ret;
 }
 
 int als3010_set_level_table(int calivalue)
 {
-	int ret=0, iloop=0 , check_value=0, table_value=0, limit=(ALS_LEVEL_BUFFER_LENGTH-4-2)/2; // -2 for 4863 not need to re-cali
+	int ret=0, iloop=0 , check_value=0, table_value=0, limit=(ALS_LEVEL_BUFFER_LENGTH-2)/2; // -2 for 4863 not need to re-cali
 	unsigned char buffer[ALS_LEVEL_BUFFER_LENGTH] ={0};
-	buffer[0]=ALS_LEVEL_BUFFER_LENGTH;
-	buffer[1]=0x00;
-	buffer[2]=0x01;
-	buffer[3]=0x00;
 	for(iloop=0;iloop<limit;iloop++){
 		check_value = (als3010_threshold_level[iloop+1]*1000)/calivalue;
 		if( (check_value%10)>4 )
 			table_value =  check_value/10+1;
 		else
 			table_value =  check_value/10;
-		buffer[4+2*iloop]=((table_value<<8)>>8);
-		buffer[5+2*iloop]=(table_value>>8);
-		printk(KERN_INFO "als3010 : als3010_set_level_table[%d] = %d & %d \n",iloop,buffer[4+2*iloop],buffer[5+2*iloop]);
+		buffer[2*iloop]=((table_value<<8)>>8);
+		buffer[2*iloop+1]=(table_value>>8);
+		printk(KERN_INFO "als3010 : als3010_set_level_table[%d] = %d & %d \n",iloop,buffer[2*iloop],buffer[2*iloop+1]);
 	}
-	buffer[4+2*iloop]=0xff;
-	buffer[5+2*iloop]=0x12;
-	printk(KERN_INFO "als3010 : als3010_set_level_table[%d] = %d & %d \n",iloop,buffer[4+2*iloop],buffer[5+2*iloop]);
+	buffer[2*iloop]=0xff;
+	buffer[2*iloop+1]=0x12;
+	printk(KERN_INFO "als3010 : als3010_set_level_table[%d] = %d & %d \n",iloop,buffer[2*iloop],buffer[2*iloop+1]);
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-	ret = ite_light_sensor_set_table(buffer);
+//	ret = ite_als_set_threshold_level_table(buffer);
 #endif
 	return ret;
 }
@@ -305,26 +351,49 @@ int als3010_set_level_table(int calivalue)
 
 int als3010_set_threshold_table(int calivalue)
 {
-	int ret=0, iloop=0 , table_value=0, limit=(ALS_THRESHOLD_BUFFER_LENGTH-4-2)/2; // -2 for 65535 not need to re-cali
+	int ret=0, iloop=0 , table_value=0, limit=(ALS_THRESHOLD_BUFFER_LENGTH-2)/2; // -2 for 65535 not need to re-cali
 	unsigned char buffer[ALS_THRESHOLD_BUFFER_LENGTH] ={0};
-	buffer[0]=ALS_THRESHOLD_BUFFER_LENGTH;
-	buffer[1]=0x00;
-	buffer[2]=0x02;
-	buffer[3]=0x00;
 	for(iloop=0;iloop<limit;iloop++){
 		table_value = (als3010_threshold_Conut[iloop]*100)/calivalue;
-		buffer[4+2*iloop]=((table_value<<8)>>8);
-		buffer[5+2*iloop]=(table_value>>8);
-		printk(KERN_INFO "als3010 : als3010_set_threshold_table[%d] = %d & %d \n",iloop,buffer[4+2*iloop],buffer[5+2*iloop]);
+		buffer[2*iloop]=((table_value<<8)>>8);
+		buffer[2*iloop+1]=(table_value>>8);
+		printk(KERN_INFO "als3010 : als3010_set_threshold_table[%d] = %d & %d \n",iloop,buffer[2*iloop],buffer[2*iloop+1]);
 	}
-	buffer[4+2*iloop]=0xff;
-	buffer[5+2*iloop]=0xff;
-	printk(KERN_INFO "als3010 : als3010_set_threshold_table[%d] = %d & %d \n",iloop,buffer[4+2*iloop],buffer[5+2*iloop]);
+	buffer[2*iloop]=0xff;
+	buffer[2*iloop+1]=0xff;
+	printk(KERN_INFO "als3010 : als3010_set_threshold_table[%d] = %d & %d \n",iloop,buffer[2*iloop],buffer[2*iloop+1]);
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-	ret = ite_light_sensor_set_table(buffer);
+//	ret = ite_als_set_threshold_table(buffer);
 #endif
 	return ret;
 }
+
+
+/**
+ * EXPORT for EC to store als calibration value to EC flash.
+ */
+int als3010_report_calibration_value(u8 *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[2] = {0};
+	int cal_value = 0;
+	// Get als calibration from ini file
+	cal_value = als3010_get_calibration();	
+	// Check if als calibration is already 
+	if(cal_value == 0) 
+	{
+		printk(KERN_INFO "als3010 : als3010_report_calibration_value Fail , cal_value = %d \n",cal_value);
+		return -1;
+	}
+	// Transfer to byte type
+	buf_recv[0]=((cal_value<<8)>>8);
+	buf_recv[1]=(cal_value>>8);
+	memcpy(report_buf, buf_recv, sizeof(buf_recv));
+	printk(KERN_INFO "als3010 : als3010_report_calibration_value, cal_value = %d , return (0x%x, 0x%x) \n",cal_value,buf_recv[0],buf_recv[1]);
+	return 0;
+}
+EXPORT_SYMBOL(als3010_report_calibration_value);
+
 
 int als3010_set_calibration_value(int calivalue)
 {
@@ -332,13 +401,11 @@ int als3010_set_calibration_value(int calivalue)
 	unsigned char buffer[ALS_CALI_VALUE_BUFFER_LENGTH] ={0};
 	buffer[0]=ALS_CALI_VALUE_BUFFER_LENGTH;
 	buffer[1]=0x00;
-	buffer[2]=0x03;
-	buffer[3]=0x00;
-	buffer[4]=((calivalue<<8)>>8);
-	buffer[5]=(calivalue>>8);
-	printk(KERN_INFO "als3010 : als3010_set_calibration_value = %d & %d \n",buffer[4],buffer[5]);
+	buffer[2]=((calivalue<<8)>>8);
+	buffer[3]=(calivalue>>8);
+	printk(KERN_INFO "als3010 : als3010_set_calibration_value = %d & %d \n",buffer[2],buffer[3]);
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-	ret = ite_light_sensor_set_table(buffer);
+	ret = ite_als_set_calibration_data(buffer);
 #endif
 	return ret;
 }
@@ -400,13 +467,13 @@ static long als3010_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		if (enable){
 			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_CAL_ENABLE - als3010_enable\n",__FUNCTION__,__LINE__);
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-			err=ite_light_sensor_set_function(0x02);
+			err=ite_als_set_power_function(EC_ALS_ENABLE);
 #endif
 			printk( "alp : als3010 cal-enable sensor err=%d\n",err);
 		}else{
 			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_CAL_ENABLE - als3010_disable\n",__FUNCTION__,__LINE__);
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-			err=ite_light_sensor_set_function(0x04);
+			err=ite_als_set_power_function(EC_ALS_DISABLE);
 #endif
 			printk( "alp : als3010 cal-disable sensor err=%d\n",err);
 		}
@@ -416,16 +483,20 @@ static long als3010_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		if (get_user(enable, (unsigned long __user *)arg))
 			return -EFAULT;
 		if (enable){
-			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_ENABLE - als3010_enable\n",__FUNCTION__,__LINE__);
+//			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_ENABLE - als3010_enable\n",__FUNCTION__,__LINE__);
+			err=ite_als_set_power_function(EC_ALS_ENABLE);
+			printk( "alp.D : als3010 enable (%d)\n", err);
 			return als3010_enable(POWER_ON);
 		}else{
-			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_ENABLE - als3010_disable\n",__FUNCTION__,__LINE__);
+//			if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_ENABLE - als3010_disable\n",__FUNCTION__,__LINE__);
+			err=ite_als_set_power_function(EC_ALS_DISABLE);
+			printk( "alp.D : als3010 enable (%d)\n", err);
 			return als3010_enable(POWER_OFF);
 		}
 		break;
 			
 	case LIGHTSENSOR_IOCTL_GET_RAWDATA:
-//		err=ite_light_sensor_set_function(0x08);
+//		err=ite_als_set_power_function(EC_ALS_REPORT);
 //		if(unlikely(debug_msg))
 			printk( "[%s] %d: LIGHTSENSOR_IOCTL_GET_RAWDATA (return %d)\n",__FUNCTION__,__LINE__,als3010_dev->adc_value);		
 		return put_user(als3010_dev->adc_value, (unsigned long __user *)arg);
@@ -433,7 +504,7 @@ static long als3010_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
 	case LIGHTSENSOR_IOCTL_GET_LUXVALUE:
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-		err=ite_light_sensor_set_function(0x08); 
+		err=ite_als_set_power_function(EC_ALS_REPORT); 
 #endif
 //		if(unlikely(debug_msg))
 			printk( "[%s] %d: LIGHTSENSOR_IOCTL_GET_LUXVALUE (return %d)\n",__FUNCTION__,__LINE__,als3010_dev->lux_value);
@@ -449,6 +520,10 @@ static long als3010_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		if (get_user(value, (unsigned long __user *)arg))
 			return -EFAULT;
 		if(unlikely(debug_msg))printk( "[%s] %d: LIGHTSENSOR_IOCTL_CALIBRATION \n",__FUNCTION__,__LINE__);
+		if(workaround_for_eng_mode){
+			printk( "alp.D : workaround for factory test \n");
+			err=ite_als_set_power_function(EC_ALS_REPORT); 
+		}
 		// set calibration value
 		if(value==0){
 			printk( "alp : als3010 calibration use function \n");
@@ -459,11 +534,21 @@ static long als3010_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		}
 		// set calibration table
 		if(als3010_dev->cal_value==0)
+		{
 			als3010_dev->cal_value = ALS_CALI_DEFAULT_VALUE;
+		}
 		printk( "alp : als3010 use cavalue = %d \n",als3010_dev->cal_value);
 		err= als3010_set_level_table(als3010_dev->cal_value);
 		err= als3010_set_threshold_table(als3010_dev->cal_value);
-		err= als3010_set_calibration_value(als3010_dev->cal_value);
+		if((factory_mode == 2) && (entry_mode == 1))
+		{
+			printk( "[ITE_update] alp : In Factory Mode , Don't store ALS Calibration in EC \n");
+		}
+		else
+		{
+			printk( "[ITE_update] alp : In User/UserDebug Mode , Store ALS Calibration in EC \n");
+			err= als3010_set_calibration_value(als3010_dev->cal_value);
+		}
 		break;
 
 	default:
@@ -482,7 +567,7 @@ static void als3010_als_early_suspend(struct early_suspend *h)
 	mutex_lock(&als3010_dev->lock);
 	if(als3010_dev->enable==1){
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-		ret=ite_light_sensor_set_function(0x04);
+		ret=ite_als_set_power_function(EC_ALS_DISABLE);
 #endif
 		printk( "alp : als3010 early-suspend disable , ret=%d\n",ret);
 		als3010_dev->als3010_pw_before_suspend = 1;
@@ -500,7 +585,7 @@ static void als3010_als_late_resume(struct early_suspend *h)
 	if(als3010_dev->als3010_pw_before_suspend==1){
 		als3010_dev->als3010_pw_before_suspend = 0;
 #ifdef CONFIG_HID_ASUS_PAD_EC	
-		ret=ite_light_sensor_set_function(0x02);
+		ret=ite_als_set_power_function(EC_ALS_ENABLE);
 #endif
 	}
 	mutex_unlock(&als3010_dev->lock);
@@ -602,7 +687,10 @@ static int __init als3010_driver_init(void)
 
 	als3010_setup(als3010_dev);
 	als3010_enable(POWER_OFF);
-	als3010_create_proc_file();
+//2014.03.10 add by alp for proc file ++
+//	als3010_create_proc_file();
+//2014.03.10 add by alp for proc file --
+	
 	// init cal_value = ALS_CALI_DEFAULT_VALUE;
 	als3010_dev->cal_value=ALS_CALI_DEFAULT_VALUE;
 	als3010_dev->als_status=0;
@@ -613,6 +701,11 @@ static int __init als3010_driver_init(void)
 	als3010_dev->als3010_early_suspend.resume = als3010_als_late_resume;
 	register_early_suspend(&als3010_dev->als3010_early_suspend);
 #endif
+
+	if(build_version==1){	// 1:eng ; 2:user ; 3:userdebug 
+		workaround_for_eng_mode = true;
+		printk("alp.D. : als3010 for eng mode !!\n");
+	}
 
 	mutex_init(&als3010_dev->lock);
 	printk( "[%s] %d: finished \n",__FUNCTION__,__LINE__);
@@ -630,7 +723,9 @@ sysfs_create_group_failed:
 
 static void __exit als3010_driver_exit(void)
 {
-	als3010_remove_proc_file();
+//2014.03.10 add by alp for proc file ++
+//	als3010_remove_proc_file();
+//2014.03.10 add by alp for proc file --
 	input_free_device(als3010_dev->input_dev);
 	kfree(als3010_dev);
 	kobject_put(als3010_kobj);

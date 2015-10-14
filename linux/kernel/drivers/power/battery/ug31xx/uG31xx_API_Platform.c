@@ -1308,7 +1308,7 @@ _upi_s32_ ug31xx_write_i2c(struct i2c_client *client, _upi_u8_ reg, _upi_s32_ rt
   {
     data[idx++] = SECURITY_KEY;
   }
-  data[idx++] = (_upi_u8_)(rt_value & 0x0FF);
+  data[idx++] = (_upi_u8_)(rt_value & 0x00FF);
   data[idx++] = (_upi_u8_)((rt_value & 0x0FF00) >> 8);
 
   msg[0].addr = client->addr;
@@ -1321,6 +1321,10 @@ _upi_s32_ ug31xx_write_i2c(struct i2c_client *client, _upi_u8_ reg, _upi_s32_ rt
   if(err >= 0)
   {
     err = ug31xx_read_i2c(client, reg, &tmp_buf, b_single);
+    if((tmp_buf & 0x00FF) != (rt_value & 0x00FF))
+    {
+      dev_err(&ug31xx_client->dev, "%s: %04x != %04x\n", __func__, tmp_buf, rt_value);
+    }
   }
   return (err < 0 ? err : 0);
 }

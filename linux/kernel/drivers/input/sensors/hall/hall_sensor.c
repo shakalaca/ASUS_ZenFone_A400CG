@@ -18,12 +18,6 @@
 static struct workqueue_struct *hall_sensor_wq;
 static struct kobject *hall_sensor_kobj;
 static struct platform_device *pdev;
-
-static struct input_device_id mID[] = {
-        { .driver_info = 1 },		//scan all device to match hall sensor
-        { },
-};
-
 static struct hall_sensor_str {
  	int irq;
 	int status;
@@ -32,34 +26,9 @@ static struct hall_sensor_str {
 	spinlock_t mHallSensorLock;
 	struct wake_lock wake_lock;
 	struct input_dev *lid_indev;
-	struct input_handler lid_handler;
-	struct input_handle lid_handle;
  	struct delayed_work hall_sensor_work;
 	
 }* hall_sensor_dev;
-
-int lid_connect(struct input_handler *handler, struct input_dev *dev, const struct input_device_id *id){
-	printk("[%s] hall_sensor connect to handler\n", DRIVER_NAME);
-	return 0;
-}
-
-void lid_event(struct input_handle *handle, unsigned int type, unsigned int code, int value){
-	if(type==EV_SW && code==SW_LID ){
-		if(!!test_bit(code, hall_sensor_dev->lid_indev->sw) != !hall_sensor_dev->status){
-			__change_bit(code,  hall_sensor_dev->lid_indev->sw);
-			printk("[%s] reset dev->sw=%d \n", DRIVER_NAME,!hall_sensor_dev->status);
-		}
-	}
-}
-
-bool lid_match(struct input_handler *handler, struct input_dev *dev){
-	if(dev->name && handler->name)
-		if(!strcmp(dev->name,"lid_input") && !strcmp(handler->name,"lid_input_handler"))
-		        return true;
-		
-	return false;
-}
-
 static ssize_t show_action_status(struct device *dev,struct device_attribute *attr, char *buf)
 {
 	if(!hall_sensor_dev)
@@ -79,6 +48,8 @@ static ssize_t store_action_status(struct device *dev, struct device_attribute *
 	else
         	hall_sensor_dev->status = 1;
 	spin_unlock_irqrestore(&hall_sensor_dev->mHallSensorLock, flags);
+        input_report_switch(hall_sensor_dev->lid_indev, SW_LID, !hall_sensor_dev->status);
+        input_sync(hall_sensor_dev->lid_indev);
         pr_info("[%s] SW_LID rewite value = %d\n", DRIVER_NAME,!hall_sensor_dev->status);
 	return count;
 }
@@ -96,20 +67,13 @@ static ssize_t store_hall_sensor_enable(struct device *dev, struct device_attrib
 	if(!hall_sensor_dev)
                 return sprintf(buf, "Hall sensor does not exist!\n");
 	sscanf(buf, "%du", &request);
-	if(request==hall_sensor_dev->enable){
+	if(!!request==hall_sensor_dev->enable){
 		return count;
 	}
 	else {
 		unsigned long flags;
 		spin_lock_irqsave(&hall_sensor_dev->mHallSensorLock, flags);
-		if (hall_sensor_dev->enable==0){
-			enable_irq(hall_sensor_dev->irq);
-			hall_sensor_dev->enable=1;
-		}
-		else if (hall_sensor_dev->enable==1){		
-			disable_irq(hall_sensor_dev->irq);
-			hall_sensor_dev->enable=0;
-		}
+		hall_sensor_dev->enable=!!request;
 		spin_unlock_irqrestore(&hall_sensor_dev->mHallSensorLock, flags);
 	}
 	return count;
@@ -152,33 +116,7 @@ static int lid_input_device_create(void)
 		err = -1;
 		goto exit_input_free;
 	}
-	hall_sensor_dev->lid_handler.match=lid_match;
-	hall_sensor_dev->lid_handler.connect=lid_connect;
-	hall_sensor_dev->lid_handler.event=lid_event;
-	hall_sensor_dev->lid_handler.name="lid_input_handler";
-	hall_sensor_dev->lid_handler.id_table = mID;	
-	err=input_register_handler(& hall_sensor_dev->lid_handler);
-	if(err){
-		pr_info("[%s] handler registration fails\n", DRIVER_NAME);
-		err = -1;
-		goto exit_unregister_input_dev;
-	}
-	hall_sensor_dev->lid_handle.name="lid_handle";
-	hall_sensor_dev->lid_handle.open=1;         //receive any event from hall sensor
-	hall_sensor_dev->lid_handle.dev=hall_sensor_dev->lid_indev;
-	hall_sensor_dev->lid_handle.handler=&hall_sensor_dev->lid_handler;
-	err=input_register_handle(& hall_sensor_dev->lid_handle);
-	if(err){
-		pr_info("[%s] handle registration fails\n", DRIVER_NAME);
-		err = -1;
-		goto exit_unregister_handler;
-	}
 	return 0;
-
-exit_unregister_handler:
-       input_unregister_handler(& hall_sensor_dev->lid_handler);
-exit_unregister_input_dev:
-       input_unregister_device(hall_sensor_dev->lid_indev);
 exit_input_free:
        input_free_device(hall_sensor_dev->lid_indev);
        hall_sensor_dev->lid_indev = NULL;
@@ -186,11 +124,15 @@ exit:
        return err;
 }
 
-#ifdef CONFIG_TX201LA
+#if defined(CONFIG_TX201LA) || defined(CONFIG_TX201LAF)
 
 void lid_status_report(int open)
 {
         unsigned long flags;
+        if(!hall_sensor_dev->enable){
+                pr_info("[%s] disable hall sensor becasue user!\n", DRIVER_NAME);
+                return;
+        }
         spin_lock_irqsave(&hall_sensor_dev->mHallSensorLock, flags);
 	if (open == 0x20)
 		hall_sensor_dev->status = 0;		
@@ -210,6 +152,12 @@ static void lid_report_function(struct work_struct *dat)
 {
         unsigned long flags;
 	msleep(50);
+        if(!hall_sensor_dev->enable){
+                pr_info("[%s] disable hall sensor becasue user!\n", DRIVER_NAME);
+		wake_unlock(&hall_sensor_dev->wake_lock);
+		return;
+        }
+
         spin_lock_irqsave(&hall_sensor_dev->mHallSensorLock, flags);
         if (gpio_get_value(hall_sensor_dev->gpio) > 0)
 		hall_sensor_dev->status = 1;
@@ -332,9 +280,11 @@ static int __init hall_sensor_init(void)
 		goto fail_for_hall_sensor;
 	}
 	spin_lock_init(&hall_sensor_dev->mHallSensorLock);
+	wake_lock_init(&hall_sensor_dev->wake_lock, WAKE_LOCK_SUSPEND, "lid_suspend_blocker");
 	hall_sensor_dev->enable = 1;
 
 #ifndef CONFIG_TX201LA
+#ifndef CONFIG_TX201LAF
 	//set gpio
 	hall_sensor_dev->gpio = get_gpio_by_name("1V8_O_LID#");
 	 if (!gpio_is_valid(hall_sensor_dev->gpio))
@@ -351,6 +301,7 @@ static int __init hall_sensor_init(void)
 	if (ret < 0)
 		goto fail_for_irq_hall_sensor;
 #endif
+#endif
 
 	//create input_dev
 	hall_sensor_dev->lid_indev = NULL;
@@ -359,23 +310,26 @@ static int __init hall_sensor_init(void)
 		goto fail_for_create_input_dev;
 
 #ifndef CONFIG_TX201LA
+#ifndef CONFIG_TX201LAF
 	//init workqueue & start detect signal
 	hall_sensor_wq = create_singlethread_workqueue("hall_sensor_wq");
-	INIT_DELAYED_WORK_DEFERRABLE(&hall_sensor_dev->hall_sensor_work, lid_report_function);
+	INIT_DEFERRABLE_WORK(&hall_sensor_dev->hall_sensor_work, lid_report_function);
 	queue_delayed_work(hall_sensor_wq, &hall_sensor_dev->hall_sensor_work, 0);
 #endif
-	wake_lock_init(&hall_sensor_dev->wake_lock, WAKE_LOCK_SUSPEND, "lid_suspend_blocker");
+#endif
 	return 0;
 	
 fail_for_create_input_dev:		
 	free_irq(hall_sensor_dev->irq, hall_sensor_dev);	
 
 #ifndef CONFIG_TX201LA
+#ifndef CONFIG_TX201LAF
 fail_for_irq_hall_sensor:
 	gpio_free(hall_sensor_dev->gpio);
 fail_for_set_gpio_hall_sensor:
 	kfree(hall_sensor_dev);
 	hall_sensor_dev=NULL;
+#endif
 #endif
 
 fail_for_hall_sensor:

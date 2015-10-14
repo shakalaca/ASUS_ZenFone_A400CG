@@ -9,6 +9,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <sound/soc.h>
 #include "rt56xx_ioctl.h"
@@ -32,7 +33,8 @@ static int rt56xx_hwdep_release(struct snd_hwdep *hw, struct file *file)
 }
 
 static int rt56xx_hwdep_ioctl_common(struct snd_hwdep *hw,
-		struct file *file, unsigned int cmd, unsigned long arg)
+				     struct file *file, unsigned int cmd,
+				     unsigned long arg)
 {
 	struct snd_soc_codec *codec = hw->private_data;
 	struct rt56xx_cmd __user *_rt56xx = (struct rt56xx_cmd *)arg;
@@ -40,23 +42,22 @@ static int rt56xx_hwdep_ioctl_common(struct snd_hwdep *hw,
 	int *buf, *p;
 
 	if (copy_from_user(&rt56xx, _rt56xx, sizeof(rt56xx))) {
-		dev_err(codec->dev,"copy_from_user faild\n");
+		dev_err(codec->dev, "copy_from_user faild\n");
 		return -EFAULT;
 	}
 	dev_dbg(codec->dev, "%s(): rt56xx.number=%d, cmd=%d\n",
-			__func__, rt56xx.number, cmd);
+		__func__, rt56xx.number, cmd);
 	buf = kmalloc(sizeof(*buf) * rt56xx.number, GFP_KERNEL);
 	if (buf == NULL)
 		return -ENOMEM;
-	if (copy_from_user(buf, rt56xx.buf, sizeof(*buf) * rt56xx.number)) {
+	if (copy_from_user(buf, rt56xx.buf, sizeof(*buf) * rt56xx.number))
 		goto err;
-	}
 
 	switch (cmd) {
 	case RT_READ_CODEC_REG_IOCTL:
-		for (p = buf; p < buf + rt56xx.number / 2; p++) {
+		for (p = buf; p < buf + rt56xx.number / 2; p++)
 			*(p + rt56xx.number / 2) = snd_soc_read(codec, *p);
-		}
+
 		if (copy_to_user(rt56xx.buf, buf, sizeof(*buf) * rt56xx.number))
 			goto err;
 		break;
@@ -71,10 +72,9 @@ static int rt56xx_hwdep_ioctl_common(struct snd_hwdep *hw,
 			goto err;
 
 		for (p = buf; p < buf + rt56xx.number / 2; p++)
-			*(p+rt56xx.number/2) = rt56xx_ioctl_ops.index_read(
-							codec, *p);
-		if (copy_to_user(rt56xx.buf, buf,
-			sizeof(*buf) * rt56xx.number))
+			*(p + rt56xx.number / 2) =
+			    rt56xx_ioctl_ops.index_read(codec, *p);
+		if (copy_to_user(rt56xx.buf, buf, sizeof(*buf) * rt56xx.number))
 			goto err;
 		break;
 
@@ -84,7 +84,7 @@ static int rt56xx_hwdep_ioctl_common(struct snd_hwdep *hw,
 
 		for (p = buf; p < buf + rt56xx.number / 2; p++)
 			rt56xx_ioctl_ops.index_write(codec, *p,
-				*(p+rt56xx.number/2));
+						     *(p + rt56xx.number / 2));
 		break;
 
 	default:
@@ -104,10 +104,10 @@ err:
 }
 
 static int rt56xx_codec_dump_reg(struct snd_hwdep *hw,
-		struct file *file, unsigned long arg)
+				 struct file *file, unsigned long arg)
 {
 	struct snd_soc_codec *codec = hw->private_data;
-	struct rt56xx_cmd __user *_rt56xx =(struct rt56xx_cmd *)arg;
+	struct rt56xx_cmd __user *_rt56xx = (struct rt56xx_cmd *)arg;
 	struct rt56xx_cmd rt56xx;
 	int i, *buf, number = codec->driver->reg_cache_size;
 
@@ -119,7 +119,7 @@ static int rt56xx_codec_dump_reg(struct snd_hwdep *hw,
 	if (buf == NULL)
 		return -ENOMEM;
 
-	for (i = 0; i < number/2; i++) {
+	for (i = 0; i < number / 2; i++) {
 		buf[i] = i << 1;
 		buf[i + number / 2] = codec->read(codec, buf[i]);
 	}
@@ -137,7 +137,7 @@ err:
 }
 
 static int rt56xx_hwdep_ioctl(struct snd_hwdep *hw, struct file *file,
-			unsigned int cmd, unsigned long arg)
+			      unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
 	case RT_READ_ALL_CODEC_REG_IOCTL:
@@ -158,7 +158,8 @@ int realtek_ce_init_hwdep(struct snd_soc_codec *codec)
 
 	dev_dbg(codec->dev, "enter %s\n", __func__);
 
-	if ((err = snd_hwdep_new(card, RT_CE_CODEC_HWDEP_NAME, 0, &hw)) < 0)
+	err = snd_hwdep_new(card, RT_CE_CODEC_HWDEP_NAME, 0, &hw);
+	if (err < 0)
 		return err;
 
 	strcpy(hw->name, RT_CE_CODEC_HWDEP_NAME);

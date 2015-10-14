@@ -201,3 +201,21 @@ extern MEAS_RTN_CODE UpiMeasAlarmThreshold(MeasDataType *data);
  */
 extern MEAS_RTN_CODE UpiMeasReadCode(MeasDataType *data);
 
+/**
+ * @brief UpiGetMeasurementMemorySize
+ *
+ *  Get memory size used by measurement
+ *
+ * @return  memory size
+ */
+extern _meas_u32_ UpiGetMeasurementMemorySize(void);
+
+/**
+ * @brief UpiPrintMeasurementVersion
+ *
+ *  Print measurement module version
+ *
+ * @return  NULL
+ */
+extern void UpiPrintMeasurementVersion(void);
+

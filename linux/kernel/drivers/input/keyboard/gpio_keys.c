@@ -33,8 +33,16 @@
 
 #if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
 #include <linux/microp_notify.h>
+#include <linux/microp_api.h>
 static struct input_dev *virtual_volume_btn;
+static bool attach=false;
 static int virtual_volume_btn_report(struct notifier_block *this, unsigned long event, void *ptr){
+	if(event==P01_ADD){
+		attach=true;
+	}
+	if(event==P01_REMOVE){
+		attach=false;
+	}
         if(event==P01_VOLUP_KEY_PRESSED){
                 pr_info("[virtual_volume]vol_up pressed!");
                 input_event(virtual_volume_btn, EV_KEY, KEY_VOLUMEUP, 1);
@@ -137,7 +145,7 @@ static int gpio_keys_request_irq(int gpio, irq_handler_t isr,
 
 	if (gpio_cansleep(gpio))
 		ret = request_threaded_irq(gpio_to_irq(gpio), NULL, isr,
-				flags, name, data);
+				flags | IRQF_ONESHOT, name, data);
 	else
 		ret = request_irq(gpio_to_irq(gpio), isr, flags, name, data);
 	return ret;
@@ -480,6 +488,14 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	const struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
+
+#if defined(CONFIG_PF400CG) && defined(CONFIG_EEPROM_PADSTATION)
+	if(attach/* && AX_Is_pad_exist()*/) // Double confirm to disable volume key event
+		return;
+	else
+		attach=false;
+#endif
+
 	int state =
 		(gpio_keys_getval(button->gpio) ? 1 : 0) ^ button->active_low;
 
@@ -510,7 +526,7 @@ static void gpio_keys_gpio_timer(unsigned long _data)
 static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
 {
 	struct gpio_button_data *bdata = dev_id;
-	struct gpio_keys_button *button;
+	const struct gpio_keys_button *button;
 	struct input_dev *input;
 	unsigned int type;
 	int state;
@@ -585,10 +601,10 @@ out:
 	return IRQ_HANDLED;
 }
 
-static int __devinit gpio_keys_setup_key(struct platform_device *pdev,
-					 struct input_dev *input,
-					 struct gpio_button_data *bdata,
-					 const struct gpio_keys_button *button)
+static int gpio_keys_setup_key(struct platform_device *pdev,
+				struct input_dev *input,
+				struct gpio_button_data *bdata,
+				const struct gpio_keys_button *button)
 {
 	const char *desc = button->desc ? button->desc : "gpio_keys";
 	struct device *dev = &pdev->dev;
@@ -612,7 +628,7 @@ static int __devinit gpio_keys_setup_key(struct platform_device *pdev,
 		error = gpio_direction_input(button->gpio);
 		if (error < 0) {
 			dev_err(dev,
-				"Failed to configure direction for GPIO %d, error %d\n",
+			"Failed to configure direction for GPIO %d, error %d\n",
 				button->gpio, error);
 			goto fail;
 		}
@@ -620,8 +636,9 @@ static int __devinit gpio_keys_setup_key(struct platform_device *pdev,
 		if (button->debounce_interval) {
 			error = gpio_set_debounce(button->gpio,
 					button->debounce_interval * 1000);
+			//Jui-Chuan : Force set bdata->timer_debounce, to avoid volume up and down are too sensitive.
 			/* use timer if gpiolib doesn't provide debounce */
-			if (error < 0)
+			//if (error < 0)
 				bdata->timer_debounce =
 						button->debounce_interval;
 		}
@@ -722,7 +739,7 @@ static int gpio_keys_get_devtree_pdata(struct device *dev,
 	if (node == NULL)
 		return -ENODEV;
 
-	memset(pdata, 0, sizeof *pdata);
+	memset(pdata, 0, sizeof(*pdata));
 
 	pdata->rep = !!of_get_property(node, "autorepeat", NULL);
 
@@ -735,7 +752,7 @@ static int gpio_keys_get_devtree_pdata(struct device *dev,
 	if (pdata->nbuttons == 0)
 		return -ENODEV;
 
-	buttons = kzalloc(pdata->nbuttons * (sizeof *buttons), GFP_KERNEL);
+	buttons = kzalloc(pdata->nbuttons * sizeof(*buttons), GFP_KERNEL);
 	if (!buttons)
 		return -ENOMEM;
 
@@ -753,7 +770,8 @@ static int gpio_keys_get_devtree_pdata(struct device *dev,
 		buttons[i].active_low = flags & OF_GPIO_ACTIVE_LOW;
 
 		if (of_property_read_u32(pp, "linux,code", &reg)) {
-			dev_err(dev, "Button without keycode: 0x%x\n", buttons[i].gpio);
+			dev_err(dev, "Button without keycode: 0x%x\n",
+				buttons[i].gpio);
 			goto out_fail;
 		}
 		buttons[i].code = reg;
@@ -765,7 +783,8 @@ static int gpio_keys_get_devtree_pdata(struct device *dev,
 		else
 			buttons[i].type = EV_KEY;
 
-		buttons[i].wakeup = !!of_get_property(pp, "gpio-key,wakeup", NULL);
+		buttons[i].wakeup =
+			!!of_get_property(pp, "gpio-key,wakeup", NULL);
 
 		if (of_property_read_u32(pp, "debounce-interval", &reg) == 0)
 			buttons[i].debounce_interval = reg;
@@ -812,7 +831,7 @@ static void gpio_remove_key(struct gpio_button_data *bdata)
 		gpio_free(bdata->button->gpio);
 }
 
-static int __devinit gpio_keys_probe(struct platform_device *pdev)
+static int gpio_keys_probe(struct platform_device *pdev)
 {
 	const struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	struct gpio_keys_drvdata *ddata;
@@ -919,7 +938,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	return error;
 }
 
-static int __devexit gpio_keys_remove(struct platform_device *pdev)
+static int gpio_keys_remove(struct platform_device *pdev)
 {
 	struct gpio_keys_drvdata *ddata = platform_get_drvdata(pdev);
 	struct input_dev *input = ddata->input;
@@ -1029,7 +1048,7 @@ MODULE_DEVICE_TABLE(platform, gpio_keys_ids);
 
 static struct platform_driver gpio_keys_device_driver = {
 	.probe		= gpio_keys_probe,
-	.remove		= __devexit_p(gpio_keys_remove),
+	.remove		= gpio_keys_remove,
 	.id_table	= gpio_keys_ids,
 	.driver		= {
 		.name	= "gpio-keys",

@@ -60,8 +60,7 @@ static void try_to_suspend(struct work_struct *work)
 {
 	unsigned int initial_count, final_count;
 
-	if (!pm_get_wakeup_count(&initial_count, true) ||
-	    !alarm_pm_wake_check())
+	if (!pm_get_wakeup_count(&initial_count, true))
 		goto queue_again;
 
 	mutex_lock(&suspend_lock);
@@ -162,7 +161,9 @@ abort:
 	if (state == SUSPEND_REQUESTED_AND_SUSPENDED)
 		__pm_relax(early_suspend_ws);
 	spin_unlock_irqrestore(&state_lock, irqflags);
-	queue_work(suspend_wq, &suspend_work);
+	int ret = queue_work(suspend_wq, &suspend_work);
+	if(!ret)
+		pr_info("Suspend_work is already in auto suspend queue.\n");
 }
 
 static void late_resume(struct work_struct *work)

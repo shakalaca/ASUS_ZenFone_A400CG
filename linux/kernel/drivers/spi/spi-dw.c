@@ -439,9 +439,8 @@ static void pump_transfers(unsigned long data)
 	transfer = dws->cur_transfer;
 	chip = dws->cur_chip;
 	spi = message->spi;
-//FW_BSP++
-//	if (unlikely(!chip->clk_div))
-//FW_BSP--
+
+	if (unlikely(!chip->clk_div))
 		chip->clk_div = dws->max_freq / chip->speed_hz;
 
 	if (message->state == ERROR_STATE) {
@@ -726,7 +725,7 @@ static void dw_spi_cleanup(struct spi_device *spi)
 	kfree(chip);
 }
 
-static int __devinit dw_spi_init_queue(struct dw_spi *dws)
+static int dw_spi_init_queue(struct dw_spi *dws)
 {
 	INIT_LIST_HEAD(&dws->queue);
 	spin_lock_init(&dws->lock);
@@ -817,12 +816,10 @@ static void dw_spi_hw_init(struct dw_spi *dws)
 		dw_writew(dws, DW_SPI_TXFLTR, 0);
 	}
 
-	dw_writel(dws, 0xF0, 0x3);
-
 	spi_enable_chip(dws, 1);
 }
 
-int __devinit dw_spi_add_host(struct dw_spi *dws)
+int dw_spi_add_host(struct dw_spi *dws)
 {
 	struct spi_master *master;
 	int ret;
@@ -904,7 +901,7 @@ exit:
 }
 EXPORT_SYMBOL_GPL(dw_spi_add_host);
 
-void __devexit dw_spi_remove_host(struct dw_spi *dws)
+void dw_spi_remove_host(struct dw_spi *dws)
 {
 	int status = 0;
 

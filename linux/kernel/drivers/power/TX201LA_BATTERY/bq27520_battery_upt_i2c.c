@@ -233,7 +233,10 @@ int update_from_normal_mode(void)
         return ret;
     }
 
-    bq27520_to_unsealed(0x04141672);
+    if (df_ver == 0)
+        bq27520_to_unsealed(0x04143672);
+    else
+        bq27520_to_unsealed(0x04141672);
     bq27520_to_full(0xFFFFFFFF);
     ret = bq27520_enter_rom_mode();
 

@@ -29,6 +29,7 @@
 #include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/input.h>
+#include <uapi/linux/input.h>
 #include <linux/earlysuspend.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
@@ -39,13 +40,13 @@
 #include <asm/gpio.h>
 #include <linux/irq.h>
 #include <linux/miscdevice.h>
-
+#include <linux/proc_fs.h>
 #include <linux/cdev.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <asm/ioctl.h>
 #include <linux/switch.h>
-#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/wakelock.h>
 #include <linux/ite8566.h>
 #include <asm/unaligned.h>
@@ -54,7 +55,7 @@
 #include <linux/usb/penwell_otg.h>
 #include <linux/HWVersion.h>
 
-#define DRIVER_VERSION	"3.0.9"		//Joe modify 
+#define DRIVER_VERSION	"1.1.5"		//Joe modify 
 
 //define flag parameter --------------------------------------------------------------------------------
 #define ENABLE_SELF_FIRMWARE_UPGRADE
@@ -64,10 +65,14 @@
 static uint8_t i2c_command = 0;
 static struct i2c_client ecram_client;
 u8 recv_buf[256]={0}; // add by leo for ec register read & write ++
+int recv_buf_length = 0; //add by josh for ec register read & write ++
 u16 recv_num=0; // add by leo for ec register read & write ++
 static int probe_status = 0 ;
 static int usb_switch_mode_flag = 0 ;
+static int wifi_mac_ready_flag = 0 ; // add by Tom for check Base WiFi MAC Ready
+static int wifi_mac_running_flag = 0 ; // add by Tom for check  getting mac function in run time
 
+static BLOCKING_NOTIFIER_HEAD(unuse_notifier_list); // workaround: whitout used 
 static BLOCKING_NOTIFIER_HEAD(dock_atow_early_notifier_list);
 static BLOCKING_NOTIFIER_HEAD(dock_atow_late_notifier_list);
 static BLOCKING_NOTIFIER_HEAD(dock_wtoa_late_notifier_list);
@@ -76,6 +81,9 @@ static BLOCKING_NOTIFIER_HEAD(dock_attach_notifier_list);
 static BLOCKING_NOTIFIER_HEAD(base_system_notifier_list);
 
 static int usb_cable_init_value = 2;
+
+
+#define ASUSEC_VERIFY_PATH      "/data/logtool/Dump_EC_FW.bin" // add by tom for debug 
 
 #ifdef ENABLE_FIRMWARE_UPGRADE
 static struct i2c_client predefine_client;
@@ -101,31 +109,25 @@ enum hid_i2c_command {
 	ITE_HID_DOCK_BATTERY_CMD,
 	ITE_HID_CABLE_STATUS_NOTIFY_CMD,
 	ITE_HID_VERIFY_CHARGER_CMD,
-	ITE_HID_ATTACH_DETACH_CMD,
 	ITE_HID_ANDROID_POWER_STATUS_CMD,
-	ITE_HID_SYSTEM_OWNER_CMD,
 	ITE_HID_SCREEN_CHANGE_NOTIFY_CMD,
-	ITE_HID_BASE_SYSTEM_STATUS_CMD,
 	ITE_HID_READ_EC_REGISTER_CMD,
-//	ITE_HID_LED_NOTIFY_CMD,
 	ITE_HID_READ_CHARGER_IC_STATUS_CMD,
 	ITE_HID_ALS_CTL_CMD,
 	ITE_HID_VERIFY_ALS_STATUS_CMD,
 	ITE_HID_PWM_CTL_CMD,
 	ITE_HID_RW_CHARGERIC_CMD,
-	ITE_HID_WIFI_LED_CMD,
+	ITE_HID_FLIGHT_MODE_LED_CMD,
 	ITE_HID_TURNON_BASE_CMD,
 	//add by leo for gauge FW update ++
 	ITE_HID_READ_GAUGE_FW_INFO_CMD,
 	ITE_HID_START_GAUGE_FW_UPDATE_CMD,
 	//add by leo for gauge FW update --
-	ITE_HID_ALS_SET_TABLE_CMD,
-	ITE_HID_READ_BASE_CHARGER_STATUS_CMD,
-	ITE_HID_READ_WIN8_TEST_MODE_CMD,
-	ITE_HID_GET_LIGHT_SENSOR_REPORT_CMD, 
+	ITE_HID_ALS_SET_CALIBRATION_DATA_CMD,
+	ITE_HID_READ_CHARGER_STATUS_CMD,
+	ITE_HID_ALS_GET_CALIBRATION_DATA_CMD, 
 	ITE_HID_KB_LED_CMD,
-	ITE_HID_BASE_EC_FW_CHECK_CMD,
-	ITE_HID_CHECK_CHARGER_STATUS_CMD
+	ITE_HID_CHARGER_CTL_CMD
 };
 
 enum ec_ram_i2c_command {
@@ -134,7 +136,7 @@ enum ec_ram_i2c_command {
 	ITE_RAM_STOP_POLLING_BATTERY_CMD,
 	ITE_RAM_START_POLLING_BATTERY_CMD,
 	ITE_RAM_WRITE_GAUGE_CMD,
-	ITE_RAM_READ_GAUGE_CMD,
+	ITE_RAM_WRITE_I2C_BYPASS_CMD,
 	ITE_RAM_ACCESS_GAUGE_STATUE_CMD,
 	ITE_RAM_READ_GAUGE_BUFFER_CMD,
 	ITE_RAM_CTL_USB0_ID_EC_CMD, //USB Host/Client
@@ -147,7 +149,20 @@ enum ec_ram_i2c_command {
 	ITE_RAM_TURN_ON_BASE_CMD,
 	ITE_RAM_SET_KEYBOARD_WAKEUP_CMD,
 	ITE_RAM_LED_CONTROL_CMD,
-	ITE_RAM_GAUGE_TEMP_CONTROL_CMD
+	ITE_RAM_GAUGE_TEMP_CONTROL_CMD,
+	ITE_RAM_SYSTEM_OWNER_CMD,
+	ITE_RAM_ATTACH_DETACH_CMD,
+	ITE_RAM_BASE_SYSTEM_STATUS_CMD,
+	ITE_RAM_BASE_EC_FW_CHECK_CMD,
+	ITE_RAM_READ_WIN8_TEST_MODE_CMD,
+//	ITE_RAM_CHECK_CHARGER_STATUS_CMD,
+	ITE_RAM_READ_THRESHOLD_LEVEL_TABLE_CMD,
+	ITE_RAM_READ_THRESHOLD_TABLE_CMD,
+	ITE_RAM_DUMP_GAUGE_ALL_REG_CMD,
+	ITE_RAM_DUMP_CHARGER_ALL_REG_CMD,
+	ITE_RAM_READ_WIFI_MAC_ADDR_CMD, // add by Tom for Read Base WiFi MAC 0x0A
+	ITE_RAM_GET_WIFI_MAC_ADDR_CONTROL_CMD, // add by Tom for Start / Cancel Getting WiFi MAC Address command
+	ITE_RAM_BASE_TOUCH_PAD_POWER_CMD // add by Tom for Notify Touch Pad Power On
 };
 
 typedef enum {
@@ -179,43 +194,48 @@ static const u8 ite_hid_data_cmd[] = {0xF6, 0x00};
 static const u8 ite_hid_pad_battery_cmd[] = {0xF5, 0x00, 0x1C, 0x02, 0xF6, 0x00};
 static const u8 ite_hid_dock_battery_cmd[] = {0xF5, 0x00, 0x1D, 0x02, 0xF6, 0x00};
 static const u8 ite_hid_verify_charger_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x30, 0x00, 0x01};
-static const u8 ite_hid_attach_detach_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00 , 0x33, 0x00, 0x01};
-static const u8 ite_hid_system_owner_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x34, 0x00, 0x01};
-static const u8 ite_hid_base_system_status_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x32, 0x00, 0x01};
 static const u8 ite_hid_read_ec_register_cmd[] = {0xF5, 0x00, 0x3A, 0x02, 0xF6, 0x00};
 static const u8 ite_hid_read_charger_ic_status_cmd[] = {0xF5, 0x00, 0x1B, 0x02, 0xF6, 0x00};
 static const u8 ite_hid_verify_als_status_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x0C, 0x09, 0x01};
-static const u8 ite_hid_read_base_charger_status_cmd[] = {0xF5, 0x00, 0x3B, 0x02, 0xF6, 0x00};
-static const u8 ite_hid_read_win8_test_mode_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x03, 0x0E, 0x01};
-static const u8 ite_hid_get_light_sensor_report_cmd[] = {0xF5, 0x00, 0x36, 0x02, 0xF6, 0x00};
-static const u8 ite_hid_base_ec_fw_check_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0x52, 0x00, 0x01};
-static const u8 ite_hid_check_charger_status_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x00, 0xD0, 0x09, 0x01};
+static const u8 ite_hid_read_charger_status_cmd[] = {0xF5, 0x00, 0x3B, 0x02, 0xF6, 0x00};
+static const u8 ite_hid_als_get_calibration_data_cmd[] = {0xF5, 0x00, 0x36, 0x02, 0xF6, 0x00};
 
 u8 ite_hid_cable_status_notify_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x01, 0x30, 0x00, 0x00};
 u8 ite_hid_android_power_status_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x01, 0x31, 0x00, 0x00};
 u8 ite_hid_screen_change_notify_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x01, 0x34, 0x00, 0x00};
-//u8 ite_hid_led_notify_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x01, 0x50, 0x00, 0x00};
-u8 ite_hid_als_ctl_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x06, 0x00}; // light sensor enable/disable
+u8 ite_hid_als_ctl_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x06, 0x00}; // ALS Output Report: 0x01=Power On ALS, 0x02=Power Off ALS, 0x04 = Report ALS Data, 0x80 = Reset ALS
 u8 ite_hid_pwm_ctl_cmd[] = {0xF5, 0x00, 0x3E, 0x03, 0xF6, 0x00, 0x03, 0x00, 0x00};
 u8 ite_hid_rw_chargeric_cmd[] = {0xF5, 0x00, 0x3B, 0x03, 0xF6, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-u8 ite_hid_wifi_led_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x04, 0x00};
+u8 ite_hid_flight_mode_led_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x04, 0x00};
 u8 ite_hid_kb_led_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x01, 0x00};
 u8 ite_hid_turnon_base_cmd[] = {0xF5, 0x00, 0x3A, 0x03, 0xF6, 0x00, 0x06, 0x00, 0x01, 0x36, 0x00, 0x01};
 // add by leo for gauge FW update ++
 u8 ite_hid_read_gauge_fw_info_cmd[] = {0xF5, 0x00, 0x38, 0x02, 0xf6, 0x00};
 u8 ite_hid_start_gauge_fw_update_cmd[] = {0xF5, 0x00, 0x38, 0x03, 0xf6, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 // add by leo for gauge FW update --
-u8 ite_hid_als_set_table_cmd[256] = {0};
+u8 ite_hid_als_set_calibration_data_cmd[256] = {0};
 
 static const u8 ite_ram_version_cmd[] = {0xEC};
 static const u8 ite_ram_enter_flash_mode_cmd[] = {0xEF};
-static const u8 ite_ram_stop_polling_battery_cmd[] = {0xC1};
-static const u8 ite_ram_start_polling_battery_cmd[] = {0xC2};
-static const u8 ite_ram_access_gauge_statue_cmd[] = {0xC0, 0x01};
-static const u8 ite_ram_read_gauge_buffer_cmd[] = {0xC0, 0x02};
+static const u8 ite_ram_stop_polling_battery_cmd[] = {0xCE, 0xB1};
+static const u8 ite_ram_start_polling_battery_cmd[] = {0xCE, 0xB0};
 
-u8 ite_ram_write_gauge_cmd[256] = {0};
-u8 ite_ram_read_gauge_cmd[] = {0xC0, 0x02, 0x00, 0x00, 0x00};
+static const u8 ite_ram_system_owner_cmd[] = {0xA0};
+static const u8 ite_ram_attach_detach_cmd[] = {0xA1};
+static const u8 ite_ram_base_system_status_cmd[] = {0xA2};
+static const u8 ite_ram_base_ec_fw_check_cmd[] = {0xA3};
+static const u8 ite_ram_read_win8_test_mode_cmd[] = {0xA4};
+//static const u8 ite_ram_check_charger_status_cmd[] = {0xA6};
+static const u8 ite_ram_access_gauge_statue_cmd[] = {0xB0}; //Read I2C bypass transmission result
+static const u8 ite_ram_read_gauge_buffer_cmd[] = {0xB2};	//Read I2C bypass transmission Data
+static const u8 ite_ram_dump_gauge_all_reg_cmd[] = {0xB4};
+static const u8 ite_ram_dump_charger_all_reg_cmd[] = {0xB5};
+static const u8 ite_ram_read_threshold_level_table_cmd[] = {0xB8};
+static const u8 ite_ram_read_threshold_table_cmd[] = {0xB9};
+static const u8 ite_ram_read_wifi_mac_address_cmd[] = {0xA6}; //Add by Tom for read Base WiFi MAC Address
+static const u8 ite_ram_base_touch_pad_power_cmd[] = {0xA5}; //Add by Tom for read Base TouchPad Power Status
+
+u8 ite_ram_write_i2c_bypass_cmd[] = {0xB1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 u8 ite_ram_ctl_usb0_id_ec_cmd[] = {0xCE, 0x0A, 0x00};
 u8 ite_ram_tp_i2c_sw_cmd[] = {0xCE, 0xD0, 0x00};
 u8 ite_ram_notify_system_status_cmd[] = {0xCE, 0x0B, 0x00};
@@ -227,7 +247,8 @@ u8 ite_ram_turn_on_base_cmd[] = {0xCE, 0x10, 0x01};
 u8 ite_ram_set_keyboard_wakeup_cmd[] = {0xCE, 0x12, 0x00};
 u8 ite_ram_led_control_cmd[] = {0xCE, 0x14, 0x00};
 u8 ite_ram_gauge_temp_control_cmd[] = {0xCE, 0x15, 0x00};
-
+u8 ite_ram_get_wifi_mac_addr_control_cmd[] = {0xCE, 0x06, 0x00}; // Add by Tom for Start(0x01)/Cancel(0x02) Getting WiFi MAC Address Command
+u8 ite_hid_charger_ctl_cmd[] = {0xF4, 0x00, 0x04, 0x00, 0x0B, 0x00}; 
 static const unsigned char i2c_kbd_keycode[256] = {
           0,  0,  0,  0, KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, // 0 ~ 15
          KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z, KEY_1, KEY_2, // 16 ~ 31
@@ -251,6 +272,8 @@ static const unsigned char i2c_kbd_keycode[256] = {
 extern unsigned int entry_mode;
 extern unsigned int factory_mode;
 extern int Read_HW_ID(void);
+extern int Read_PROJ_ID(void);
+extern int als3010_report_calibration_value(unsigned char *report_buf); // add by tom for get als calibration value from ACD
 #ifdef CONFIG_USB_PENWELL_OTG
 	extern int check_cable_status(void);
 #endif
@@ -262,6 +285,7 @@ extern int Read_HW_ID(void);
 #ifdef CONFIG_MOUSE_ELAN_TOUCHPAD
 	extern int elan_i2c_touchpad_enable(int enable);
 	extern int elan_i2c_bus_enable(int enable);
+	extern int elan_init_touchpad_driver(); // add by Tom for notify TouchPad 
 #endif
 
 #ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT1664S
@@ -298,7 +322,7 @@ static ssize_t ite_light_sensor_switch(struct device *class,struct device_attrib
 static ssize_t ite_light_sensor_level(struct device *class,struct device_attribute *attr,char *buf);
 static ssize_t ite_base_plug_in(struct device *class,struct device_attribute *attr,char *buf);
 static ssize_t ite_light_sensor_status(struct device *class,struct device_attribute *attr,char *buf);
-static ssize_t ite_wifi_led(struct device *class,struct device_attribute *attr,const char *buf, size_t count);
+static ssize_t ite_flight_mode_led(struct device *class,struct device_attribute *attr,const char *buf, size_t count);
 static ssize_t ite_base_power_on(struct device *class,struct device_attribute *attr,char *buf);
 static ssize_t ite_touchpad_enable(struct device *class,struct device_attribute *attr,const char *buf, size_t count);
 static ssize_t ite_switch_to_win8(struct device *class,struct device_attribute *attr,char *buf);
@@ -309,6 +333,10 @@ static ssize_t ite_66readwrite_store(struct device *dev, struct device_attribute
 static ssize_t ite_68readwrite_show(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t ite_68readwrite_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
 // add by leo for ec register read & write --
+// add by josh for ec register read & write ++
+static ssize_t ite_68_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t ite_68_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
+// add by josh for ec register read & write --
 // add by leo for gauge FW update ++
 static ssize_t ite_gauge_fw_update_show(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t ite_gauge_fw_update_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
@@ -317,6 +345,9 @@ static ssize_t ite_gauge_fw_check_show(struct device *dev, struct device_attribu
 static ssize_t ite_gauge_read_version(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t ite_win8_test_mode(struct device *class,struct device_attribute *attr,char *buf);
 static ssize_t ite_charger_status(struct device *class,struct device_attribute *attr,char *buf);
+
+static ssize_t ite_get_als_from_fw(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t ite_store_als_in_fw(struct device *dev, struct device_attribute *attr, char *buf);
 
 static int asus_ecram_i2c_command(struct i2c_client *client, int command, unsigned char *buf_recv, int data_len);
 // add by Josh for create keyboard device ++
@@ -327,7 +358,7 @@ static int ite_detach_attach_function(void);
 static int ite_base_power_status(void);
 static int ite_system_owner_function(void);
 static int ite_turn_on_base_power(void);
-static int ite_wifi_led_function(int on_off);
+static int ite_flight_mode_led_function(int on_off);
 static int ite_get_ec_version(void);
 static bool ite_screen_change_function(int screen_status);
 static bool ite_android_power_status(APOWER_STATUS power_status);
@@ -339,11 +370,18 @@ static int ite_keyboard_led_function(KB_LED type);
 static int ite_ram_enable_keyboard_wakeup(int enable);
 static int ite_base_ec_fw_check(void);
 static void ite_work_0x68(struct work_struct *work);
-
-int ite_light_sensor_set_function(int cmd);
+static int ite_start_getting_base_wifi_mac(void); // add by Tom for start getting base WiFi MAC
+static int ite_ram_get_wifi_mac_addr_control(int enable); // add by Tom for control EC get base WiFi MAC Address
+static int ite_wifi_read_mac_address();  // add by Tom for read base WiFi MAC Address
+static int asus_ec_i2c_command(struct i2c_client *client, int command, unsigned char *buf_recv, int data_len);
+int ite_als_get_calibration_data(unsigned char *report_buf);
+int ite_als_set_power_function(int cmd);
 int ite_usb_switch_mode(int usb_mode);
 int ite_touchpad_switch(SYSTEM_OWNER mode);
+int ite_charger_control_function(u8 cmd); 
+int ite_store_als_in_firmware();
 
+static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg); //Tom
 static DEVICE_ATTR(disable_kp, (S_IWUSR|S_IRUGO), ite_show_disable, ite_set_disable);
 static DEVICE_ATTR(register, (S_IWUSR|S_IRUGO), ite_register_show, ite_register_store);
 static DEVICE_ATTR(ec_ver, (S_IWUSR | S_IRUGO), ite_ec_ver_show, NULL);
@@ -355,7 +393,7 @@ static DEVICE_ATTR(als, (S_IWUSR | S_IRUGO), NULL, ite_light_sensor_switch);
 static DEVICE_ATTR(als_level, (S_IWUSR | S_IRUGO), ite_light_sensor_level, NULL);
 static DEVICE_ATTR(base_in, (S_IWUSR | S_IRUGO), ite_base_plug_in, NULL);
 static DEVICE_ATTR(als_status, (S_IWUSR | S_IRUGO), ite_light_sensor_status, NULL);
-static DEVICE_ATTR(wifi_led, (S_IWUSR | S_IRUGO), NULL, ite_wifi_led);
+static DEVICE_ATTR(wifi_led, (S_IWUSR | S_IRUGO), NULL, ite_flight_mode_led);
 static DEVICE_ATTR(turnon_win8, (S_IWUSR | S_IRUGO), ite_base_power_on, NULL);
 static DEVICE_ATTR(tp_enable, (S_IWUSR | S_IRUGO), NULL, ite_touchpad_enable);
 static DEVICE_ATTR(switch_win8, (S_IWUSR | S_IRUGO), ite_switch_to_win8, NULL);
@@ -364,6 +402,9 @@ static DEVICE_ATTR(switch_android, (S_IWUSR | S_IRUGO), ite_switch_to_android, N
 static DEVICE_ATTR(ec_66rw, (S_IWUSR|S_IRUGO), ite_66readwrite_show, ite_66readwrite_store);
 static DEVICE_ATTR(ec_68rw, (S_IWUSR|S_IRUGO), ite_68readwrite_show, ite_68readwrite_store);
 // add by leo for ec register read & write --
+// add by josh for ec register read & write ++
+static DEVICE_ATTR(ec_68_rw_interface, (S_IWUSR|S_IRUGO), ite_68_show, ite_68_store);
+// add by josh for ec register read & write --
 // add by leo for gauge FW update ++
 static DEVICE_ATTR(gauge_fw_update, (S_IWUSR|S_IRUGO), ite_gauge_fw_update_show, ite_gauge_fw_update_store);
 static DEVICE_ATTR(gauge_fw_check, (S_IWUSR|S_IRUGO), ite_gauge_fw_check_show, NULL);
@@ -371,6 +412,10 @@ static DEVICE_ATTR(gauge_fw_check, (S_IWUSR|S_IRUGO), ite_gauge_fw_check_show, N
 static DEVICE_ATTR(gaugeIC_FW, (S_IWUSR|S_IRUGO), ite_gauge_read_version, NULL);
 static DEVICE_ATTR(win8_test_mode, (S_IWUSR | S_IRUGO), ite_win8_test_mode, NULL);
 static DEVICE_ATTR(check_charger_status, (S_IWUSR | S_IRUGO), ite_charger_status, NULL);
+// add by Tom for Factory ALS Calibration in EC ++
+static DEVICE_ATTR(get_als_from_fw, (S_IWUSR | S_IRUGO), ite_get_als_from_fw, NULL);
+static DEVICE_ATTR(store_als_in_fw, (S_IWUSR | S_IRUGO), ite_store_als_in_fw, NULL);
+// add by Tom for Factory ALS Calibration in EC --
 
 #define	ITE_PROC_FILE	"ite8566"
 static struct proc_dir_entry *ite_proc_file;
@@ -383,6 +428,7 @@ static struct attribute *ite_attr[] = {
 	&dev_attr_ec_ver.attr,
 	&dev_attr_ec_66rw.attr,// add by leo for ec register read & write ++
 	&dev_attr_ec_68rw.attr,// add by leo for ec register read & write ++
+	&dev_attr_ec_68_rw_interface.attr,// add by josh for ec register read & write ++
 	&dev_attr_disable_kp.attr,
 	&dev_attr_owner.attr,
 	&dev_attr_status.attr,
@@ -402,8 +448,16 @@ static struct attribute *ite_attr[] = {
 	&dev_attr_gaugeIC_FW.attr,
 	&dev_attr_win8_test_mode.attr,	
 	&dev_attr_check_charger_status.attr,
+	&dev_attr_get_als_from_fw.attr,
+	&dev_attr_store_als_in_fw.attr,
 	NULL
 };
+// workaround: whitout used ++
+int register_unuse_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&unuse_notifier_list, nb);
+}
+// workaround: whitout used --
 //Android switch to windows early notify ++
 static int ite_atow_early_notify_driver(int owner)
 {
@@ -551,6 +605,69 @@ static void ite_ecram_init(struct i2c_client *client)
 }
 
 #ifdef ENABLE_FIRMWARE_UPGRADE
+static int ite_update_fw_progress(int update_progress)
+{
+	mm_segment_t oldfs;
+	char Progress_file_path[] = "/data/pad_update_progress";
+	struct file *filePtr = NULL;
+	int len = 0;
+	loff_t pos = 0;
+	char temp_progress[3];
+		
+	printk("[ITE] %s: has processed %d.  \n", __func__, update_progress);	
+	sprintf(temp_progress, "%d", update_progress);
+	//printk("[ITE] %s: write %d done. \n", __func__, update_progress);
+	filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT, (S_IWUSR|S_IRUGO));
+	if(!IS_ERR_OR_NULL(filePtr))
+	{
+		oldfs = get_fs();
+		set_fs(get_ds());
+		pos = 0;
+		len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
+		set_fs(oldfs);
+		filp_close(filePtr, NULL);
+		//printk("[ITE] %s: write %s done. \n", __func__, Progress_file_path);
+		return 0;
+	}
+	else if(PTR_ERR(filePtr) == -ENOENT)
+	{
+		printk("[ITE] %s: %s not found\n", __func__, Progress_file_path);
+		return 1;
+	}
+	else
+	{
+		printk("[ITE] %s: %s open error\n", __func__, Progress_file_path);
+		return 1;
+	}
+}
+
+static int ite_update_fw_result(int result)
+{
+	mm_segment_t oldfs_result;
+    char result_state_path[] = "/data/ec_upfw_result";
+    struct file *resultfilePtr = NULL;
+	loff_t pos = 0;
+	int len = 0;
+	
+	resultfilePtr = filp_open(result_state_path, O_RDWR|O_CREAT, (S_IWUSR|S_IRUGO));
+	if(!IS_ERR_OR_NULL(resultfilePtr)) {
+		oldfs_result = get_fs();
+		set_fs(get_ds());
+		pos = 0;
+		len = resultfilePtr->f_op->write(resultfilePtr, result, sizeof(char), &pos);
+		set_fs(oldfs_result);
+		filp_close(resultfilePtr, NULL);
+		//printk("[ITE] %s: write %s done. \n", __func__, result_state_path);
+		return 0;
+	}else if(PTR_ERR(resultfilePtr) == -ENOENT) {
+		printk("[ITE] %s: %s not found\n", __func__, result_state_path);
+		return 1;
+	} else {
+		printk("[ITE] %s: %s open error\n", __func__, result_state_path);
+		return 1;
+	}
+}
+
 static void ite_predefine_init(struct i2c_client *client)
 {
 	predefine_client.adapter = client->adapter;
@@ -921,15 +1038,40 @@ static int cmd_erase_all(void)
 	return result;
 }
 
-static int do_check(void)
+/**
+ * Erase 1024 byte
+ * Input :
+ *  address : Starting erase address (address_mid)
+ */
+static int cmd_erase_sector(unsigned char address)
 {
-	int i,j,result=0;
+	int result = 0;
+	unsigned char payload[2]={0x00,0x00,0x00}; // [address_high, address_mid, address_low] 
+	payload[1]=address;
+    result = ite_i2c_pre_define_cmd_write(&predefine_client, EFLASH_CMD_SECTOR_ERASE, 3, payload);
+    return result;
+	
+}
+/**
+ * Check Erase 
+ * Input :
+ *  upgrade_all : Determine whether upgrade all 
+ */
+static int do_check(int upgrade_all)
+{
+	int i,j,result=0,start_address=0;
 	unsigned char buffer[256];
 	unsigned char address[4] = {0,0,0,0};
 	
+	if(upgrade_all == 0)
+	{
+		start_address =0x32; 
+	}
+	printk("[ITE_update]: Check %s \n",start_address!=0x32?"64k byte":"56k byte");
 	printk("[ITE_update]: Check................ start. \n");
 
-	for(i=0; i<0x100; i++)
+
+	for(i=start_address; i<0x100; i++)
 	{
 		address[2] = i;
 
@@ -966,20 +1108,39 @@ out:
 
 	return result;
 }
-
-static int do_erase_all(void)
+/**
+ * Erase EC FW
+ * Input :
+ *  upgrade_all : Determine whether upgrade all 
+ */
+static int do_erase(int is_upgrade_all)
 {
-	int err = 0;
+	int err = 0, i = 0;
 	
+	printk("[ITE_update]: ERASE %s \n",is_upgrade_all==1?"64k byte":"56k byte");
 	printk("[ITE_update]: ERASE................. start. \n");
-	cmd_write_enable();
-	while((cmd_check_status() & 0x02)!=0x02);
-	cmd_erase_all();
-	while(cmd_check_status() & 0x01);
-	cmd_write_disable();	
+	if(is_upgrade_all == 0)
+	{
+		for(i = 0 ; i < 56 ; i++)
+		{
+			cmd_write_enable();
+			while((cmd_check_status() & 0x02)!=0x02);
+			cmd_erase_sector(0x20+(i*0x04));  // From 8k (0x20 address_mid) byte start (increments of 1k byte) 
+			while(cmd_check_status() & 0x01);
+			cmd_write_disable();
+		}
+	}
+	else
+	{
+		cmd_write_enable();
+		while((cmd_check_status() & 0x02)!=0x02);
+		cmd_erase_all();
+		while(cmd_check_status() & 0x01);
+		cmd_write_disable();	
+	}
 	printk("[ITE_update]: ERASE................. OK! \n");
 	
-	err = do_check();
+	err = do_check(is_upgrade_all);
 	if(err == -1)
 	{
 		return -1;
@@ -987,32 +1148,41 @@ static int do_erase_all(void)
 	return 0;
 }
 
-static int do_program(EC_FW_PATH mode)
+/**
+ * Program EC FW
+ * Input :
+ *  upgrade_all : Determine whether upgrade all 
+ */
+static int do_program(EC_FW_PATH mode, int upgrade_all)
 {
-//	unsigned char* ImageBuffer = fw;
 	int result=0,i;
 	unsigned char payload[5]={0,0,0,0,0};//A2,A1,A0,Data0,Data1
-	//add for progress bar ++
-	mm_segment_t oldfs;
-    char Progress_file_path[] = "/data/pad_update_progress";
-    struct file *filePtr = NULL;
-    int len = 0, update_progress = 10;
-    loff_t pos = 0;
-    char temp_progress[3];
-    //add for progress bar --
+	int update_progress = 10;
+	int start_address = 0; 
    	
 	cmd_write_enable();
 	while((cmd_check_status() & 0x02)!=0x02);
 	
 //	memcpy(&gBuffer, &ImageBuffer, 65536);
-	payload[3] = upgrade_fw[0]; //Data 0
-	payload[4] = upgrade_fw[1]; //Data 1
-
+	if(upgrade_all == 0)
+	{
+		payload[3] = upgrade_fw[8192]; //Data 0
+		payload[4] = upgrade_fw[8193]; //Data 1
+		start_address = 8194; 
+		payload[1]=0x20; // address_mid
+	}
+	else
+	{
+		payload[3] = upgrade_fw[0]; //Data 0
+		payload[4] = upgrade_fw[1]; //Data 1
+		start_address = 2;
+	}
 	result = ite_i2c_pre_define_cmd_write_with_status(&predefine_client, EFLASH_CMD_AAI_WORD_PROGRAM, 5, payload);
 
 	//Combine command & check status to enhance speed
+	printk("[ITE_update]: Program %s \n",payload[1]!=0x20?"64k byte":"56k byte");
 	printk("[ITE_update]: Program............... \n");
-	for(i=2; i<65536;)
+	for(i=start_address ; i<65536;)
 	{	
 		result = ite_i2c_pre_define_cmd_write_with_status(&predefine_client, EFLASH_CMD_AAI_WORD_PROGRAM, 2, &upgrade_fw[i]);
 		while(result & 0x01)
@@ -1024,20 +1194,8 @@ static int do_program(EC_FW_PATH mode)
 			printk("[ITE_update]: Program i=0x%04x \n",i);
 			if(mode == AP)
 			{
-				//add for progress bar ++ 
-				update_progress = update_progress + 5;
-				sprintf(temp_progress, "%d", update_progress);
-				//printk("[ITE_update] %s: temp_progress = %s \n", __func__, temp_progress);
-				filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-				if(!IS_ERR_OR_NULL(filePtr)) {
-					oldfs = get_fs();
-					set_fs(get_ds());
-					pos = 0;
-					len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
-					set_fs(oldfs);
-					filp_close(filePtr, NULL);
-				}
-				//add for progress bar --
+				update_progress = update_progress + 5; 
+				ite_update_fw_progress(update_progress);
 			}
 		}
 		i+=2;
@@ -1049,7 +1207,13 @@ static int do_program(EC_FW_PATH mode)
 	return 0;	
 }
 
-static int do_verify(void)
+/**
+ * Verify FW 8k whether upgrade
+ *	Return :
+ *		0 : 56k byte
+ *		1 : 64k byte
+ */
+static int do_pre_verify(void)
 {
 	int i,j,result=0;
 	unsigned char buffer[256];
@@ -1059,6 +1223,141 @@ static int do_verify(void)
     printk("[ITE_update]: %s \n",__func__);
 
     
+	for(i=0;i<0x32;i++)
+	{
+		address[2]=i;
+		result = ite_i2c_pre_define_cmd_fastread(&predefine_client, address, 0x100, &buffer);
+		while(result==-1)
+		{
+			result = ite_i2c_pre_define_cmd_fastread(&predefine_client, address, 0x100, &buffer);
+			retry_count++;
+			if(retry_count > EFLASH_MAX_RETRY_COUNT) {
+				printk("[ITE_update]: Do verify over EFLASH_MAX_RETRY_COUNT on address %02x%02x%02x \n",address[3],address[2],address[1]);
+				result = 0;
+				goto out;
+			}	 
+		}	
+		
+		for(j=0; j<256; j++) {
+			if(buffer[j] != upgrade_fw[i*0x100 + j])	
+			{
+				printk("[ITE_update]: Check Different on offset[%x]; EFLASH=%02x \n",j,buffer[j]);
+				result = 1;
+				goto out;
+				//break;
+			}
+		}		
+		 
+		
+	}
+	
+out:
+
+	if(result==0)
+	{
+		printk("[ITE_update]: Upgrade 56k byte ................. \n");
+	}
+	else
+	{
+		printk("[ITE_update]: Upgrade 64k byte ................. \n");
+	}
+	
+	return result;
+}
+
+static int dump_EC_FW()
+{
+	mm_segment_t oldfs;
+	struct file *filePtr = NULL;
+	loff_t pos = 0; 
+	int ret = 0;
+	int i,j,result=0;
+	unsigned char buffer[256];
+	unsigned char address[4] = {0,0,0,0}; // Dummy , L , M , H
+	int retry_count=0;
+	printk("[ITE_update]: %s \n",__func__);
+	do
+	{
+		filePtr = filp_open(ASUSEC_VERIFY_PATH, O_RDWR|O_CREAT, (S_IWUSR|S_IRUGO));
+		if(IS_ERR_OR_NULL(filePtr))
+		{
+			printk("[ITE_update]: %s , Open File Fail !! \n",__func__);
+			return -1;
+		}
+		else
+		{
+			oldfs = get_fs();
+			set_fs(get_ds());
+		}
+		for(i=0;i<0x100;i++)
+		{
+			address[2]=i;
+			result = ite_i2c_pre_define_cmd_fastread(&predefine_client, address, 0x100, &buffer);
+			while(result==-1)
+			{
+				result = ite_i2c_pre_define_cmd_fastread(&predefine_client, address, 0x100, &buffer);
+				retry_count++;
+				if(retry_count > EFLASH_MAX_RETRY_COUNT) {
+					printk("[ITE_update]: Do verify over EFLASH_MAX_RETRY_COUNT on address %02x%02x%02x \n",address[3],address[2],address[1]);
+					result = -1;
+					goto out;
+				}	 
+			}
+	
+			ret = filePtr->f_op->write(filePtr, &buffer, sizeof(buffer), &pos);
+		}	
+	
+		set_fs(oldfs);
+		filp_close(filePtr, NULL);
+		printk("[ITE_update] %s: write %s done.\n", __func__, ASUSEC_VERIFY_PATH);
+		
+		// verify
+		filePtr = filp_open(ASUSEC_VERIFY_PATH, O_RDWR|O_CREAT, (S_IWUSR|S_IRUGO));
+		if(IS_ERR_OR_NULL(filePtr))
+		{
+			printk("[ITE_update]: %s ,Check Open File Fail !! \n",__func__);
+			return -1;
+		}
+		else if(retry_count > 5)
+		{	
+			printk("[ITE_update] %s: retry time out \n", __func__);
+			filp_close(filePtr, NULL);			
+			return 0;
+		}
+		else	
+		{
+			oldfs = get_fs();
+			set_fs(get_ds());
+			ret=filePtr->f_op->read(filePtr,&buffer,1, &filePtr->f_pos);
+			if(ret <= 0) {
+			    printk("[ITE_update] %s: read dump file failed , buffer[0] = %02x \n", __func__,buffer[0]);
+				set_fs(oldfs);
+				filp_close(filePtr, NULL);
+				retry_count++;			
+				continue;
+			}
+			else
+			{
+				printk("[ITE_update] %s: read dump file done . check buffer[0] = %02x\n", __func__,buffer[0]);
+				set_fs(oldfs);
+				filp_close(filePtr, NULL);			
+				return 0;
+			}
+		}
+	}
+	while(1);
+out:
+
+	return result;
+}
+
+static int do_verify(void)
+{
+	int i,j,result=0;
+	unsigned char buffer[256];
+	unsigned char address[4] = {0,0,0,0}; // Dummy , L , M , H
+	int retry_count=0;
+	printk("[ITE_update]: %s \n",__func__);
 	for(i=0;i<0x100;i++)
 	{
 		address[2]=i;
@@ -1074,6 +1373,7 @@ static int do_verify(void)
 			}	 
 		}	
 		
+
 		for(j=0; j<256; j++) {
 			if(buffer[j] != upgrade_fw[i*0x100 + j])	
 			{
@@ -1086,6 +1386,7 @@ static int do_verify(void)
 		 
 		
 	}
+
 /*	
 	ite_i2c_pre_define_cmd_fastread(address,8192,&buffer);
 	address[2] = 0x20;
@@ -1122,14 +1423,19 @@ static int do_verify(void)
 //	{
 //		printk("[ITE_update]: checksum OK!! \n");
 //	}
-	
 	if(result==0)
 	{
 		printk("[ITE_update]: Verify................OK! \n");
 	}
 
 out:
-
+	if(result!=0)
+	{
+		printk("[ITE_update]: Dump EC FW to /data/logtool/Dump_EC_FW.bin................ \n");
+		dump_EC_FW();	
+		msleep(6000);
+		printk("[ITE_update]: Dump EC FW to /data/logtool/Dump_EC_FW.bin................OK \n");
+	}
 	return result;
 }
 
@@ -1160,7 +1466,324 @@ int notify_EC(void)
 EXPORT_SYMBOL(notify_EC);
 // add by leo for touch notify EC ++
 
-#ifdef ENABLE_SELF_FIRMWARE_UPGRADE
+// add by tom for store als calibration in EC
+int ite_store_als_in_firmware()
+{
+	struct file* filp = NULL;
+	mm_segment_t oldfs;
+	u8 buf_recv[15];
+	u8 als_cali_value_ACD[2] = {0xFF,0xFF}; // add by tom for get ALS calibration value from ALS ACD
+	int retry_count = 0,erase_count = 0;
+	int result = 0;
+	int err = 0;
+	int i = 0, open_fail = 0;
+	int did_als_cali = -1; // add by tom for check if ALS calibration is already
+	int start_address = 0; 
+	unsigned char buffer[1024];
+	unsigned char address[4] = {0,0,0,0};	
+	unsigned char payload[5]= {0,0,0,0,0}; //A2,A1,A0,Data0,Data1
+	
+	wake_lock(&ite_chip_data->wake_lock);
+	// Get ALS Calibration from ALS Driver 		
+	did_als_cali = als3010_report_calibration_value(als_cali_value_ACD);	
+	printk("[ITE_update]: ACD als calibration value (Already Calibration ? '%s') : 0x%02X 0x%02X \n",(did_als_cali==0)?"YES":"NO",als_cali_value_ACD[0],als_cali_value_ACD[1]);
+	if(did_als_cali != 0)
+	{
+		printk("[ITE_update] %s: Get ALS Calibration Fail! \n",__func__);
+		return -2;
+	}
+	
+	// Open Firmware file	
+	for(i = 1; i <= 3; i++)
+	{	
+		if(ite_chip_data->hw_id == HW_ID_SR2)
+		{	
+			filp = filp_open("/system/etc/firmware/asus_ec_fw_SR.bin", O_RDONLY, 0);
+			printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw_SR.bin \n",__func__);
+		}
+		else
+		{
+			filp = filp_open("/system/etc/firmware/asus_ec_fw.bin", O_RDONLY, 0);
+			printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw.bin \n",__func__);
+		}
+		if(!IS_ERR_OR_NULL(filp))
+		{
+    		oldfs = get_fs();
+			set_fs(get_ds());
+			
+			result=filp->f_op->read(filp,upgrade_fw,sizeof(upgrade_fw), &filp->f_pos);
+			if(result < 0) {
+		    	printk("[ITE_update] %s: read firmware file failed\n", __func__);
+			}
+			else
+			{
+				open_fail = 0;
+				i = 4;
+				printk("[ITE_update] %s: read firmware file done\n", __func__);
+			}
+	
+			set_fs(oldfs);
+			filp_close(filp, NULL);			
+		}
+		else
+		{
+			printk("[ITE_update] %s: open firmware file failed\n", __func__);
+			open_fail++;
+			msleep(5000);
+		}
+		
+		if(open_fail == 3)
+		{
+			printk("[ITE_update] %s: open firmware file retry failed.\n", __func__);
+			wake_unlock(&ite_chip_data->wake_lock);
+			return -1;
+		}
+	}
+
+	mutex_lock(&ite_chip_data->mutex_lock);
+	
+	if(result > 0)
+	{	
+		// Update als calibration byte in FW (bin file).  
+		upgrade_fw[0xe815] = als_cali_value_ACD[0]; // ALS Calibration Value (LSB) Offset + 0xe815
+		upgrade_fw[0xe816] = als_cali_value_ACD[1]; // ALS Calibration Value (MSB) Offset + 0xe816
+		printk("[ITE_update]: Update ALS FW file (upgrade_fw[0xe815]  = 0x%x , upgrade_fw[0xe816]  = 0x%x) \n",upgrade_fw[0xe815],upgrade_fw[0xe816]);
+
+		// Enter EC Flash mode
+		ite_chip_data->fw_up_process = 1;
+		if(ite_chip_data->version_checksum != 0)
+		{
+			mutex_unlock(&ite_chip_data->mutex_lock);
+			printk("[ITE_update] %s: Enter flash mode. \n", __func__);
+			err = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ENTER_FLASH_MODE_CMD, buf_recv, 0);
+			if(err != 1)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ENTER_FLASH_MODE_CMD failed \n", __func__, __LINE__);
+			}
+			if(ite_chip_data->detach_attach == BASE_DETACH)
+			{
+				msleep(200);
+			}
+			else
+			{
+				msleep(100);
+				err = ite_detach_notify_driver(SYSTEM_UPDATE);
+				msleep(100);
+			}
+			mutex_lock(&ite_chip_data->mutex_lock);
+		}
+		// Check EC Flash mode			
+		do
+		{
+			ite_i2c_pre_define_cmd_read(&predefine_client, EFLASH_CMD_READ_ID, 3, flash_id);
+			printk(KERN_ERR "[ITE_update] %s: flash_id = 0x%x, 0x%x, 0x%x \n", __func__, flash_id[0], flash_id[1], flash_id[2]);
+			msleep(100);
+			
+			if((flash_id[0] == 0xff)&&(flash_id[1] == 0xff)&&(flash_id[2] == 0xfe))
+			{
+				break;
+			}
+			else if(retry_count == EFLASH_MAX_RETRY_COUNT)
+			{
+				goto upgrade_fail;
+			}
+				
+			retry_count++;
+			
+		}while(1);
+
+		// Start Flash EC
+		for(retry_count = 0; retry_count < EFLASH_MAX_RETRY_COUNT; retry_count++)
+		{
+			printk("[ITE_update]: do_erase_all start.\n");
+			for(erase_count = 0; erase_count < EFLASH_MAX_RETRY_COUNT; erase_count++)
+			{
+				// Erase 1k
+				printk("[ITE_update]: ERASE 1k................. start. \n");
+				cmd_write_enable();
+				while((cmd_check_status() & 0x02)!=0x02);
+				cmd_erase_sector(0xe8);  // 0xe800  
+				while(cmd_check_status() & 0x01);
+				cmd_write_disable();
+				printk("[ITE_update]: ERASE 1k................. OK! \n");
+				// Check 1k
+				printk("[ITE_update]: Check 1k................ start. \n");
+				err = 0;
+		
+				address[2] = 0xe8 ;
+				ite_i2c_pre_define_cmd_fastread(&predefine_client, address, 0x400, &buffer);
+				for(i=0; i<1024; i++) {
+					if(buffer[i] != 0xFF)	
+					{
+						printk("[ITE_update]: Check Error on offset[%x]; EFLASH=%02x \n",0xe800+i,buffer[i]);
+						err=-1;
+						break;
+					}
+				}
+				
+				if(err == 0)
+				{
+					printk("[ITE_update]: Check 1k................ OK! \n");	
+					break;
+				}
+			}
+			// Program 1k
+			printk("[ITE_update]: Program 1k...............start. \n");
+			cmd_write_enable();
+			while((cmd_check_status() & 0x02)!=0x02);
+			payload[3] = upgrade_fw[59392]; //Data 0
+			payload[4] = upgrade_fw[59393]; //Data 1
+			start_address = 59394; 
+			payload[1]=0xe8; // address_mid
+			result = ite_i2c_pre_define_cmd_write_with_status(&predefine_client, EFLASH_CMD_AAI_WORD_PROGRAM, 5, payload);
+			for(i=start_address ; i<60416;)
+			{	
+				result = ite_i2c_pre_define_cmd_write_with_status(&predefine_client, EFLASH_CMD_AAI_WORD_PROGRAM, 2, &upgrade_fw[i]);
+				while(result & 0x01)
+				{
+					result=cmd_check_status();
+				}
+				i+=2;
+			}
+			cmd_write_disable();
+			printk("[ITE_update]: Program 1k...............OK! \n");
+
+			// Verify all			
+			err = do_verify();
+			if(err == 0)
+			{
+				printk("[ITE_update]: do_verify pass .\n");				
+				break;
+			}
+		}
+					
+		do_reset();
+		queue_delayed_work(ite_chip_data->flash_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 3*HZ);
+		
+	}
+	else
+	{
+		printk("[ITE_update] %s: ite chip not upgrage. \n", __func__);
+	}
+	
+	ite_chip_data->fw_up_process = 0;
+	mutex_unlock(&ite_chip_data->mutex_lock);
+	wake_unlock(&ite_chip_data->wake_lock);
+	
+	return 0;
+	
+upgrade_fail:
+
+	ite_chip_data->fw_up_process = 0;
+	mutex_unlock(&ite_chip_data->mutex_lock);
+	queue_delayed_work(ite_chip_data->flash_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 1*HZ);
+	wake_unlock(&ite_chip_data->wake_lock);
+	return -1;
+	
+}
+
+static int ite_firmware_check(void)
+{
+	struct file* filp = NULL;
+	mm_segment_t oldfs;
+	int result = 0;
+	int err = 0;
+	int i = 0, open_fail = 0;
+	int get_count = 0;
+	int upgrade_fw_ver_checksum = 0x00;
+	char upgrade_tp_version[8];
+	char version[8];
+
+	wake_lock(&ite_chip_data->wake_lock);
+	// Open EC Version from the newest bin file
+	for(i = 1; i <= 3; i++)
+	{	
+		if(ite_chip_data->hw_id == HW_ID_SR2)
+		{	
+			filp = filp_open("/system/etc/firmware/asus_ec_fw_SR.bin", O_RDONLY, 0);
+			printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw_SR.bin \n",__func__);
+		}
+		else
+		{
+			filp = filp_open("/system/etc/firmware/asus_ec_fw.bin", O_RDONLY, 0);
+			printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw.bin \n",__func__);
+		}
+
+		if(!IS_ERR_OR_NULL(filp))
+		{
+			oldfs = get_fs();
+			set_fs(get_ds());
+			
+			result=filp->f_op->read(filp,upgrade_fw,sizeof(upgrade_fw), &filp->f_pos);
+			if(result < 0) {
+			   	printk("[ITE_update] %s: read firmware file failed\n", __func__);
+			}
+			else
+			{
+				open_fail = 0;
+				i = 4;
+				printk("[ITE_update] %s: read firmware file done\n", __func__);
+			}
+		
+			set_fs(oldfs);
+			filp_close(filp, NULL);			
+			}
+			else
+			{
+				 printk("[ITE_update] %s: open firmware file failed\n", __func__);
+				 open_fail++;
+				 msleep(5000);
+			}
+			
+			if(open_fail == 3)
+			{
+				printk("[ITE_update] %s: open firmware file retry failed.\n", __func__);
+				wake_unlock(&ite_chip_data->wake_lock);
+				return -1;
+			}
+	}
+
+	// Read EC Version from the newest bin file
+	printk("[ITE_update] %s: upgrade firmware verison, %02X, %02X, %02X, %02X, %02X, %2X, %02X, %02X, \n", __func__, upgrade_fw[0xe800], upgrade_fw[0xe801], upgrade_fw[0xe802], upgrade_fw[0xe803], upgrade_fw[0xe804], upgrade_fw[0xe805], upgrade_fw[0xe806], upgrade_fw[0xe807]);
+	
+	upgrade_tp_version[0] = upgrade_fw[0xe800];
+	upgrade_tp_version[1] = upgrade_fw[0xe801];
+	upgrade_tp_version[2] = upgrade_fw[0xe802];
+	upgrade_tp_version[3] = upgrade_fw[0xe803];
+	upgrade_tp_version[4] = upgrade_fw[0xe804];
+	upgrade_tp_version[5] = upgrade_fw[0xe805];
+	upgrade_tp_version[6] = upgrade_fw[0xe806];
+	upgrade_tp_version[7] = upgrade_fw[0xe807];
+	
+	strncpy(version, &upgrade_tp_version[0], 8);
+	printk("[ITE_update]:new upgrade firmware verison=%s.\n", version);
+
+	// Get Checksum from the newest bin file
+	upgrade_fw_ver_checksum = ((upgrade_tp_version[4] << 24) | (upgrade_tp_version[5] << 16 ) | (upgrade_tp_version[6] << 8) | upgrade_tp_version[7]);			
+	printk("[ITE_update]: upgrade_fw_ver_checksum = %d \n",upgrade_fw_ver_checksum);
+
+	// Get EC Version from EC
+	for(get_count = 0; get_count < 3; get_count++)
+	{
+		err = ite_get_ec_version();
+		if(err == 0)
+			break;
+	}
+	// Compare EC Version
+	if(upgrade_fw_ver_checksum > ite_chip_data->version_checksum)
+	{
+		wake_unlock(&ite_chip_data->wake_lock);
+		return 0;
+	}
+	else
+	{
+		wake_unlock(&ite_chip_data->wake_lock);
+		return 1;
+	}
+	
+	
+}
+
 int ite_firmware_upgrade(int path)
 {
 	struct file* filp = NULL;
@@ -1172,76 +1795,43 @@ int ite_firmware_upgrade(int path)
     char version[8];
     int upgrade_fw_ver_checksum = 0x00;
     u8 buf_recv[15];
-    int erase_count = 0, retry_count = 0, get_count = 0;
+	u8 als_cali_value_EC[8] = {0}; // add by tom for get ALS calibration value from EC
+	u8 als_cali_value_ACD[2] = {0xFF,0xFF}; // add by tom for get ALS calibration value from ALS ACD
+    int did_als_cali = 0; // add by tom for check if ALS calibration is already
+	int erase_count = 0, retry_count = 0, get_count = 0;
     int upgrade_status = 0;
-    //add for progress bar ++ 
-    mm_segment_t oldfs_progress;
-    char Progress_file_path[] = "/data/pad_update_progress";
-    struct file *filePtr = NULL;
-    int update_progress_file = 0, len = 0, update_progress = 1;
-    loff_t pos = 0;
-    char temp_progress[3];
-    //add for progress bar --
-    //add for update result ++
-    mm_segment_t oldfs_result;
-    char result_state_path[] = "/data/ec_upfw_result";
-    struct file *resultfilePtr = NULL;
-    //add for update result --
+    int update_progress = 1;
     int ret = 0;
-     
+    int is_upgrade_all = 0; // add by tom for check whether upgrade all 
 	wake_lock(&ite_chip_data->wake_lock);
-			
+	
+	// add by tom for check if ALS Calibration is already from EC and ALS ++		
+	err = ite_als_get_calibration_data(als_cali_value_EC);
+	did_als_cali = als3010_report_calibration_value(als_cali_value_ACD);	
+	printk("[ITE_update]: EC als calibration value : 0x%02X 0x%02X , return : %d\n",als_cali_value_EC[2],als_cali_value_EC[3],err);
+	printk("[ITE_update]: ACD als calibration value (Already Calibration ? '%s') : 0x%02X 0x%02X \n",(did_als_cali==0)?"YES":"NO",als_cali_value_ACD[0],als_cali_value_ACD[1]);
+	// add by tom for check if ALS Calibration is already from EC and ALS --
+		
 	if(path == AP)
 	{
-		//add for progress bar ++ 
-		filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-		if(!IS_ERR_OR_NULL(filePtr)) {
-			update_progress_file=1;
-			printk("[ITE_update] %s: %s ok to write progress\n", __func__, Progress_file_path);
-			filp_close(filePtr, NULL);
-		} else if(PTR_ERR(filePtr) == -ENOENT) {
-			update_progress_file=0;
-			printk("[ITE_update] %s: %s not found\n", __func__, Progress_file_path);
-		} else {
-			update_progress_file=-1;
-			printk("[ITE_update] %s: %s open error\n", __func__, Progress_file_path);
-		}
-		if(update_progress_file > 0)
-		{		
-			update_progress = 5;	
-			sprintf(temp_progress, "%d", update_progress);
-			//printk("[ITE_update] %s: temp_progress = %s \n", __func__, temp_progress);
-			filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-			if(!IS_ERR_OR_NULL(filePtr)) {
-				oldfs_progress = get_fs();
-				set_fs(get_ds());
-				pos = 0;
-				len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
-				set_fs(oldfs_progress);
-				filp_close(filePtr, NULL);
-			}
-		}
-		//add for progress bar --
-		//add for update result ++
-		resultfilePtr = filp_open(result_state_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-		if(!IS_ERR_OR_NULL(resultfilePtr)) {
-			oldfs_result = get_fs();
-			set_fs(get_ds());
-			pos = 0;
-			len = resultfilePtr->f_op->write(resultfilePtr, ASUSEC_FW_UPGRADE_INIT, sizeof(char), &pos);
-			set_fs(oldfs_result);
-			filp_close(resultfilePtr, NULL);
-			//printk("[ITE_update] %s: write %s done. \n", __func__, result_state_path);
-		}
-		//add for update result --
+		ite_update_fw_progress(5);
+		ite_update_fw_result(ASUSEC_FW_UPGRADE_INIT);
 	}
 	
 	if((path == SELF) || (path == AP) || (path == ETC))
 	{
-		printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw.bin \n",__func__);
 		for(i = 1; i <= 3; i++)
-		{		
-			filp = filp_open("/system/etc/firmware/asus_ec_fw.bin", O_RDONLY, 0);
+		{	
+			if(ite_chip_data->hw_id == HW_ID_SR2)
+			{	
+				filp = filp_open("/system/etc/firmware/asus_ec_fw_SR.bin", O_RDONLY, 0);
+				printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw_SR.bin \n",__func__);
+			}
+			else
+			{
+				filp = filp_open("/system/etc/firmware/asus_ec_fw.bin", O_RDONLY, 0);
+				printk("[ITE_update] %s: file open:/system/etc/firmware/asus_ec_fw.bin \n",__func__);
+			}
 			//filp = filp_open("/data/local/asus_ec_fw.bin", O_RDONLY, 0);
     		if(!IS_ERR_OR_NULL(filp))
     		{
@@ -1320,35 +1910,8 @@ int ite_firmware_upgrade(int path)
 	
 	if(path == AP)
 	{
-		//add for progress bar ++ 
-		if(update_progress_file > 0)
-		{
-			update_progress = 10;
-			sprintf(temp_progress, "%d", update_progress);
-			//printk("[ITE_update] %s: temp_progress = %s \n", __func__, temp_progress);
-			filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-			if(!IS_ERR_OR_NULL(filePtr)) {
-				oldfs_progress = get_fs();
-				set_fs(get_ds());
-				pos = 0;
-				len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
-				set_fs(oldfs_progress);
-				filp_close(filePtr, NULL);
-			}
-		}
-		//add for progress bar --
-		//add for update result ++
-		resultfilePtr = filp_open(result_state_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-		if(!IS_ERR_OR_NULL(resultfilePtr)) {
-			oldfs_result = get_fs();
-			set_fs(get_ds());
-			pos = 0;
-			len = resultfilePtr->f_op->write(resultfilePtr, ASUSEC_FW_UPGRADE_PROCESS, sizeof(char), &pos);
-			set_fs(oldfs_result);
-			filp_close(resultfilePtr, NULL);
-			//printk("[ITE_update] %s: write %s done. \n", __func__, result_state_path);
-		}
-		//add for update result --		
+		ite_update_fw_progress(10);
+		ite_update_fw_result(ASUSEC_FW_UPGRADE_PROCESS);
 	}
 	
 	printk("[ITE_update] %s: upgrade firmware verison, %02X, %02X, %02X, %02X, %02X, %2X, %02X, %02X, \n", __func__, upgrade_fw[0xe800], upgrade_fw[0xe801], upgrade_fw[0xe802], upgrade_fw[0xe803], upgrade_fw[0xe804], upgrade_fw[0xe805], upgrade_fw[0xe806], upgrade_fw[0xe807]);
@@ -1365,7 +1928,7 @@ int ite_firmware_upgrade(int path)
 	strncpy(version, &upgrade_tp_version[0], 8);
 	printk("[ITE_update]:new upgrade firmware verison=%s.\n", version);
 	
-	upgrade_fw_ver_checksum = ((upgrade_tp_version[4] << 24) | (upgrade_tp_version[5] << 16 ) | (upgrade_tp_version[6] << 8) | upgrade_tp_version[7]);
+	upgrade_fw_ver_checksum = ((upgrade_tp_version[4] << 24) | (upgrade_tp_version[5] << 16 ) | (upgrade_tp_version[6] << 8) | upgrade_tp_version[7]);			
 //	printk("[ITE_update]: ite_chip_data->version_checksum = %d \n",ite_chip_data->version_checksum);
 	printk("[ITE_update]: upgrade_fw_ver_checksum = %d \n",upgrade_fw_ver_checksum);
 	
@@ -1396,6 +1959,29 @@ int ite_firmware_upgrade(int path)
 		{
 			upgrade_status = 1;
 		}
+		
+		
+		// Add by Tom for writing Light Sensor Calibration Value to EC Flash ++
+		if((als_cali_value_EC[2] == 0xFF) && (als_cali_value_EC[3]==0xFF) && (did_als_cali==0)) 
+		{
+			upgrade_status = 1;
+			printk("[ITE_update]: Upgrade FW because we need to update ALS Calibration (upgrade_status  = %d) \n",upgrade_status);
+		}
+
+		// If FW need to upgrade and ALS Calibration is already, update als calibration byte in FW (bin file).  
+		if(upgrade_status == 1 && did_als_cali == 0) 
+		{
+			 upgrade_fw[0xe815] = als_cali_value_ACD[0]; // ALS Calibration Value (LSB) Offset + 0xe815
+			 upgrade_fw[0xe816] = als_cali_value_ACD[1]; // ALS Calibration Value (MSB) Offset + 0xe816
+			 printk("[ITE_update]: Update ALS FW file (upgrade_fw[0xe815]  = 0x%x , upgrade_fw[0xe816]  = 0x%x) \n",upgrade_fw[0xe815],upgrade_fw[0xe816]);
+		}
+		else if(upgrade_status == 1 && als_cali_value_EC[2] != 0xFF && als_cali_value_EC[3] != 0xFF && als_cali_value_EC[2] != 0x00 && als_cali_value_EC[3] != 0x00)
+		{
+			 upgrade_fw[0xe815] = als_cali_value_EC[2]; // ALS Calibration Value (LSB) Offset + 0xe815
+			 upgrade_fw[0xe816] = als_cali_value_EC[3]; // ALS Calibration Value (MSB) Offset + 0xe816
+			 printk("[ITE_update]: Use Old EC als calibration value(upgrade_fw[0xe815]  = 0x%x , upgrade_fw[0xe816]  = 0x%x) \n",upgrade_fw[0xe815],upgrade_fw[0xe816]);
+		}
+		// Add by Tom for writing Light Sensor Calibration Value to EC flash --
 		
 		if(upgrade_status)
 		{
@@ -1442,12 +2028,14 @@ int ite_firmware_upgrade(int path)
 				
 			}while(1);
 			
+			is_upgrade_all = do_pre_verify(); // add by tom for check whether upgrade all	
+			
 			for(retry_count = 0; retry_count < EFLASH_MAX_RETRY_COUNT; retry_count++)
 			{
 				printk("[ITE_update]: do_erase_all start.\n");
 				for(erase_count = 0; erase_count < EFLASH_MAX_RETRY_COUNT; erase_count++)
 				{
-					err = do_erase_all();
+					err = do_erase(is_upgrade_all);
 					if(err == 0)
 					{
 						printk("[ITE_update]: do_erase_all pass .\n");
@@ -1457,11 +2045,11 @@ int ite_firmware_upgrade(int path)
 				printk("[ITE_update]: do_program start.\n");
 				if(path == AP)
 				{
-					do_program(AP);
+					do_program(AP,is_upgrade_all);
 				}
 				else
 				{
-					do_program(ETC);
+					do_program(ETC,is_upgrade_all);
 				}
 					
 				err = do_verify();
@@ -1470,24 +2058,8 @@ int ite_firmware_upgrade(int path)
 					printk("[ITE_update]: do_verify pass .\n");
 					
 					if(path == AP)
-					{
-						//add for progress bar ++ 
-						if(update_progress_file > 0)
-						{
-							update_progress = 95;
-							sprintf(temp_progress, "%d", update_progress);
-							//printk("[ITE_update] %s: temp_progress = %s \n", __func__, temp_progress);
-							filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-							if(!IS_ERR_OR_NULL(filePtr)) {
-								oldfs_progress = get_fs();
-								set_fs(get_ds());
-								pos = 0;
-								len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
-								set_fs(oldfs_progress);
-								filp_close(filePtr, NULL);
-							}
-						}
-						//add for progress bar --
+					{       
+						ite_update_fw_progress(95);
 					}					
 					break;
 				}
@@ -1502,26 +2074,11 @@ int ite_firmware_upgrade(int path)
 					Did_FW_update = 1; // add by leo for touch notify EC ++
 			}
 
-			queue_delayed_work(ite_chip_data->asusec_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 1*HZ);
+			queue_delayed_work(ite_chip_data->flash_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 1*HZ);
 			
 			if(path == AP)
 			{
-				//add for progress bar ++ 
-				if(update_progress_file > 0)
-				{	
-					update_progress = 100;
-					sprintf(temp_progress, "%d", update_progress);
-					filePtr = filp_open(Progress_file_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-					if(!IS_ERR_OR_NULL(filePtr)) {
-						oldfs_progress = get_fs();
-						set_fs(get_ds());
-						pos = 0;
-						len = filePtr->f_op->write(filePtr, &temp_progress, sizeof(temp_progress), &pos);
-						set_fs(oldfs_progress);
-						filp_close(filePtr, NULL);
-					}
-				}
-				//add for progress bar --
+				ite_update_fw_progress(100);
 			}
 		
 		}
@@ -1541,16 +2098,7 @@ int ite_firmware_upgrade(int path)
 	
 	if(path == AP)
 	{	
-		resultfilePtr = filp_open(result_state_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-		if(!IS_ERR_OR_NULL(resultfilePtr)) {
-			oldfs_result = get_fs();
-			set_fs(get_ds());
-			pos = 0;
-			len = resultfilePtr->f_op->write(resultfilePtr, ASUSEC_FW_UPGRADE_SUCCESS, sizeof(char), &pos);
-			set_fs(oldfs_result);
-			filp_close(resultfilePtr, NULL);
-			//printk("[ITE_update] %s: write %s done. \n", __func__, result_state_path);
-		}
+		ite_update_fw_result(ASUSEC_FW_UPGRADE_SUCCESS);
 	}
 	
 	if((factory_mode == 2) && (entry_mode == 1))
@@ -1559,26 +2107,16 @@ int ite_firmware_upgrade(int path)
 			update_touch_fw_called_by_EC();
 		#endif
 	}
-	
 	return 0;
 	
 upgrade_fail:
 	if(path == AP)
 	{	
-		resultfilePtr = filp_open(result_state_path, O_RDWR|O_CREAT,(S_IWUSR|S_IRUGO));
-		if(!IS_ERR_OR_NULL(resultfilePtr)) {
-			oldfs_result = get_fs();
-			set_fs(get_ds());
-			pos = 0;
-			len = resultfilePtr->f_op->write(resultfilePtr, ASUSEC_FW_UPGRADE_FAIL, sizeof(char), &pos);
-			set_fs(oldfs_result);
-			filp_close(resultfilePtr, NULL);
-			//printk("[ITE_update] %s: write %s done. \n", __func__, result_state_path);
-		}
+		ite_update_fw_result(ASUSEC_FW_UPGRADE_FAIL);
 	}
 	ite_chip_data->fw_up_process = 0;
 	mutex_unlock(&ite_chip_data->mutex_lock);
-	queue_delayed_work(ite_chip_data->asusec_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 1*HZ);
+	queue_delayed_work(ite_chip_data->flash_wq, &ite_chip_data->ite_firmware_upgrade_init_work, 1*HZ);
 	wake_unlock(&ite_chip_data->wake_lock);
 	
 	if((factory_mode == 2) && (entry_mode == 1))
@@ -1596,15 +2134,20 @@ int ite_self_firmware_upgrade(void)
 	ret = ite_firmware_upgrade(SELF);
 	return 0;
 }
-#endif
 
-static ssize_t ite_proc_fw_read(char *page, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t ite_proc_fw_read(struct seq_file *buf, void *v)
 {
-//	printk("[ITE]%s: now touch firmware:%s. \n", __func__, ite_chip_data->pad_ec_version);
-	return sprintf(page, "%s\n", ite_chip_data->pad_ec_version);
+	printk("[ITE]%s: now touch firmware:%s. \n", __func__, ite_chip_data->pad_ec_version);
+	seq_printf(buf, "%s\n", ite_chip_data->pad_ec_version);
+	return 0;
 }
-#ifdef ENABLE_FIRMWARE_UPGRADE
-static ssize_t ite_proc_fw_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
+
+static int ite_proc_fw_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ite_proc_fw_read, NULL);
+}
+
+static ssize_t ite_proc_fw_write(struct file *filp, const char *buf, unsigned long len, void *data)
 {
 	char messages[80] = {0};
 	int ret = 0;
@@ -1614,7 +2157,7 @@ static ssize_t ite_proc_fw_write(struct file *filp, const char __user *buff, uns
 		return -EFAULT;
 	}
 		
-	if (copy_from_user(messages, buff, len))
+	if (copy_from_user(messages, buf, len))
 		return -EFAULT;
 	   
 	printk("[ITE]%s:input command:%s\n", __func__, messages);
@@ -1638,6 +2181,25 @@ static ssize_t ite_proc_fw_write(struct file *filp, const char __user *buff, uns
 	{
 		printk("[ITE]%s: EC firmware update by local. \n", __func__);
 		ret = ite_firmware_upgrade(LOCAL);
+	}	
+	else if ('0' == messages[0])
+	{
+		printk("[ITE]%s: base_wifi_mac : %02X%02X%02X%02X%02X%02X \n", __func__,ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+		ret = ite_i2c_ioctl(NULL,ASUSEC_REFRESH_BASE_WIFI_MAC,NULL);
+		printk("[ITE]%s: base_wifi_mac : %02X%02X%02X%02X%02X%02X \n", __func__,ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+	}
+	else if ('1' == messages[0])
+	{
+		printk("[ITE]%s: base_wifi_mac : %02X%02X%02X%02X%02X%02X \n", __func__,ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+		ret = ite_i2c_ioctl(NULL,ASUSEC_GET_BASE_WIFI_MAC,NULL);
+		printk("[ITE] ret : %d",ret);  
+		printk("[ITE]%s: base_wifi_mac : %02X%02X%02X%02X%02X%02X \n", __func__,ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+	}
+	else if ('2' == messages[0])
+	{
+		seq_printf(buf, "1");
+		ite_store_als_in_firmware();
+		seq_printf(buf, "1");
 	}
 	else {
 		printk("[ITE]%s:command not support.\n", __func__);
@@ -1645,25 +2207,34 @@ static ssize_t ite_proc_fw_write(struct file *filp, const char __user *buff, uns
 	
 	return len;
 }
-#endif
+
+static const struct file_operations proc_fw_fops = {
+	.owner = THIS_MODULE,
+	.open = ite_proc_fw_open,
+	.read = seq_read,
+	.write = ite_proc_fw_write,
+};
 
 void ite_create_proc_fw_file(void)
 {
-	ite_proc_file = create_proc_entry(ITE_PROC_FILE, 0666, NULL);
+	ite_proc_file = proc_create(ITE_PROC_FILE, 0666, NULL, &proc_fw_fops);
 	if(ite_proc_file){
-		ite_proc_file->read_proc = ite_proc_fw_read;
-	#ifdef ENABLE_FIRMWARE_UPGRADE	
-		ite_proc_file->write_proc = ite_proc_fw_write;
-	#endif
+	//	printk(KERN_ERR "[ITE] %s: firmware proc create sucessed!\n", __func__);
 	}
 	else{
-		printk(KERN_ERR "[ITE] %s: proc file create failed!\n", __func__);
+		printk(KERN_ERR "[ITE] %s: firmware proc create failed!\n", __func__);
 	}
 }
 
-static ssize_t ite_proc_factory_read(char *page, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t ite_proc_factory_read(struct seq_file *buf, void *v)
 {
-	return sprintf(page, "%s\n", ite_chip_data->pad_ec_version);
+	seq_printf(buf, "%s\n", ite_chip_data->pad_ec_version);
+	return 0;
+}
+
+static int ite_proc_factory_open(struct inode *inode, struct  file *file)
+{
+	return single_open(file, ite_proc_factory_read, NULL);
 }
 
 static ssize_t ite_proc_factory_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
@@ -1704,15 +2275,21 @@ static ssize_t ite_proc_factory_write(struct file *filp, const char __user *buff
 	return len;
 }
 
+static const struct file_operations proc_factory_fops = {
+	.owner = THIS_MODULE,
+	.open = ite_proc_factory_open,
+	.read = seq_read,
+	.write = ite_proc_factory_write,
+};
+
 void ite_create_proc_factory_file(void)
 {
-	ite_proc_factory_file = create_proc_entry(ITE_PROC_FACTORY_FILE, 0666, NULL);
+	ite_proc_factory_file = proc_create(ITE_PROC_FACTORY_FILE, 0666, NULL, &proc_factory_fops);
 	if(ite_proc_factory_file){
-		ite_proc_factory_file->read_proc = ite_proc_factory_read;
-		ite_proc_factory_file->write_proc = ite_proc_factory_write;
+	//	printk(KERN_ERR "[ITE] %s: factory proc create sucessed!\n", __func__);
 	}
 	else{
-		printk(KERN_ERR "[ITE] %s: proc file create failed!\n", __func__);
+		printk(KERN_ERR "[ITE] %s: factory proc create failed!\n", __func__);
 	}
 }
 
@@ -1733,7 +2310,7 @@ static inline int ite_ispress(u8 event)
 void hexdump(u8 *a,int n)
 {
 	int i,j;
-	printk("0x68: %d bytes. \n",n);
+	printk("[ITE]:0x68: %d bytes. \n",n);
 	
 	for ( j=0; j<n; j+=16 ) {
 		printk("%03x: ",j);
@@ -1755,7 +2332,7 @@ void hexdump(u8 *a,int n)
 void hexdump_0x66(u8 *a,int n)
 {
 	int i,j;
-	printk("0x66: %d bytes. \n",n);
+	printk("[ITE]:0x66: %d bytes. \n",n);
 	
 	for ( j=0; j<n; j+=16 ) {
 		printk("%03x: ",j);
@@ -1790,9 +2367,9 @@ static int ite_release(struct inode *inode, struct file *file)
 static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int err = 0, val = 0;
-	int ret = 0;
+	int ret = 0, i = 0;
 	
-//	printk( "[ITE] %s: cmd = 0x%x ++ \n",__func__, cmd);
+	printk( "[ITE] %s: cmd = 0x%x ++ \n",__func__, cmd);
 	
 	if (_IOC_TYPE(cmd) != ASUSEC_IOC_MAGIC) 
 	{
@@ -1824,10 +2401,10 @@ static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 			elan_i2c_bus_enable(0);
 			if((ite_chip_data->detach_attach == BASE_ATTACH) && (ite_chip_data->system_owner == SYSTEM_ANDROID))
 			{
-				if((ite_chip_data->hw_id == HW_ID_ER)||(ite_chip_data->hw_id == HW_ID_ER2)||(ite_chip_data->hw_id == HW_ID_SR1)||(ite_chip_data->hw_id == HW_ID_SR2))
-				{
-					ret = ite_touchpad_switch(SYSTEM_WINDOWS);
-				}
+				//if((ite_chip_data->hw_id == HW_ID_ER)||(ite_chip_data->hw_id == HW_ID_ER2)||(ite_chip_data->hw_id == HW_ID_SR1)||(ite_chip_data->hw_id == HW_ID_SR2))
+				//{
+				//	ret = ite_touchpad_switch(SYSTEM_WINDOWS);
+				//}
 			}
 			ite_chip_data->fw_up_process = 1;
 			
@@ -1842,17 +2419,11 @@ static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		ret = ite_firmware_upgrade(AP);
 		break;
 		
-	case ASUSEC_TP_CONTROL:
-	#ifdef CONFIG_MOUSE_ELAN_TOUCHPAD	
-		if (arg == 1){
-			printk( "[ITE] %s: ASUSEC_TP_CONTROL - ASUSEC_TP_ON \n",__func__);
-			elan_i2c_touchpad_enable(1);
-		}else{
-			printk( "[ITE] %s: ASUSEC_TP_CONTROL - ASUSEC_TP_OFF \n",__func__);
-			elan_i2c_touchpad_enable(0);
-		}
-	#endif
-		break;
+	case ASUSEC_FW_CHECK:
+		printk( "[ITE]:%s: ASUSEC_FW_CHECK ++ \n",__func__);
+		ret = ite_firmware_check();
+		printk("[ITE]:%s: ASUSEC_FW_CHECK = % d\n",__func__, ret);
+		return ret;
 		
 	case ASUSEC_CHANGE_OWNER:
 		mutex_lock(&ite_chip_data->mutex_lock_irq);
@@ -1881,15 +2452,15 @@ static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		ite_chip_data->switch_process = 0;
 		mutex_unlock(&ite_chip_data->mutex_lock_irq);
 		break;
-	case ASUSEC_WIFI:
-		if (arg == 1){
-			printk( "[ITE] %s: ASUSEC_WIFI - ASUSEC_FLIGHT_MODE_ON \n",__func__);
-			ret = ite_wifi_led_function(1);
-		}else{
-			printk( "[ITE] %s: ASUSEC_WIFI - ASUSEC_FLIGHT_MODE_OFF \n",__func__);
-			ret = ite_wifi_led_function(0);
-		}
-		break;
+	//case ASUSEC_WIFI:
+	//	if (arg == 1){
+	//		printk( "[ITE] %s: ASUSEC_WIFI - ASUSEC_FLIGHT_MODE_ON \n",__func__);
+	//		ret = ite_wifi_led_function(1);
+	//	}else{
+	//		printk( "[ITE] %s: ASUSEC_WIFI - ASUSEC_FLIGHT_MODE_OFF \n",__func__);
+	//		ret = ite_wifi_led_function(0);
+	//	}
+	//	break;
 		
 	case ASUSEC_DATA_ACCESS:
 		
@@ -1910,19 +2481,43 @@ static long ite_i2c_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 				
 		break;
 	
-	case ASUSEC_CPASLOCK_LED:
-		if (arg == ASUSEC_CPAS_LED_ON){
-			printk( "[ITE] %s: ASUSEC_CPASLOCK_LED - ASUSEC_CPAS_LED_ON \n",__func__);
-			ret = ite_keyboard_led_function(CAPS_LOCK);
-		}else{
-			printk( "[ITE] %s: ASUSEC_CPASLOCK_LED - ASUSEC_CPAS_LED_OFF \n",__func__);
-			ret = ite_keyboard_led_function(LEDOFF);
-		}
-		break;
+	//case ASUSEC_CPASLOCK_LED:
+	//	if (arg == ASUSEC_CPAS_LED_ON){
+	//		printk( "[ITE] %s: ASUSEC_CPASLOCK_LED - ASUSEC_CPAS_LED_ON \n",__func__);
+	//		ret = ite_keyboard_led_function(CAPS_LOCK);
+	//	}else{
+	//		printk( "[ITE] %s: ASUSEC_CPASLOCK_LED - ASUSEC_CPAS_LED_OFF \n",__func__);
+	//		ret = ite_keyboard_led_function(LEDOFF);
+	//	}
+	//	break;
 	
 	case ASUSEC_BASE_EC_CHECK:
 		printk( "[ITE] %s: ASUSEC_BASE_EC_CHECK. \n",__func__);
 		ret = ite_base_ec_fw_check();
+		break;
+		
+	case ASUSEC_GET_BASE_WIFI_MAC:
+		printk( "[ITE] %s: ASUSEC_GET_BASE_WIFI_MAC. \n",__func__);
+		if(wifi_mac_running_flag == 0)
+		{
+			wifi_mac_running_flag = 1;
+			ret = ite_start_getting_base_wifi_mac();
+			wifi_mac_running_flag = 0;
+			return ret;
+		}
+		else 
+		{
+			// The last function still running 
+			return -3;
+		}
+		
+	case ASUSEC_REFRESH_BASE_WIFI_MAC:
+		memset(ite_chip_data->base_wifi_mac, 0, 6);
+		switch_set_state(&ite_chip_data->base_wifi_mac_sdev, 0);
+		printk( "[ITE] %s: ASUSEC_REFRESH_BASE_WIFI_MAC , ite_chip_data->base_wifi_mac =  \n",__func__);
+		for(i = 0 ; i < 6 ; i++)
+			printk( "%02X ",ite_chip_data->base_wifi_mac[i]);	
+		printk( "\n",ite_chip_data->base_wifi_mac[i]);
 		break;
 		
 	default:
@@ -1947,6 +2542,95 @@ static struct miscdevice ite_misc_dev = {
 	.fops = &ite_fops,
 };
 
+static int asuspec_open(struct inode *inode, struct file *file)
+{
+//	printk( "[ITE]:%s ++ \n",__func__);
+	return nonseekable_open(inode, file);		
+}
+
+static int asuspec_release(struct inode *inode, struct file *file)
+{
+//	printk( "[ITE]:%s ++ \n",__func__);
+	return 0;
+}
+
+static long asuspec_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int err = 0;
+	int ret = 0;
+	
+	printk( "[ITE]:%s: cmd = 0x%x ++ \n",__func__, cmd);
+	
+	if (_IOC_TYPE(cmd) != ASUSPEC_IOC_MAGIC) 
+	{
+		printk( "[ITE] %s: ERROR: CMD type not ASUSPEC_IOC_MAGIC. \n",__func__);
+		return -ENOTTY;
+	}
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+	if (err) 
+	{
+		printk( "[ITE] %s: ERROR: CMD type not READ/WRITE. \n",__func__);
+		return -EFAULT;
+	}
+	
+	switch (cmd) {
+	
+	case ASUSPEC_TP_CONTROL:
+	#ifdef CONFIG_MOUSE_ELAN_TOUCHPAD	
+		if (arg == ASUSPEC_TP_ON){
+			printk( "[ITE] %s: ASUSPEC_TP_CONTROL - ASUSPEC_TP_ON \n",__func__);
+			elan_i2c_touchpad_enable(1);
+		}else{
+			printk( "[ITE] %s: ASUSPEC_TP_CONTROL - ASUSPEC_TP_OFF \n",__func__);
+			elan_i2c_touchpad_enable(0);
+		}
+	#endif
+		break;
+	
+	case ASUSPEC_FLIGHT_MODE:
+		if (arg == ASUSPEC_FLIGHT_MODE_ON){
+			printk( "[ITE] %s: ASUSPEC_WIFI - ASUSPEC_FLIGHT_MODE_ON \n",__func__);
+			ret = ite_flight_mode_led_function(1);
+		}else{
+			printk( "[ITE] %s: ASUSPEC_WIFI - ASUSPEC_FLIGHT_MODE_OFF \n",__func__);
+			ret = ite_flight_mode_led_function(0);
+		}
+		break;		
+		
+	case ASUSPEC_CPASLOCK_LED:
+		if (arg == ASUSPEC_CPAS_LED_ON){
+			printk( "[ITE] %s: ASUSPEC_CPASLOCK_LED - ASUSPEC_CPAS_LED_ON \n",__func__);
+			ret = ite_keyboard_led_function(CAPS_LOCK);
+		}else{
+			printk( "[ITE] %s: ASUSPEC_CPASLOCK_LED - ASUSPEC_CPAS_LED_OFF \n",__func__);
+			ret = ite_keyboard_led_function(LEDOFF);
+		}
+		break;
+		
+		default:
+			printk( "[ITE] %s: incorrect cmd (%d) \n",__FUNCTION__, _IOC_NR(cmd));
+			return -EINVAL;
+	}
+	
+	return 0;
+}
+
+static struct file_operations asuspec_fops = {
+	.owner = THIS_MODULE,
+	.open = asuspec_open,
+	.release = asuspec_release,
+	.unlocked_ioctl = asuspec_ioctl
+};
+
+static struct miscdevice asuspec_dev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "asuspec",
+	.fops = &asuspec_fops,
+};
+
 static int asusdec_open(struct inode *inode, struct file *file)
 {
 //	printk( "[ITE]:%s ++ \n",__func__);
@@ -1964,11 +2648,11 @@ static long asusdec_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 	int err = 0;
 	int ret = 0;
 	
-//	printk( "[ITE]:%s: cmd = 0x%x ++ \n",__func__, cmd);
+	printk( "[ITE]:%s: cmd = 0x%x ++ \n",__func__, cmd);
 	
-	if (_IOC_TYPE(cmd) != ASUSEC_IOC_MAGIC) 
+	if (_IOC_TYPE(cmd) != ASUSDEC_IOC_MAGIC) 
 	{
-		printk( "[ITE] %s: ERROR: CMD type not ASUSEC_IOC_MAGIC. \n",__func__);
+		printk( "[ITE] %s: ERROR: CMD type not ASUSDEC_IOC_MAGIC. \n",__func__);
 		return -ENOTTY;
 	}
 	if (_IOC_DIR(cmd) & _IOC_READ)
@@ -2028,7 +2712,7 @@ static int handle_keyboard(struct ite_chip *lm ,u8 *key_fifo)
 		
 	if((key_fifo[4] != ASUSEC_KEY_RELASE) && (key_fifo[5] != ASUSEC_KEY_RELASE))
 	{
-		printk("[ITE]: Fu + key press. \n");
+		printk("[ITE]: Fn + key press. \n");
 		
 		if(key_fifo[5] == ASUSEC_FNKEY_SLEEP)
 			ite_chip_data->keypad_data.input_keycode = KEY_SLEEP;
@@ -2419,6 +3103,11 @@ static int handle_special_event(struct ite_chip *lm ,u8 *key_fifo)
 		//	}
 		//	ite_chip_data->switch_process = 0;
 		//}		
+		if((key_fifo[3] & ASUSEC_KEY_TOUCH_PAD_POWER) == ASUSEC_KEY_TOUCH_PAD_POWER)
+		{
+			printk("[ITE]: ****** Touch Pad Power On.****** \n");
+			ret = elan_init_touchpad_driver();	
+		}
 		if((key_fifo[3] & ASUSEC_KEY_OWNER_WINDOWS) == ASUSEC_KEY_OWNER_WINDOWS)
 		{
 			printk("[ITE]: ****** switch to windows 8.****** \n");
@@ -2475,37 +3164,36 @@ static int handle_light_sensor_event(struct ite_chip *lm ,u8 *msg_fifo)
 	return 0;
 }
 
-static int handle_charger_ic_event(struct ite_chip *lm ,u8 *msg_fifo)
+static int handle_charger_event(struct ite_chip *lm ,u8 *msg_fifo)
 {
+	int base_charger_status;
+	
 	mutex_lock(&ite_chip_data->mutex_lock_irq);
-#ifdef CONFIG_TX201LA_BATTERY_EC
-	asus_pad_batt_set_charger_data(msg_fifo[3], msg_fifo[4]);
-#endif
+	base_charger_status = msg_fifo[3] & 0xFF;
 	mutex_unlock(&ite_chip_data->mutex_lock_irq);
+		
+#ifdef CONFIG_TX201LA_BATTERY_EC
+	pad_bat_set_base_ac_status(base_charger_status);
+#endif
+	
 	return 0;
 }
 
-static int handle_charger_lid_event(struct ite_chip *lm ,u8 *msg_fifo)
+static int handle_lid_event(struct ite_chip *lm ,u8 *msg_fifo)
 {
-	int base_charger_status;
 	int lid_status;
 	
 	mutex_lock(&ite_chip_data->mutex_lock_irq);	
-	base_charger_status = msg_fifo[4] & 0x0F;
 	lid_status = msg_fifo[4] & 0x30;
+	printk("[ITE]: %s: msg_fifo[4] = 0x%x, lid_status =0x%x. \n",__func__, msg_fifo[4], lid_status);
+	mutex_unlock(&ite_chip_data->mutex_lock_irq);
 	
-	printk("[ITE]: %s: msg_fifo[4] = 0x%x, base_charger_status =0x%x, lid_status =0x%x. \n",__func__, msg_fifo[4], base_charger_status, lid_status);
-	
-	if(base_charger_status != 0x00)
-	{
-		pad_bat_set_base_ac_status(base_charger_status);
-	}
 	if(lid_status != 0x00)
 	{
-		lid_status_report(lid_status);
-	}
-	
-	mutex_unlock(&ite_chip_data->mutex_lock_irq);
+		#ifdef CONFIG_HALL_SENSOR
+			lid_status_report(lid_status);
+		#endif
+	}	
 	return 0;
 }
 
@@ -2532,6 +3220,25 @@ static int handle_irq1_base_system_status(struct ite_chip *lm ,u8 *key_fifo)
 	mutex_unlock(&ite_chip_data->mutex_lock_irq);
 	return 0;
 }
+/**
+ * Notify WiFi MAC Address Ready (MAC Addrss Ready = 0x03)
+ */
+static int handle_irq1_wifi_mac_ready(struct ite_chip *lm ,u8 *msg_fifo)
+{
+	int ret = 0 ;
+	mutex_lock(&ite_chip_data->mutex_lock_irq);
+	ret = ite_wifi_read_mac_address();
+	if(ret != 0)
+	{
+		wifi_mac_ready_flag = -1;
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: ite_wifi_read_mac_address failed , return %d , wifi_mac_ready_flag = %d \n", __func__, __LINE__,ret,wifi_mac_ready_flag);
+		return -1;
+	}	
+	switch_set_state(&ite_chip_data->base_wifi_mac_sdev, 1);
+	wifi_mac_ready_flag=1;
+	mutex_unlock(&ite_chip_data->mutex_lock_irq);
+	return 0;
+}
 
 /*
  * We cannot use I2C in interrupt context, so we just schedule work.
@@ -2549,6 +3256,7 @@ static irqreturn_t ite_irq_0(int irq, void *data)
 		
 	schedule_work(event);
 //	printk("[ITE]: %s -- \n",__func__);
+
 	return IRQ_HANDLED;
 }
 
@@ -2579,7 +3287,6 @@ static void ite_work_0x68(struct work_struct *work)
 	
 //	printk("[ITE]: %s ++ \n",__func__);
 
-
 	ret = ite_read_0x68_buf(ite_chip_data->client,i2c_data);
 	
 	if(i2c_data[2] == ASUSEC_IRQ0_ID_KEYBOARD)
@@ -2604,17 +3311,17 @@ static void ite_work_0x68(struct work_struct *work)
  		}
  		if(i2c_data[4] != 0x00)
  		{
-	 		ret = handle_charger_lid_event(ite_chip_data, i2c_data);
+	 		ret = handle_lid_event(ite_chip_data, i2c_data);
 	 	}
 	}
-	else if(i2c_data[2] == ASUSEC_IRQ0_LIGHT_SENSOR)
+	else if(i2c_data[2] == ASUSEC_IRQ0_LIGHT_SENSOR) //cmd table: ALS Input Report (EC trigger IRQ0)
 	{
 		ret = handle_light_sensor_event(ite_chip_data, i2c_data);
 	}
 	else if(i2c_data[2] == ASUSEC_IRQ0_CHARGER_IC)
 	{
 	//	printk("[ITE]: Report ID = 0x0B, charger IC \n");
-		ret = handle_charger_ic_event(ite_chip_data, i2c_data);
+		ret = handle_charger_event(ite_chip_data, i2c_data);
 	}
 	else
 	{
@@ -2629,7 +3336,7 @@ static void ite_work_0x68(struct work_struct *work)
 static irqreturn_t ite_irq_1(int irq, void *data)
 {
 //	printk("[ITE]: %s ++ \n",__func__);
-	
+
 	disable_irq_nosync(ite_chip_data->irq1);
 	schedule_work(&ite_chip_data->work_0x66);
 	return IRQ_HANDLED;
@@ -2663,7 +3370,8 @@ static void ite_work_0x66(struct work_struct *work)
 //	printk("[ITE]: %s ++ \n",__func__);
 	
 	ret = ite_read_0x66_buf(&ecram_client, i2c_data);
-		
+	printk("[ITE]: ite_work_0x66 buffer[0]=0x%x \n", i2c_data[0]);
+	
 	if((i2c_data[0] & ASUSEC_IRQ1_BASE_STATUS) == ASUSEC_IRQ1_BASE_STATUS)
 	{
 		ret = handle_irq1_base_system_status(ite_chip_data, i2c_data);
@@ -2681,7 +3389,17 @@ static void ite_work_0x66(struct work_struct *work)
 	{
 		ret = handle_irq1_gauge_event(ite_chip_data, i2c_data);
 	}
-					
+	//add by Tom for Notify WiFi MAC address ready ++
+	else if((i2c_data[0] & ASUSEC_IRQ1_WIFI_MAC_ADDR_READY) == ASUSEC_IRQ1_WIFI_MAC_ADDR_READY)
+	{
+		ret = handle_irq1_wifi_mac_ready(ite_chip_data, i2c_data);
+	}
+	// add by Tom for Notify WiFi MAC address ready --
+	else
+	{
+		printk("[ITE]: NO SUCH EVENT!! buffer[0]=0x%x \n", i2c_data[0]);
+	}
+
 	enable_irq(ite_chip_data->irq1);
 }
 
@@ -2861,12 +3579,6 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 		msg_num = 1;		
 		break;
 		
-	case ITE_HID_ATTACH_DETACH_CMD:
-		cmd = ite_hid_attach_detach_cmd;
-		length = sizeof(ite_hid_attach_detach_cmd);
-		msg_num = 1;
-		break;
-		
 	case ITE_HID_ANDROID_POWER_STATUS_CMD:
 		cmd = ite_hid_android_power_status_cmd;
 		length = sizeof(ite_hid_android_power_status_cmd);
@@ -2877,13 +3589,7 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 	//		printk("[ITE] ite_hid_android_power_status_cmd[%d] = 0x%x \n", i, ite_hid_android_power_status_cmd[i]);
 	//	}
 		break;
-		
-	case ITE_HID_SYSTEM_OWNER_CMD:
-		cmd = ite_hid_system_owner_cmd;
-		length = sizeof(ite_hid_system_owner_cmd);
-		msg_num = 1;		
-		break;
-			
+				
 	case ITE_HID_SCREEN_CHANGE_NOTIFY_CMD:
 		cmd = ite_hid_screen_change_notify_cmd;
 		length = sizeof(ite_hid_screen_change_notify_cmd);
@@ -2895,25 +3601,13 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 	//	}
 		
 		break;
-	
-	case ITE_HID_BASE_SYSTEM_STATUS_CMD:
-		cmd = ite_hid_base_system_status_cmd;
-		length = sizeof(ite_hid_base_system_status_cmd);
-		msg_num = 1;		
-		break;
-	
+		
 	case ITE_HID_READ_EC_REGISTER_CMD:
 		cmd = ite_hid_read_ec_register_cmd;
 		length = sizeof(ite_hid_read_ec_register_cmd);
 		msg[1].len = data_len;
 		msg_num = 2;		
 		break;
-	
-//	case ITE_HID_LED_NOTIFY_CMD:
-//		cmd = ite_hid_led_notify_cmd;
-//		length = sizeof(ite_hid_led_notify_cmd);
-//		msg_num = 1;
-//		break;
 		
 	case ITE_HID_READ_CHARGER_IC_STATUS_CMD:
 		cmd = ite_hid_read_charger_ic_status_cmd;
@@ -2946,9 +3640,9 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 		msg_num = 1;
 		break;
 	
-	case ITE_HID_WIFI_LED_CMD:
-		cmd = ite_hid_wifi_led_cmd;
-		length = sizeof(ite_hid_wifi_led_cmd);
+	case ITE_HID_FLIGHT_MODE_LED_CMD:
+		cmd = ite_hid_flight_mode_led_cmd;
+		length = sizeof(ite_hid_flight_mode_led_cmd);
 		msg_num = 1;
 		break;
 	
@@ -2973,34 +3667,28 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 		break;
 	// add by leo for gauge FW update --
 	
-	case ITE_HID_ALS_SET_TABLE_CMD:
-		cmd = ite_hid_als_set_table_cmd;
-		length = data_len;//sizeof(ite_hid_als_set_table_cmd);
+	case ITE_HID_ALS_SET_CALIBRATION_DATA_CMD:
+		cmd = ite_hid_als_set_calibration_data_cmd;
+		length = data_len;
 		msg_num = 1;
 				
 		printk("[ITE]: length = %d, als_table = ",length);
 		for(count = 0; count < length; count++){
-			printk("0x%02x ", ite_hid_als_set_table_cmd[count]);
+			printk("0x%02x ", ite_hid_als_set_calibration_data_cmd[count]);
 		}
 		printk("\n");
 		break;
 		
-	case ITE_HID_READ_BASE_CHARGER_STATUS_CMD:
-		cmd = ite_hid_read_base_charger_status_cmd;
-		length = sizeof(ite_hid_read_base_charger_status_cmd);
+	case ITE_HID_READ_CHARGER_STATUS_CMD:
+		cmd = ite_hid_read_charger_status_cmd;
+		length = sizeof(ite_hid_read_charger_status_cmd);
 		msg[1].len = data_len;
 		msg_num = 2;
 		break;
 		
-	case ITE_HID_READ_WIN8_TEST_MODE_CMD:
-		cmd = ite_hid_read_win8_test_mode_cmd;
-		length = sizeof(ite_hid_read_win8_test_mode_cmd);
-		msg_num = 1;
-		break;
-	
-	case ITE_HID_GET_LIGHT_SENSOR_REPORT_CMD:
-		cmd = ite_hid_get_light_sensor_report_cmd;
-		length = sizeof(ite_hid_get_light_sensor_report_cmd);
+	case ITE_HID_ALS_GET_CALIBRATION_DATA_CMD:
+		cmd = ite_hid_als_get_calibration_data_cmd;
+		length = sizeof(ite_hid_als_get_calibration_data_cmd);
 		msg[1].len = data_len;
 		msg_num = 2;
 		break;
@@ -3010,20 +3698,13 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 		length = sizeof(ite_hid_kb_led_cmd);
 		msg_num = 1;
 		break;
-		
-	case ITE_HID_BASE_EC_FW_CHECK_CMD:
-		cmd = ite_hid_base_ec_fw_check_cmd;
-		length = sizeof(ite_hid_base_ec_fw_check_cmd);
+				
+	case ITE_HID_CHARGER_CTL_CMD:
+		cmd = ite_hid_charger_ctl_cmd;
+		length = sizeof(ite_hid_charger_ctl_cmd);
 		msg_num = 1;
 		break;
-		
-	case ITE_HID_CHECK_CHARGER_STATUS_CMD:
-		cmd = ite_hid_check_charger_status_cmd;
-		length = sizeof(ite_hid_check_charger_status_cmd);
-		msg_num = 1;
-		break;
-		
-			
+
 	default:
 		printk("[ITE]: %s: command=%d unknow. \n", __func__, command);
 		return -1;
@@ -3060,8 +3741,8 @@ static int asus_ec_i2c_command(struct i2c_client *client, int command,
 		case ITE_HID_READ_EC_REGISTER_CMD:
 		case ITE_HID_READ_CHARGER_IC_STATUS_CMD:
 		case ITE_HID_READ_GAUGE_FW_INFO_CMD:
-		case ITE_HID_READ_BASE_CHARGER_STATUS_CMD:
-		case ITE_HID_GET_LIGHT_SENSOR_REPORT_CMD:
+		case ITE_HID_READ_CHARGER_STATUS_CMD:
+		case ITE_HID_ALS_GET_CALIBRATION_DATA_CMD:
 			hexdump(rec_buf, msg[1].len);
 			break;
 		default:
@@ -3109,16 +3790,10 @@ static int asus_ecram_i2c_command(struct i2c_client *client, int command,
 			length = sizeof(ite_ram_start_polling_battery_cmd);
 			msg_num = 1;
 			break;
-			
-		case ITE_RAM_WRITE_GAUGE_CMD:
-			cmd = ite_ram_write_gauge_cmd;
-			length = data_len;//sizeof(ite_ram_write_gauge_cmd);
-			msg_num = 1;
-			break;
-			
-		case ITE_RAM_READ_GAUGE_CMD:
-			cmd = ite_ram_read_gauge_cmd;
-			length = sizeof(ite_ram_read_gauge_cmd);
+					
+		case ITE_RAM_WRITE_I2C_BYPASS_CMD:
+			cmd = ite_ram_write_i2c_bypass_cmd;
+			length = sizeof(ite_ram_write_i2c_bypass_cmd);
 			msg_num = 1;
 			break;
 			
@@ -3201,7 +3876,97 @@ static int asus_ecram_i2c_command(struct i2c_client *client, int command,
 			length = sizeof(ite_ram_gauge_temp_control_cmd);
 			msg_num = 1;
 			break;
-														
+			
+		case ITE_RAM_SYSTEM_OWNER_CMD:
+			cmd = ite_ram_system_owner_cmd;
+			length = sizeof(ite_ram_system_owner_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+			
+		case ITE_RAM_ATTACH_DETACH_CMD:
+			cmd = ite_ram_attach_detach_cmd;
+			length = sizeof(ite_ram_attach_detach_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+			
+		case ITE_RAM_BASE_SYSTEM_STATUS_CMD:
+			cmd = ite_ram_base_system_status_cmd;
+			length = sizeof(ite_ram_base_system_status_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+			
+		case ITE_RAM_BASE_EC_FW_CHECK_CMD:
+			cmd = ite_ram_base_ec_fw_check_cmd;
+			length = sizeof(ite_ram_base_ec_fw_check_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+			
+		case ITE_RAM_READ_WIN8_TEST_MODE_CMD:
+			cmd = ite_ram_read_win8_test_mode_cmd;
+			length = sizeof(ite_ram_read_win8_test_mode_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+		
+		//case ITE_RAM_CHECK_CHARGER_STATUS_CMD:
+		//	cmd = ite_ram_check_charger_status_cmd;
+		//	length = sizeof(ite_ram_check_charger_status_cmd);
+		//	msg[1].len = data_len;
+		//	msg_num = 2;
+		//	break;
+		
+		case ITE_RAM_READ_THRESHOLD_LEVEL_TABLE_CMD:
+			cmd = ite_ram_read_threshold_level_table_cmd;
+			length = sizeof(ite_ram_read_threshold_level_table_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+	
+		case ITE_RAM_READ_THRESHOLD_TABLE_CMD:
+			cmd = ite_ram_read_threshold_table_cmd;
+			length = sizeof(ite_ram_read_threshold_table_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+		
+		case ITE_RAM_DUMP_GAUGE_ALL_REG_CMD:
+			cmd = ite_ram_dump_gauge_all_reg_cmd;
+			length = sizeof(ite_ram_dump_gauge_all_reg_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+		
+		case ITE_RAM_DUMP_CHARGER_ALL_REG_CMD:
+			cmd = ite_ram_dump_charger_all_reg_cmd;
+			length = sizeof(ite_ram_dump_charger_all_reg_cmd);
+			msg[1].len = data_len;
+			msg_num = 2;
+			break;
+
+		case ITE_RAM_READ_WIFI_MAC_ADDR_CMD:
+             cmd = ite_ram_read_wifi_mac_address_cmd;
+             length = sizeof(ite_ram_read_wifi_mac_address_cmd);
+             msg[1].len = data_len;
+             msg_num = 2;
+             break;	
+
+		case ITE_RAM_GET_WIFI_MAC_ADDR_CONTROL_CMD:
+			cmd = ite_ram_get_wifi_mac_addr_control_cmd;
+			length = sizeof(ite_ram_get_wifi_mac_addr_control_cmd);
+			msg_num = 1;
+			break;
+		
+		case ITE_RAM_BASE_TOUCH_PAD_POWER_CMD:
+             cmd = ite_ram_base_touch_pad_power_cmd;
+             length = sizeof(ite_ram_base_touch_pad_power_cmd);
+             msg[1].len = data_len;
+             msg_num = 2;
+             break;	
+
 		default:
 			printk("[ITE_ECRAM]: %s: command = %d unknow. \n", __func__, command);
 			return -1;
@@ -3231,6 +3996,19 @@ static int asus_ecram_i2c_command(struct i2c_client *client, int command,
 	
 	switch (command) {
 		case ITE_RAM_VERSION_CMD:
+		case ITE_RAM_SYSTEM_OWNER_CMD:
+		case ITE_RAM_ATTACH_DETACH_CMD:
+		case ITE_RAM_BASE_SYSTEM_STATUS_CMD:
+		case ITE_RAM_BASE_EC_FW_CHECK_CMD:
+		case ITE_RAM_READ_WIN8_TEST_MODE_CMD:
+	//	case ITE_RAM_CHECK_CHARGER_STATUS_CMD:
+		case ITE_RAM_READ_THRESHOLD_LEVEL_TABLE_CMD:
+		case ITE_RAM_READ_THRESHOLD_TABLE_CMD:
+		case ITE_RAM_DUMP_GAUGE_ALL_REG_CMD:
+		case ITE_RAM_DUMP_CHARGER_ALL_REG_CMD:
+		case ITE_RAM_ACCESS_GAUGE_STATUE_CMD:
+		case ITE_RAM_READ_WIFI_MAC_ADDR_CMD:
+		case ITE_RAM_BASE_TOUCH_PAD_POWER_CMD:
 			hexdump_0x66(rec_buf, msg[1].len);
 			break;
 		default:
@@ -3481,6 +4259,229 @@ static ssize_t ite_68readwrite_store(struct device *dev, struct device_attribute
     return count;
 } 
 // add by leo for ec register read & write --
+
+// add by josh for ec register read & write ++
+static ssize_t ite_68_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int i=0;
+	ssize_t sprintf_count=0;
+
+
+	for (i = 2; i < recv_buf_length; i++)
+	{
+
+		sprintf_count += sprintf(buf + sprintf_count, "%02x ", recv_buf[i]);
+
+	}
+	sprintf_count += sprintf(buf + sprintf_count, "\n");
+
+	
+	return sprintf_count;
+}
+
+static ssize_t ite_68_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	const u8 *cmd = NULL;
+	//u8 rec_buf[15]={0};
+	int i=0,j=0;
+	int tries = ITE_I2C_COMMAND_TRIES;
+	int length=0, iloop=0;
+	struct i2c_msg msg[2];
+	int msg_num=0, cmd_num=0, number=2;	
+	static u8 temp[ITE_INPUT_MAX]={0};
+	u8 buffer_temp[4]={0};
+	u8 hex_buf[1] = {0}; // hex to int buf
+	int cmd_loop = 0, buf_offset = 0, com_offset = 9;
+	u8 data_length = 0;
+	u8 test = 0x01;
+	
+	printk("[ITE]: version  0.0.6!!!!\n");
+	u8 write_buf[9] = {0xf5,0x00,0x39,0x03,0xf6,0x00,0x05,0x00,0x01};// write_buf = write_buf1 + (0x05+length) +write_buf2
+	u8 read_buf1[9] = {0xf5,0x00,0x39,0x03,0xf6,0x00,0x06,0x00,0x00};
+	u8 read_buf2[6] = {0xf5,0x00,0x39,0x02,0xf6,0x00};
+	memset(recv_buf, 0x0, sizeof(recv_buf));
+	
+	if(buf[0]=='w' && buf[1]=='r' && buf[2]=='i' && buf[3]=='t' && buf[4]=='e'){
+		printk("[ITE]: write command: ");
+		number=1;
+		buf_offset = 6;
+
+	}else if(buf[0]=='r' && buf[1]=='e' && buf[2]=='a' && buf[3]=='d' && buf[4]=='_' && buf[5]=='1'  ){
+		printk("[ITE]: read_1 command: ");
+		number=2;
+		buf_offset = 7;
+
+	}else if(buf[0]=='r' && buf[1]=='e' && buf[2]=='a' && buf[3]=='d' && buf[4]=='_' && buf[5]=='2'){
+		printk("[ITE]: read_2 command: ");
+		number=3;
+		buf_offset = 7;
+	}else{
+		printk("[ITE]: unknown command.\n");
+		return count;
+	}
+	
+	for(iloop;iloop<500;iloop++){
+		//printk("[ITE]: buf[%d] =%c\n",iloop,buf[iloop]);
+		if(buf[iloop]=='x'){
+			cmd_num++;
+		}
+		
+		if(buf[iloop]=='\n'){
+			//printk("[ITE]: iloop =%d\n",iloop);
+			printk("number =%d,",number);
+			break;
+		}
+	}
+	
+	if(number != 3){		
+		for(cmd_loop = 0; cmd_loop < cmd_num; cmd_loop++){
+			buffer_temp[0] = buf[cmd_loop*5 + buf_offset];
+			buffer_temp[1] = buf[cmd_loop*5 + buf_offset+1];
+			buffer_temp[2] = buf[cmd_loop*5 + buf_offset+2];
+			buffer_temp[3] = buf[cmd_loop*5 + buf_offset+3];
+			if(cmd_loop == 2){	
+				sscanf(buffer_temp, "%x",&hex_buf[0]);
+				data_length = hex_buf[0];
+				printk("data_length =%d,",data_length);
+			}else{
+				sscanf(buffer_temp, "%x",&temp[j]);
+				j++;
+			}
+		}
+	
+		if(number == 1 && cmd_num < 3){
+			printk("[ITE]: write error length < 3.\n"); // addresss(H) address(L) length
+			return count;
+		}else if(number == 2 && cmd_num != 3){
+			printk("[ITE]: read_1 error length != 3.\n"); // addresss(H) address(L) length
+			return count;
+		}else{
+			cmd_num--; //beacuse need to bypass length
+			printk("cmd_num =%d.\n", cmd_num);
+		}
+		
+		u8* input_cmd = (char*)kcalloc((cmd_num + com_offset),sizeof(char),GFP_KERNEL); 
+
+		printk("[ITE]: input_cmd = ");
+		for(i=0; i<com_offset; i++){
+			if(number == 1){
+				if(i == 6){
+					input_cmd[i] = write_buf[i] + data_length;
+				}else{
+					input_cmd[i] = write_buf[i];
+				}
+			}else{
+				input_cmd[i] = read_buf1[i];
+			}
+			printk("0x%02x ", input_cmd[i]);
+		}
+		for(i=com_offset; i<cmd_num+com_offset; i++){
+			input_cmd[i] = temp[i-com_offset]&0xff;
+			printk("0x%02x ", input_cmd[i]);
+		}
+		printk("\n");
+		cmd = input_cmd;
+		printk("[ITE]: cmd = ");
+		for(i=0; i<cmd_num+com_offset; i++){
+			printk("0x%02x ", cmd[i]);
+		}
+		printk("\n");
+		
+		length = cmd_num + com_offset;//sizeof(input_cmd);
+		msg_num = number;
+
+		msg[0].addr = ite_chip_data->client->addr;
+		msg[0].flags = ite_chip_data->client->flags & I2C_M_TEN;
+		msg[0].len = length;
+		msg[0].buf = (char *) cmd;
+
+
+		recv_buf_length = data_length + 2;
+		do {
+			if (i2c_transfer(ite_chip_data->client->adapter, msg, 1) > 0)
+				break;
+			tries--;
+			printk("[ITE]: retrying read_test_cmd (%d) \n", tries);
+		} while (tries > 0);
+
+
+		kfree(input_cmd);
+		if(number == 1){
+			return count;
+		}
+	}
+	if(number != 1){
+		if(number == 3 ){
+			if(cmd_num > 2){
+				printk("[ITE]: read_2 error length > 1.\n"); // length
+				return count;
+			}
+			buffer_temp[0] = buf[buf_offset];
+			buffer_temp[1] = buf[buf_offset+1];
+			buffer_temp[2] = buf[buf_offset+2];
+			buffer_temp[3] = buf[buf_offset+3];
+			sscanf(buffer_temp, "%x",&hex_buf[0]);
+			data_length = hex_buf[0];
+			printk("data_length =%d\n",data_length);
+		}
+			
+		length = 6; //size(input_cmd)
+		u8* input_cmd = (char*)kcalloc(6,sizeof(char),GFP_KERNEL); 
+		for(i=0; i<6; i++){
+			input_cmd[i] = read_buf2[i];
+			printk("0x%02x ", input_cmd[i]);
+		}
+		cmd = input_cmd;
+		printk("[ITE]: cmd = ");
+		for(i=0; i<6; i++){
+			printk("0x%02x ", cmd[i]);
+		}
+		printk("\n");
+			
+		msg_num = 2;
+
+		msg[0].addr = ite_chip_data->client->addr;
+		msg[0].flags = ite_chip_data->client->flags & I2C_M_TEN;
+		msg[0].len = length;
+		msg[0].buf = (char *) cmd;
+
+		msg[1].addr = ite_chip_data->client->addr;
+		msg[1].flags = ite_chip_data->client->flags & I2C_M_TEN;
+		msg[1].flags |= I2C_M_RD;
+		msg[1].len = data_length + 2;
+		msg[1].buf = recv_buf;
+		recv_buf_length = data_length + 2;
+		
+		do {
+			if (i2c_transfer(ite_chip_data->client->adapter, msg, msg_num) > 0)
+				break;
+			tries--;
+			printk("[ITE]: retrying read_test_cmd (%d) \n", tries);
+		} while (tries > 0);
+
+		printk("[ITE]: buf_recv = ");
+		for (i = 0; i < data_length + 2; i++)
+		{
+			printk("0x%02x ", recv_buf[i]);
+		}
+		printk("\n");
+		
+		/*u8* input_cmd = (char*)kcalloc(6,sizeof(char),GFP_KERNEL); 
+		
+		printk("[ITE]: input_cmd = ");
+		for(i=0; i<6; i++){
+			input_cmd[i] = read_buf2[i];
+			printk("0x%02x ", input_cmd[i]);
+		}
+		*/
+	}
+
+
+
+    return count;
+} 
+// add by josh for ec register read & write --
+
 //Battery + Charger IC ++ 
 int ite8566_read_pad_battery_info(int *bat_present, int *bat_status, int *bat_temp, int *bat_vol, int *bat_current, int *bat_capacity, int *bat_energy)
 {
@@ -3575,89 +4576,146 @@ int ite8566_read_dock_battery_info(int *bat_present, int *bat_status, int *bat_t
 }	
 EXPORT_SYMBOL(ite8566_read_dock_battery_info);
 
-int ite_read_chargeric_reg(u8 reg_lsb, u8 reg_msb, u8 data_lsb, u8 data_msb)
+int ite_read_chargeric_reg(int addr, int reg, int length, unsigned char *return_buf)
 {
-	int rc = 0;
-	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
-	
-	printk("[ITE]: %s \n", __func__);
-	
-	ite_hid_rw_chargeric_cmd[8] = 0x01; //Command (LSB)
-	ite_hid_rw_chargeric_cmd[9] = 0x00; //Command (MSB)
-	
-	ite_hid_rw_chargeric_cmd[10] = reg_lsb; //Register (LSB)
-	ite_hid_rw_chargeric_cmd[11] = reg_msb; //Register (LSB)
-	
-	ite_hid_rw_chargeric_cmd[12] = data_lsb; //Data (LSB)
-	ite_hid_rw_chargeric_cmd[13] = data_msb; //Data (LSB)
+        int rc = 0, cmd_num = 0, err_count = 0;
+        u8 buf_recv[64];
+
+        printk("[ITE]: %s \n", __func__);
+
+        cmd_num = length;
+        printk("[ITE]: cmd_num: %d \n", cmd_num);
+
+        ite_ram_write_i2c_bypass_cmd[1] = 0x05; //[5:2]:Device ID, [1]:Write, [0]:Read
+        ite_ram_write_i2c_bypass_cmd[2] = addr;
+        ite_ram_write_i2c_bypass_cmd[3] = length;
+        ite_ram_write_i2c_bypass_cmd[4] = reg;
 	
 	if(probe_status)
-	{	
-		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
-		{
-			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_RW_CHARGERIC_CMD, buf_recv, 0);
-			if (rc != 1)
-			{
-				printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_RW_CHARGERIC_CMD failed \n", __func__, __LINE__);
-				return -1;
-			}
-			else
-				return 0;
-		}
-		else
-		{
-			printk(KERN_ERR "[ITE] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
-			return -2;
-		}
-	}
-	else
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
-		return -1;
-	}
+                if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
+                {
+                        rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_WRITE_I2C_BYPASS_CMD, buf_recv, 0); //{0xB1}
+                        if(rc != 1)
+                        {
+                                printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_WRITE_I2C_BYPASS_CMD failed \n", __func__, __LINE__);
+                                return -1;
+                        }
+
+                        do
+                        {
+                                msleep(50);
+                                rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xB0}
+                                if(rc != 2)
+                                {
+                                        printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ACCESS_GAUGE_STATUE_CMD failed \n", __func__, __LINE__);
+
+                                }
+                                err_count ++;
+
+                        }while((buf_recv[0] != 0x02) && (err_count < 5));
+
+                        if(buf_recv[0] == 0x02)
+                        {
+                                rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_GAUGE_BUFFER_CMD, return_buf, length); //{0xB2}
+                                if(rc != 2) // modified by leo from 1 to 2
+                                {
+                                        printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_READ_GAUGE_BUFFER_CMD failed \n", __func__, __LINE__);
+                                        return -1;
+                                }
+                                else
+                                        return 0;
+                        }
+                        else
+                        {
+                                return -3;
+                        }
+                }
+                else
+                {
+                        printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+                        return -2;
+                }
+        }
+        else
+        {
+                printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+                return -1;
+        }
+        return 0;
 }
 EXPORT_SYMBOL(ite_read_chargeric_reg);
 
-int ite_write_chargeric_reg(u8 reg_lsb, u8 reg_msb, u8 data_lsb, u8 data_msb)
+int ite_write_chargeric_reg(unsigned char *buf)
 {
-	int rc = 0;
-	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
-	
-	printk("[ITE]: %s \n", __func__);
-	
-	ite_hid_rw_chargeric_cmd[8] = 0x02; //Command (LSB)
-	ite_hid_rw_chargeric_cmd[9] = 0x00; //Command (MSB)
-	
-	ite_hid_rw_chargeric_cmd[10] = reg_lsb; //Register (LSB)
-	ite_hid_rw_chargeric_cmd[11] = reg_msb; //Register (LSB)
-	
-	ite_hid_rw_chargeric_cmd[12] = data_lsb; //Data (LSB)
-	ite_hid_rw_chargeric_cmd[13] = data_msb; //Data (LSB)
-	
-	if(probe_status)
-	{	
-		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
-		{
-			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_RW_CHARGERIC_CMD, buf_recv, 0);
-			if (rc != 1)
-			{
-				printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_RW_CHARGERIC_CMD failed \n", __func__, __LINE__);
-				return -1;
-			}
-			else
-				return 0;
-		}
-		else
-		{
-			printk(KERN_ERR "[ITE] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
-			return -2;
-		}
-	}
-	else
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
-		return -1;
-	}
+        int rc = 0, count = 0, cmd_num = 0, err_count = 0;
+        u8 buf_recv[ITE_MAX_INPUT_LENGTH];
+
+        printk("[ITE]: %s \n", __func__);
+
+        cmd_num = buf[0];
+        //cmd_num = cmd_num + 5;
+        printk("[ITE]: cmd_num: %d, cmd = ", cmd_num);
+
+        ite_ram_write_i2c_bypass_cmd[1] = 0x06; //[5:2]:Device ID, [1]:Write, [0]:Read
+        ite_ram_write_i2c_bypass_cmd[2] = 0x6A;
+        ite_ram_write_i2c_bypass_cmd[3] = buf[0];
+        ite_ram_write_i2c_bypass_cmd[4] = buf[1];
+
+        for(count = 0; count < cmd_num; count++){
+                ite_ram_write_i2c_bypass_cmd[count + 5] = buf[count + 2]&0xff;
+        }
+        //printk("\n");
+        for(count = 0; count < cmd_num + 5; count++){
+                printk("0x%02x ", ite_ram_write_i2c_bypass_cmd[count]);
+        }
+        printk("\n");
+
+        if(probe_status)
+        {
+                if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
+                {
+                        rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_WRITE_I2C_BYPASS_CMD, buf_recv, cmd_num + 5); // {0xB1, 0x06, 0x55, 0x.., 0x.., ....}
+                        if(rc != 1)
+                        {
+                                printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_WRITE_I2C_BYPASS_CMD failed \n", __func__, __LINE__);
+                                return -1;
+                        }
+
+                        do
+                        {
+                                msleep(50);
+                                rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xB0}
+                                if(rc != 2)
+                                {
+                                        printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ACCESS_GAUGE_STATUE_CMD failed \n", __func__, __LINE__);
+
+                                }
+                                err_count ++;
+
+                        }while((buf_recv[0] != 0x01) && (err_count < 5));
+
+                        if(buf_recv[0] == 0x01)
+                        {
+                                return 0;
+                        }
+                        else
+                        {
+                                return -3;
+                        }
+                }
+                else
+                {
+                        printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+                        return -2;
+                }
+        }
+        else
+        {
+                printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+                return -1;
+        }
+        return 0;
 }
 EXPORT_SYMBOL(ite_write_chargeric_reg);
 
@@ -3826,19 +4884,22 @@ int ite_gauge_write_reg(unsigned char *buf)
 	
 	printk("[ITE]: %s \n", __func__);
 	
-	cmd_num = buf[2] + 3;
+	cmd_num = buf[0];
 	//cmd_num = cmd_num + 5;
 	printk("[ITE]: cmd_num: %d, cmd = ", cmd_num);
 	
-	ite_ram_write_gauge_cmd[0] = 0xC0;
-	ite_ram_write_gauge_cmd[1] = 0x03;
+	ite_ram_write_i2c_bypass_cmd[1] = 0x06; //[5:2]:Device ID, [1]:Write, [0]:Read
+	ite_ram_write_i2c_bypass_cmd[2] = 0x55;
+	ite_ram_write_i2c_bypass_cmd[3] = buf[0];
+	ite_ram_write_i2c_bypass_cmd[4] = buf[1];
+	
+	
 	for(count = 0; count < cmd_num; count++){
-		ite_ram_write_gauge_cmd[count + 2] = buf[count]&0xff;
-	//	printk("0x%02x ", ite_ram_write_gauge_cmd[count]);
+		ite_ram_write_i2c_bypass_cmd[count + 5] = buf[count + 2]&0xff;
 	}
 	//printk("\n");
-	for(count = 0; count < cmd_num + 2; count++){
-		printk("0x%02x ", ite_ram_write_gauge_cmd[count]);
+	for(count = 0; count < cmd_num + 5; count++){
+		printk("0x%02x ", ite_ram_write_i2c_bypass_cmd[count]);
 	}
 	printk("\n");
 
@@ -3846,17 +4907,17 @@ int ite_gauge_write_reg(unsigned char *buf)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
 		{
-			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_WRITE_GAUGE_CMD, buf_recv, cmd_num + 2); // {0xC0, 0X03, 0x.., 0x.., 0x.., ....}
+			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_WRITE_I2C_BYPASS_CMD, buf_recv, cmd_num + 5); // {0xB1, 0x06, 0x55, 0x.., 0x.., ....}
 			if(rc != 1)
 			{
-				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_WRITE_GAUGE_CMD failed \n", __func__, __LINE__);
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_WRITE_I2C_BYPASS_CMD failed \n", __func__, __LINE__);
 				return -1;
 			}
 			
 			do
 			{
 				msleep(50);
-				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xC0, 0x01}
+				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xB0}
 				if(rc != 2)
 				{
 					printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ACCESS_GAUGE_STATUE_CMD failed \n", __func__, __LINE__);
@@ -3900,25 +4961,26 @@ int ite_gauge_read_reg(int addr, int reg, int length, unsigned char *return_buf)
 	cmd_num = length;
 	printk("[ITE]: cmd_num: %d \n", cmd_num);
 	
-	ite_ram_read_gauge_cmd[2] = addr;
-	ite_ram_read_gauge_cmd[3] = reg;
-	ite_ram_read_gauge_cmd[4] = length;
+	ite_ram_write_i2c_bypass_cmd[1] = 0x05; //[5:2]:Device ID, [1]:Write, [0]:Read
+	ite_ram_write_i2c_bypass_cmd[2] = addr;
+	ite_ram_write_i2c_bypass_cmd[3] = length;
+	ite_ram_write_i2c_bypass_cmd[4] = reg;
 	
 	if(probe_status)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
 		{
-			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_GAUGE_CMD, buf_recv, 0); //{0xC0, 0x02, addr, reg, length}
+			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_WRITE_I2C_BYPASS_CMD, buf_recv, 0); //{0xB1}
 			if(rc != 1)
 			{
-				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_READ_GAUGE_CMD failed \n", __func__, __LINE__);
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_WRITE_I2C_BYPASS_CMD failed \n", __func__, __LINE__);
 				return -1;
 			}
 	
 			do
 			{
 				msleep(50);
-				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xC0, 0x01}
+				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ACCESS_GAUGE_STATUE_CMD, buf_recv, 1); //{0xB0}
 				if(rc != 2)
 				{
 					printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ACCESS_GAUGE_STATUE_CMD failed \n", __func__, __LINE__);
@@ -3930,7 +4992,7 @@ int ite_gauge_read_reg(int addr, int reg, int length, unsigned char *return_buf)
 			
 			if(buf_recv[0] == 0x02)
 			{
-				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_GAUGE_BUFFER_CMD, return_buf, length); //{0xC0, 0x02}
+				rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_GAUGE_BUFFER_CMD, return_buf, length); //{0xB2}
 				if(rc != 2) // modified by leo from 1 to 2
 				{
 					printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_READ_GAUGE_BUFFER_CMD failed \n", __func__, __LINE__);
@@ -3959,10 +5021,10 @@ int ite_gauge_read_reg(int addr, int reg, int length, unsigned char *return_buf)
 }
 EXPORT_SYMBOL(ite_gauge_read_reg);
 
-int ite_read_base_charger_status_info(unsigned char *return_buf)
+int ite_read_charger_status_info(unsigned char *lsb, unsigned char *msb)
 {
 	int rc = 0;
-	u8 buf_recv[64];
+	u8 buf_recv[4];
 	
 	printk("[ITE]: %s ", __func__);
 
@@ -3970,13 +5032,14 @@ int ite_read_base_charger_status_info(unsigned char *return_buf)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
 		{
-			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_BASE_CHARGER_STATUS_CMD, buf_recv, 4);
+			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_CHARGER_STATUS_CMD, buf_recv, 4);
 			if(rc != 2)
 			{
-				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_HID_READ_BASE_CHARGER_STATUS_CMD failed \n", __func__, __LINE__);
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_HID_READ_CHARGER_STATUS_CMD failed \n", __func__, __LINE__);
 				return -1;
 			}
-			*return_buf = buf_recv[2];
+			*lsb = buf_recv[2];
+			*msb = buf_recv[3];
 		}
 		else
 		{
@@ -3991,7 +5054,7 @@ int ite_read_base_charger_status_info(unsigned char *return_buf)
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ite_read_base_charger_status_info);
+EXPORT_SYMBOL(ite_read_charger_status_info);
 
 int ite_ram_gauge_compare_result(unsigned char *buf)
 {
@@ -4002,12 +5065,11 @@ int ite_ram_gauge_compare_result(unsigned char *buf)
 	
 	cmd_num = buf[0] + 2;
 	//cmd_num = cmd_num + 5;;
-	printk("[ITE_ECRAM]: cmd_num: %d, cmd = ", cmd_num);
+	printk("[ITE_ECRAM]: cmd_num: %d. ", cmd_num);
 	
-	ite_ram_gauge_compare_result_cmd[0] = 0xCB;
+	ite_ram_gauge_compare_result_cmd[0] = 0xBB;
 	for(count = 0; count < cmd_num; count++){
 		ite_ram_gauge_compare_result_cmd[count + 1] = buf[count]&0xff;
-	//	printk("0x%02x ", ite_ram_write_gauge_cmd[count]);
 	}
 	//printk("\n");
 	for(count = 0; count < cmd_num; count++){
@@ -4019,7 +5081,7 @@ int ite_ram_gauge_compare_result(unsigned char *buf)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process))
 		{
-			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_GAUGE_COMPARE_RESULT_CMD, buf_recv, cmd_num); // {0xC0, 0X03, 0x.., 0x.., 0x.., ....}
+			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_GAUGE_COMPARE_RESULT_CMD, buf_recv, cmd_num);
 			if(rc != 1)
 			{
 				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_GAUGE_COMPARE_RESULT_CMD failed \n", __func__, __LINE__);
@@ -4040,6 +5102,103 @@ int ite_ram_gauge_compare_result(unsigned char *buf)
 	return 0;
 }
 EXPORT_SYMBOL(ite_ram_gauge_compare_result);
+	
+int ite_dump_gauge_all_reg(unsigned char *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[64];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0, 64);
+
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(ite_chip_data->client, ITE_RAM_DUMP_GAUGE_ALL_REG_CMD, buf_recv, 64);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_DUMP_GAUGE_ALL_REG_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+			memcpy(report_buf, buf_recv, sizeof(buf_recv));
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	return 0;
+}
+EXPORT_SYMBOL(ite_dump_gauge_all_reg);
+
+int ite_dump_charger_all_reg(unsigned char *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[64];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0, 64);
+
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(ite_chip_data->client, ITE_RAM_DUMP_CHARGER_ALL_REG_CMD, buf_recv, 64);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_DUMP_CHARGER_ALL_REG_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+			memcpy(report_buf, buf_recv, sizeof(buf_recv));
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	return 0;
+}
+EXPORT_SYMBOL(ite_dump_charger_all_reg);
+
+// add by Tom for Factory ALS Calibration into EC ++
+static ssize_t ite_get_als_from_fw(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int err = 0;
+   	u8 als_cali_value_EC[8] = {0xFF}; // add by tom for get ALS calibration value from EC
+   	err = ite_als_get_calibration_data(als_cali_value_EC);
+	printk("[ITE_update] %s: EC als calibration value : 0x%02X 0x%02X , Return : %d\n", __func__,als_cali_value_EC[2],als_cali_value_EC[3],err);
+	if((als_cali_value_EC[2]!=0xFF && als_cali_value_EC[3]!=0xFF) && (als_cali_value_EC[2]!=0x00 && als_cali_value_EC[3]!=0x00))
+		return sprintf(buf,"1");
+	else
+		return sprintf(buf,"0");
+}
+
+static ssize_t ite_store_als_in_fw(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int err = 0;
+	err = ite_store_als_in_firmware();
+	printk("[ITE_update] %s: Return : %d\n", __func__,err);
+	if(err == 0)
+		return sprintf(buf,"1");
+	else
+		return sprintf(buf,"0");
+}
+// add by Tom for Factory ALS Calibration into EC --
 
 // add by leo for gauge FW update ++
 static ssize_t ite_gauge_fw_update_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -4273,7 +5432,7 @@ static ssize_t ite_charger_ic_status(struct device *dev, struct device_attribute
 	else
 	{
 		printk("[ITE] %s: buf_recv[2]=0x%x, buf_recv[3]=0x%x  \n", __func__, buf_recv[2], buf_recv[3]);
-		ite_chip_data->charger_status = (buf_recv[3] << 8) | buf_recv[2];
+		ite_chip_data->charger_status = (buf_recv[2] & 0x01);
 		
 	}
 	return sprintf(buf, "%d \n", ite_chip_data->charger_status);
@@ -4284,19 +5443,19 @@ static ssize_t ite_light_sensor_switch(struct device *class,struct device_attrib
 	int ret = 0;
 	if (buf[0] == '0')
 	{
-		ret = ite_light_sensor_set_function(ASUSEC_LIGHT_SENSOR_DISABLE);
+		ret = ite_als_set_power_function(ASUSEC_LIGHT_SENSOR_DISABLE);
 	}
 	else if(buf[0] == '1')
 	{
-		ret = ite_light_sensor_set_function(ASUSEC_LIGHT_SENSOR_ENABLE);
+		ret = ite_als_set_power_function(ASUSEC_LIGHT_SENSOR_ENABLE);
 	}
 	else if(buf[0] == 'w')
 	{
-		ret = ite_light_sensor_set_function(ASUSEC_LIGHT_SENSOR_RAWDATA);
+		ret = ite_als_set_power_function(ASUSEC_LIGHT_SENSOR_RAWDATA);
 	}
 	else if(buf[0] == 'r')
 	{
-		ret = ite_light_sensor_set_function(ASUSEC_LIGHT_SENSOR_RESET);
+		ret = ite_als_set_power_function(ASUSEC_LIGHT_SENSOR_RESET);
 	}
 	else
 	{
@@ -4321,17 +5480,17 @@ static ssize_t ite_light_sensor_status(struct device *class,struct device_attrib
 	return sprintf(buf, "%d \n", ite_chip_data->als_status);
 }
 
-static ssize_t ite_wifi_led(struct device *class,struct device_attribute *attr,const char *buf, size_t count)
+static ssize_t ite_flight_mode_led(struct device *class,struct device_attribute *attr,const char *buf, size_t count)
 {
 	int ret = 0;
 	
 	if (buf[0] == '0')
 	{
-		ret = ite_wifi_led_function(0);
+		ret = ite_flight_mode_led_function(0);
 	}
 	else if(buf[0] == '1')
 	{
-		ret = ite_wifi_led_function(1);
+		ret = ite_flight_mode_led_function(1);
 	}
 	else
 	{
@@ -4406,81 +5565,68 @@ static ssize_t ite_win8_test_mode(struct device *class,struct device_attribute *
 static ssize_t ite_charger_status(struct device *class,struct device_attribute *attr,char *buf)
 {
 	int rc = 0;
-	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
-	int charger_state;
+	u8 buf_recv[4];
+	int charger_ic_state;
 	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_CHECK_CHARGER_STATUS_CMD, buf_recv, 0);
-	if (rc != 1)
-	{
-		printk(KERN_ERR "[ITE] %s: write ITE_HID_CHECK_CHARGER_STATUS_CMD failed \n", __func__);
-		return -1;
-	}
-	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return -1;
-	}
-	charger_state = buf_recv[2];
+	//rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_CHECK_CHARGER_STATUS_CMD, buf_recv, 1); //{0xA6}
+	//if(rc != 2)
+	//{
+	//	printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_CHECK_CHARGER_STATUS_CMD failed \n", __func__, __LINE__);
+	//}
 		
-	return sprintf(buf, "%d \n", charger_state);
-}
+	printk("[ITE]: %s ", __func__);
 
-int ite_light_sensor_set_function(int cmd) //0x01 = Reset ALS, 0x02 = Enable ALS, 0x04 = Disable ALS, 0x08 = Report ALS rawdata
+	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_CHARGER_STATUS_CMD, buf_recv, 4);
+	if(rc != 2)
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_HID_READ_CHARGER_STATUS_CMD failed \n", __func__, __LINE__);
+		return -1;
+	}
+	printk("[ITE] %s: buf_recv[2]=0x%x, buf_recv[3]=0x%x  \n", __func__, buf_recv[2], buf_recv[3]);
+	charger_ic_state = buf_recv[2] & 0x01;
+			
+	return sprintf(buf, "%d \n", charger_ic_state);
+}
+/**
+ * Charger Output Report (Byte Offset 5) : 0x01=Start Charging, 0x02=Stop Charging, 0x03 = Change Charging Current-Normal, 0x04 = Change Charging Current-2A
+ */
+int ite_charger_control_function(u8 cmd) 
 {
 	int rc = 0;
 	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 	printk("[ITE] %s: cmd = 0x%x \n",__func__, cmd);
 
-	ite_hid_als_ctl_cmd[5] = cmd; //LSB
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ALS_CTL_CMD, buf_recv, 0);
+	ite_hid_charger_ctl_cmd[5] = cmd; // Byte Offset 5 : Control Command 
+	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_CHARGER_CTL_CMD, buf_recv, 0);
 	if (rc != 1)
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_ALS_CTL_CMD failed \n", __func__, __LINE__);
+		printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_CHARGER_CTL_CMD failed \n", __func__, __LINE__);
 		return -1;
 	}
 
 	return 0;
 }
-EXPORT_SYMBOL(ite_light_sensor_set_function);
+EXPORT_SYMBOL(ite_charger_control_function);
 
-int ite_light_sensor_set_table(unsigned char *buf)
+int ite_als_set_power_function(int cmd) //0x01=Power On ALS, 0x02=Power Off ALS, 0x04 = Report ALS Data, 0x80 = Reset ALS
 {
-	int rc = 0, count = 0, cmd_num = 0;
+	int rc = 0;
 	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
 	
-	printk("[ITE] %s ++ \n",__func__);
+	printk("[ITE] %s: cmd = 0x%x \n",__func__, cmd);
 	
-	ite_hid_als_set_table_cmd[0] = 0xF5;
-	ite_hid_als_set_table_cmd[1] = 0x00;
-	ite_hid_als_set_table_cmd[2] = 0x36;
-	ite_hid_als_set_table_cmd[3] = 0x03;
-	ite_hid_als_set_table_cmd[4] = 0xF6;
-	ite_hid_als_set_table_cmd[5] = 0x00;
-
-	cmd_num = buf[0];
-//	printk("[ITE]: cmd_num: %d ,cmd = ", cmd_num);
-		
-	for(count = 0; count < cmd_num; count++){
-		ite_hid_als_set_table_cmd[count + 6] = buf[count]&0xff;
-	}
-//	for(count = 0; count < cmd_num + 6; count++){
-//		printk("0x%02x ", ite_hid_als_set_table_cmd[count]);
-//	}
-//	printk("\n");
-
 	if(probe_status)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
-		{
-			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ALS_SET_TABLE_CMD, buf_recv, cmd_num + 6); //{0x1C, 0x00, 0x.., 0x.., 0x.., ...}
-			if(rc != 1)
+		{	
+			ite_hid_als_ctl_cmd[5] = cmd; //LSB
+			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ALS_CTL_CMD, buf_recv, 0);
+			if (rc != 1)
 			{
-				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_HID_ALS_SET_TABLE_CMD failed \n", __func__, __LINE__);
+				printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_ALS_CTL_CMD failed \n", __func__, __LINE__);
 				return -1;
-			}			
+			}
 		}
 		else
 		{
@@ -4496,24 +5642,75 @@ int ite_light_sensor_set_table(unsigned char *buf)
 	
 	return 0;
 }
-EXPORT_SYMBOL(ite_light_sensor_set_table);
+EXPORT_SYMBOL(ite_als_set_power_function);
 
-int ite_light_sensor_get_table(unsigned char *report_buf)
+int ite_als_set_calibration_data(unsigned char *buf)
 {
-	int rc = 0;
-	u8 buf_recv[128];
+	int rc = 0, count = 0, cmd_num = 0;
+	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 	printk("[ITE] %s ++ \n",__func__);
-	memset(buf_recv, 0, 128);
+	
+	ite_hid_als_set_calibration_data_cmd[0] = 0xF5;
+	ite_hid_als_set_calibration_data_cmd[1] = 0x00;
+	ite_hid_als_set_calibration_data_cmd[2] = 0x36;
+	ite_hid_als_set_calibration_data_cmd[3] = 0x03;
+	ite_hid_als_set_calibration_data_cmd[4] = 0xF6;
+	ite_hid_als_set_calibration_data_cmd[5] = 0x00;
+	
+	cmd_num = buf[0];
+//	printk("[ITE]: cmd_num: %d ,cmd = ", cmd_num);
+		
+	for(count = 0; count < cmd_num; count++){
+		ite_hid_als_set_calibration_data_cmd[count + 6] = buf[count]&0xff;
+	}
+//	for(count = 0; count < cmd_num + 6; count++){
+//		printk("0x%02x ", ite_hid_als_set_calibration_data_cmd[count]);
+//	}
+//	printk("\n");
 
 	if(probe_status)
 	{	
 		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
 		{
-			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_GET_LIGHT_SENSOR_REPORT_CMD, buf_recv, 128);
+			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ALS_SET_CALIBRATION_DATA_CMD, buf_recv, cmd_num + 6); //{0x1C, 0x00, 0x.., 0x.., 0x.., ...}
+			if(rc != 1)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_HID_ALS_SET_CALIBRATION_DATA_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}			
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(ite_als_set_calibration_data);
+
+int ite_als_get_calibration_data(unsigned char *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[8];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0, 8);
+
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ALS_GET_CALIBRATION_DATA_CMD, buf_recv, 8);
 			if(rc != 2)
 			{
-				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_HID_GET_LIGHT_SENSOR_REPORT_CMD failed \n", __func__, __LINE__);
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_HID_ALS_GET_CALIBRATION_DATA_CMD failed \n", __func__, __LINE__);
 				return -1;
 			}
 			memcpy(report_buf, buf_recv, sizeof(buf_recv));
@@ -4532,7 +5729,79 @@ int ite_light_sensor_get_table(unsigned char *report_buf)
 	
 	return 0;
 }
-EXPORT_SYMBOL(ite_light_sensor_get_table);
+EXPORT_SYMBOL(ite_als_get_calibration_data);
+
+int ite_als_read_threshold_level_table(unsigned char *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[32];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0, 32);
+
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(ite_chip_data->client, ITE_RAM_READ_THRESHOLD_LEVEL_TABLE_CMD, buf_recv, 32);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_READ_THRESHOLD_LEVEL_TABLE_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+			memcpy(report_buf, buf_recv, sizeof(buf_recv));
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	return 0;
+}
+EXPORT_SYMBOL(ite_als_read_threshold_level_table);
+
+int ite_als_read_threshold_table(unsigned char *report_buf)
+{
+	int rc = 0;
+	u8 buf_recv[34];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0, 34);
+
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(ite_chip_data->client, ITE_RAM_READ_THRESHOLD_TABLE_CMD, buf_recv, 34);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_READ_THRESHOLD_TABLE_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+			memcpy(report_buf, buf_recv, sizeof(buf_recv));
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	return 0;
+}
+EXPORT_SYMBOL(ite_als_read_threshold_table);
 
 int ite_pwm_setting(u8 pwm)
 {
@@ -4552,27 +5821,103 @@ int ite_pwm_setting(u8 pwm)
 }
 EXPORT_SYMBOL(ite_pwm_setting);
 
+/*
+ * Read Base TouchPad Power Status (0xA5)
+ *  Power On = 0x01
+ *  Power Off = 0x00
+ */
+static int ite_read_touch_pad_power()
+{
+	int rc = 0;
+	u8 buf_recv;
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0x0, 1);
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_BASE_TOUCH_PAD_POWER_CMD, buf_recv, 1);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_READ_WIFI_MAC_ADDR_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	printk("[ITE_ECRAM] %s:[%d]: ite_chip_data->base_wifi_mac = ", __func__, __LINE__);
+	
+	return buf_recv;
+}
+EXPORT_SYMBOL(ite_read_touch_pad_power);
+
+/*
+ * Read WiFi MAC Address
+ * MAC Address : XX-XX-XX-XX-XX-XX  
+ */
+static int ite_wifi_read_mac_address()
+{
+	int rc = 0;
+	u8 buf_recv[6];
+	
+	printk("[ITE] %s ++ \n",__func__);
+	memset(buf_recv, 0x0, 6);
+	memset(ite_chip_data->base_wifi_mac, 0x0, 6);
+	if(probe_status)
+	{	
+		if(ite_chip_data->init_success && (!ite_chip_data->fw_up_process) && (!ite_chip_data->gauge_fw_update))
+		{
+			rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_WIFI_MAC_ADDR_CMD, buf_recv, 6);
+			if(rc != 2)
+			{
+				printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: read ITE_RAM_READ_WIFI_MAC_ADDR_CMD failed \n", __func__, __LINE__);
+				return -1;
+			}
+			memcpy(ite_chip_data->base_wifi_mac, buf_recv, sizeof(buf_recv));
+		}
+		else
+		{
+			printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver initial failed. \n", __func__, __LINE__);
+			return -2;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: EC driver probe failed. \n", __func__, __LINE__);
+		return -1;
+	}
+	
+	printk("[ITE_ECRAM] %s:[%d]: ite_chip_data->base_wifi_mac = ", __func__, __LINE__);
+	
+		printk("%02X%02X%02X%02X%02X%02X \n",ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+	return 0;
+}
+
 static int ite_detach_attach_function(void)
 {
 	int rc = 0;
 	uint8_t buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 //	printk(KERN_ERR "[ITE] %s ++ \n", __func__);
-	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_ATTACH_DETACH_CMD, buf_recv, 0);
-	if (rc != 1)
+
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_ATTACH_DETACH_CMD, buf_recv, 1); //{0xA1}
+	if(rc != 2)
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_ATTACH_DETACH_CMD failed \n", __func__, __LINE__);
-		return false;
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_ATTACH_DETACH_CMD failed \n", __func__, __LINE__);
 	}
-	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return false;
-	}
-	ite_chip_data->detach_attach = buf_recv[2];
+	ite_chip_data->detach_attach = buf_recv[0];
+
 	printk("[ITE] %s: detach(0) or attach(1) = 0x%x. \n", __func__, ite_chip_data->detach_attach);
 	
 	return ite_chip_data->detach_attach;
@@ -4588,20 +5933,13 @@ static int ite_system_owner_function(void)
 	
 	old_owner = ite_chip_data->system_owner;
 	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_SYSTEM_OWNER_CMD, buf_recv, 0);
-	if (rc != 1)
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_SYSTEM_OWNER_CMD, buf_recv, 1); //{0xA0}
+	if(rc != 2)
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_SYSTEM_OWNER_CMD failed \n", __func__, __LINE__);
-		return -1;
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_SYSTEM_OWNER_CMD failed \n", __func__, __LINE__);
 	}
-		
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return -1;
-	}
-	ite_chip_data->system_owner = buf_recv[2];
+	ite_chip_data->system_owner = buf_recv[0];
+
 	printk("[ITE] %s: system owner = 0x%x. \n", __func__, ite_chip_data->system_owner);
 	
 	if(ite_chip_data->system_owner != old_owner)
@@ -4618,20 +5956,14 @@ static int ite_base_power_status(void)
 	uint8_t buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 //	printk(KERN_ERR "[ITE] %s ++ \n", __func__);
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_BASE_SYSTEM_STATUS_CMD, buf_recv, 0);
-	if (rc != 1)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_BASE_SYSTEM_STATUS_CMD failed \n", __func__, __LINE__);
-		return 0;
-	}
 
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_BASE_SYSTEM_STATUS_CMD, buf_recv, 1); //{0xA2}
+	if(rc != 2)
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return 0;
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_BASE_SYSTEM_STATUS_CMD failed \n", __func__, __LINE__);
 	}
-	ite_chip_data->base_power = buf_recv[2];
+	ite_chip_data->base_power = buf_recv[0];
+	
 	printk("[ITE] %s: Base Power Status = 0x%x. \n", __func__, ite_chip_data->base_power);
 	
 	return ite_chip_data->base_power;
@@ -4688,30 +6020,30 @@ static bool ite_android_power_status(APOWER_STATUS power_status)
 	return true;
 }
 
-static int ite_wifi_led_function(int on_off)
+static int ite_flight_mode_led_function(int on_off)
 {
 	int rc = 0;
 	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 	if(on_off == 1)
 	{
-		printk("[ITE] %s: wifi led on. \n",__func__);
-		ite_hid_wifi_led_cmd[5] = 0x01; //LSB
-		rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_WIFI_LED_CMD, buf_recv, 0);
+		printk("[ITE] %s: flight mode led on. \n",__func__);
+		ite_hid_flight_mode_led_cmd[5] = 0x01; //LSB
+		rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_FLIGHT_MODE_LED_CMD, buf_recv, 0);
 		if (rc != 1)
 		{
-			printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_WIFI_LED_CMD failed \n", __func__, __LINE__);
+			printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_FLIGHT_MODE_LED_CMD failed \n", __func__, __LINE__);
 			return -1;
 		}
 	}
 	else if(on_off == 0)
 	{
-		printk("[ITE] %s: wifi led off. \n",__func__);
-		ite_hid_wifi_led_cmd[5] = 0x00; //LSB
-		rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_WIFI_LED_CMD, buf_recv, 0);
+		printk("[ITE] %s: flight mode led off. \n",__func__);
+		ite_hid_flight_mode_led_cmd[5] = 0x00; //LSB
+		rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_FLIGHT_MODE_LED_CMD, buf_recv, 0);
 		if (rc != 1)
 		{
-			printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_WIFI_LED_CMD failed \n", __func__, __LINE__);
+			printk(KERN_ERR "[ITE] %s:[%d]: write ITE_HID_FLIGHT_MODE_LED_CMD failed \n", __func__, __LINE__);
 			return -1;
 		}
 	}
@@ -4828,26 +6160,66 @@ static int ite_base_ec_fw_check(void)
 	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
 	
 	printk("[ITE] %s: \n",__func__);
+	
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_BASE_EC_FW_CHECK_CMD, buf_recv, 1); //{0xA3}
+	if(rc != 2)
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_BASE_EC_FW_CHECK_CMD failed \n", __func__, __LINE__);
+	}
+	ite_chip_data->base_ec_check = buf_recv[0];
 
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_BASE_EC_FW_CHECK_CMD, buf_recv, 0);
-	if (rc != 1)
-	{
-		printk(KERN_ERR "[ITE] %s: write ITE_HID_BASE_EC_FW_CHECK_CMD failed \n", __func__);
-		return -1;
-	}
-	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return -1;
-	}
-	
-	ite_chip_data->base_ec_check = buf_recv[2];
 	printk("[ITE] %s: determine Base EC firmware update = 0x%x \n", __func__, ite_chip_data->base_ec_check);	
 	switch_set_state(&ite_chip_data->baseec_sdev, ite_chip_data->base_ec_check);
 	
 	return 0;
+}
+
+/**
+ * 1. Start getting base WiFi MAC
+ * 2. Wait Getting MAC Ready 
+ */
+static int ite_start_getting_base_wifi_mac(void)
+{
+	int rc = 0 , i = 0 , result = -1;
+	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
+	
+	// Start Getting MAC Address
+	printk("[ITE] %s: Start getting MAC Address \n", __func__);	
+	wifi_mac_ready_flag = 0; // init irq Flag
+	rc = ite_ram_get_wifi_mac_addr_control(1);	
+	if(rc == -1)
+	{
+		printk(KERN_ERR "[ITE] %s:[%d]: START getting base wifi mac failed \n", __func__, __LINE__);
+		return -1;
+	}
+	// Wait MAC Address IRQ Ready , time out is 3s
+	for(i = 0 ; i < 300 ; i++)
+	{
+		if(wifi_mac_ready_flag == 1)
+		{
+			result = 0;
+			break;
+		}
+		else if(wifi_mac_ready_flag == -1)
+		{
+			result = -2;
+			break;
+		}	
+		msleep(10);
+	}
+	// If time out or read mac fail , cancel getting MAC address
+	if(result != 0)
+	{
+		rc = ite_ram_get_wifi_mac_addr_control(0);	
+		if(rc == -1)
+		{
+			printk(KERN_ERR "[ITE] %s:[%d]: CANCEL getting base wifi mac failed , result = %d \n", __func__, __LINE__,result);
+			return -1;
+		}
+	}	
+	printk("[ITE] %s: Return %d \n", __func__, result);	
+	
+	return result;
 }
 
 static int ite_ram_notify_os_class(void)
@@ -5216,8 +6588,9 @@ int ite_charger_ic_status_function(void)
 	}
 	else
 	{
-		ite_chip_data->charger_status = (buf_recv[3] << 8) | buf_recv[2];
-		printk(KERN_ERR "[ITE] %s: Charger IC status = 0x%x. \n", __func__, ite_chip_data->charger_status);
+		printk("[ITE] %s: buf_recv[2]=0x%x, buf_recv[3]=0x%x  \n", __func__, buf_recv[2], buf_recv[3]);
+		ite_chip_data->charger_status = (buf_recv[2] & 0x01);
+		printk("[ITE] %s: Charger IC status = 0x%x. \n", __func__, ite_chip_data->charger_status);
 	}
 		
 	return ite_chip_data->charger_status;
@@ -5290,25 +6663,47 @@ int ite_powerbtn_notify(void)
 }
 EXPORT_SYMBOL(ite_powerbtn_notify);
 
+/**
+ * Start / Cancel Getting MAC Address Command
+ * Control commad : 
+ *			Start getting = 0x01
+ *			Cancel getting = 0x02	
+ */
+static int ite_ram_get_wifi_mac_addr_control(int enable)
+{
+	int rc = 0;
+	u8 buf_recv[ITE_MAX_INPUT_LENGTH];
+	
+	
+	if(enable == 1)
+		ite_ram_get_wifi_mac_addr_control_cmd[2] = 0x01;
+	else
+		ite_ram_get_wifi_mac_addr_control_cmd[2] = 0x02;
+		
+	printk("[ITE] %s: Get MAC CMD :[0x%x,0x%x,0x%x]\n", __func__, 
+		ite_ram_get_wifi_mac_addr_control_cmd[0],ite_ram_get_wifi_mac_addr_control_cmd[1],ite_ram_get_wifi_mac_addr_control_cmd[2]);
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_GET_WIFI_MAC_ADDR_CONTROL_CMD, buf_recv, 0);
+	if (rc != 1)
+	{
+		printk(KERN_ERR "[ITE_ECRAM] %s: write ITE_RAM_GET_WIFI_MAC_ADDR_CONTROL_CMD failed \n", __func__);
+		return -1;
+	}
+	return 0;
+}
+
+
 static int ite_read_win8_test_mode(void)
 {
 	int rc = 0;
 	uint8_t buf_recv[ITE_MAX_INPUT_LENGTH];
 	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_WIN8_TEST_MODE_CMD, buf_recv, 0);
-	if (rc != 1)
+	rc = asus_ecram_i2c_command(&ecram_client, ITE_RAM_READ_WIN8_TEST_MODE_CMD, buf_recv, 1); //{0xA4}
+	if(rc != 2)
 	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_WIN8_TEST_MODE_CMD failed \n", __func__, __LINE__);
-		return false;
+		printk(KERN_ERR "[ITE_ECRAM] %s:[%d]: write ITE_RAM_READ_WIN8_TEST_MODE_CMD failed \n", __func__, __LINE__);
 	}
-	
-	rc = asus_ec_i2c_command(ite_chip_data->client, ITE_HID_READ_EC_REGISTER_CMD, buf_recv, 3);
-	if (rc != 2)
-	{
-		printk(KERN_ERR "[ITE] %s:[%d]: Get ITE_HID_READ_EC_REGISTER_CMD failed \n", __func__, __LINE__);
-		return false;
-	}
-	ite_chip_data->win8_test_mode = buf_recv[2];
+	ite_chip_data->win8_test_mode = buf_recv[0];
+
 	printk(KERN_ERR "[ITE] %s: Win8_Test Mode = 0x%x. \n", __func__, ite_chip_data->win8_test_mode);
 	
 	return ite_chip_data->win8_test_mode;
@@ -5335,7 +6730,7 @@ static int asusec_input_device_create(void){
 	}
 
 	snprintf(ite_chip_data->input_phys_name, sizeof(ite_chip_data->input_phys_name), "%s/input-kp", dev_name(&ite_chip_data->client->dev));
-	ite_chip_data->input_dev->name = "asus-ec";
+	ite_chip_data->input_dev->name = "asuspec";
 	ite_chip_data->input_dev->id.bustype = BUS_I2C; //20110901add
 	ite_chip_data->input_dev->phys = ite_chip_data->input_phys_name;	
 	ite_chip_data->input_dev->event = ite_i2c_event;
@@ -5461,6 +6856,19 @@ static ssize_t ite_baseec_check_switch_state(struct switch_dev *sdev, char *buf)
 	return sprintf(buf, "%d\n", ite_chip_data->base_ec_check);
 }
 
+// add by Tom for Base WiFi MAC ++
+static ssize_t ite_base_wifi_mac_switch_name(struct switch_dev *sdev, char *buf)
+{
+	return sprintf(buf, "%s\n", "Base WiFi MAC Address");
+}
+
+static ssize_t ite_base_wifi_mac_switch_state(struct switch_dev *sdev, char *buf)
+{
+	return sprintf(buf, "%02X%02X%02X%02X%02X%02X\n",ite_chip_data->base_wifi_mac[0],ite_chip_data->base_wifi_mac[1],ite_chip_data->base_wifi_mac[2],ite_chip_data->base_wifi_mac[3],ite_chip_data->base_wifi_mac[4],ite_chip_data->base_wifi_mac[5]);
+}
+// add by Tom for Base WiFi MAC --
+
+
 //static int ite_hw_init_function(void)
 //{
 //	int err = 0;
@@ -5517,6 +6925,7 @@ static int ite_firmware_upgrade_init_func(void)
 {
 	int rc = 0, ret = 0;
 	uint8_t buf_recv[ITE_REPORT_MAX_LENGTH];
+
 	int hid_descr_len;
 	int hid_report_len;
 	int attach_status = 0;
@@ -5647,15 +7056,15 @@ static void ite_late_resume(struct early_suspend *h)
 }
 #endif
 
-static int __devinit ite_probe(struct i2c_client *client,
+static int ite_probe(struct i2c_client *client,
 								const struct i2c_device_id *id)
 {
 	struct asus_ec_i2c_platform_data *pdata;
 	int err = 0;
-	
 //	int usb_cable;
-			
+
 	printk("[ITE]: %s ++ \n",__func__);
+	probe_status = 0;
 		
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		printk(KERN_ERR "[ITE] %s:[%d]: i2c check functionality error.\n", __func__, __LINE__);
@@ -5675,6 +7084,13 @@ static int __devinit ite_probe(struct i2c_client *client,
 		printk(KERN_ERR "[ITE] %s:[%d]: create workqueue failed.\n", __func__, __LINE__);
 		err = -ENOMEM;
 		goto probe_err_create_wq_failed;
+	}
+	
+	ite_chip_data->flash_wq = create_singlethread_workqueue("ite_flash_wq");
+	if (!ite_chip_data->flash_wq) 
+	{
+		printk(KERN_ERR "[ITE] %s: create himax_flash_wq workqueue failed\n", __func__);
+		goto probe_err_create_flash_wq_failed;
 	}
 	
 	ite_chip_data->hw_id = Read_HW_ID();
@@ -5782,21 +7198,27 @@ static int __devinit ite_probe(struct i2c_client *client,
 	
 //	enable_irq(ite_chip_data->irq1);
 	
-/*************IO control setting***************/
+/*+++++ ITE8566 IO control setting +++++++++++*/
 	err = misc_register(&ite_misc_dev);
 	if (err < 0) {
-		printk( "[ITE]:%s: could not register ITE misc device\n",__func__);
+		printk( "[ITE]:%s: could not register ITE8566 misc device\n",__func__);
 		goto probe_misc_device_failed;
 	}
-/*************IO control setting***************/
-
-/*************IO control setting***************/
+/*----- ITE8566 IO control setting -----------*/
+/*+++++ ASUSPEC IO control setting +++++++++++*/
+	err = misc_register(&asuspec_dev);
+	if (err < 0) {
+		printk( "[ITE]:%s: could not register ASUSPEC misc device\n",__func__);
+		goto probe_misc_device_failed;
+	}
+/*----- ASUSPEC IO control setting -----------*/
+/*+++++ ASUSDEC IO control setting +++++++++++*/
 	err = misc_register(&asusdec_dev);
 	if (err < 0) {
-		printk( "[ITE]:%s: could not register ITE misc device\n",__func__);
+		printk( "[ITE]:%s: could not register ASUSDEC misc device\n",__func__);
 		goto probe_misc_device_failed;
 	}
-/*************IO control setting***************/
+/*----- ASUSDEC IO control setting -----------*/
 		
 	msleep(10);
 	
@@ -5845,17 +7267,26 @@ static int __devinit ite_probe(struct i2c_client *client,
 	}	
 	switch_set_state(&ite_chip_data->baseec_sdev, 0);	
 				
+	//add by Tom for base wifi MAC address
+	ite_chip_data->base_wifi_mac_sdev.name = BASE_WIFI_MAC_SDEV_NAME;
+	ite_chip_data->base_wifi_mac_sdev.print_name = ite_base_wifi_mac_switch_name;
+	ite_chip_data->base_wifi_mac_sdev.print_state = ite_base_wifi_mac_switch_state;
+	if(switch_dev_register(&ite_chip_data->base_wifi_mac_sdev) < 0){
+		printk("[ITE]: switch_dev_register for base_wifi_mac_sdev failed!\n");
+	}	
+	switch_set_state(&ite_chip_data->base_wifi_mac_sdev, 0);	
+				
 	//proc create
 	ite_create_proc_fw_file();
 	
-	if((!strncmp(ite_chip_data->pad_ec_version, "gTcp", 4))||((!strncmp(ite_chip_data->pad_ec_version, "g1cp", 4))))
+	if((!strncmp(ite_chip_data->pad_ec_version, "G31SP", 5))||((!strncmp(ite_chip_data->pad_ec_version, "T31SP", 5))))
 	{
 		if (!ite_i2c_hw_init(ite_chip_data->client)) {
 			err = -EINVAL;
 			printk(KERN_ERR "[ITE]: %s: ite_i2c_hw_init failed!! \n", __func__);
 			goto probe_err_i2c_hw_init;
 		}
-				
+					
 		ite_chip_data->usb_status_finish = 1;
 	#ifdef CONFIG_USB_PENWELL_OTG	
 	//	usb_cable = check_cable_status();
@@ -5864,7 +7295,7 @@ static int __devinit ite_probe(struct i2c_client *client,
 	
 		ite_ram_notify_os_class();
 	}
-	
+		
 #ifdef CONFIG_HAS_EARLYSUSPEND
     ite_chip_data->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 1;
     ite_chip_data->early_suspend.suspend = ite_early_suspend;
@@ -5876,10 +7307,10 @@ static int __devinit ite_probe(struct i2c_client *client,
 	if((factory_mode == 2) && (entry_mode == 1))
 	{
 		ite_create_proc_factory_file();
-	#ifdef ENABLE_SELF_FIRMWARE_UPGRADE
-		printk("[ITE]: factory image trigger firmwaer upgrade. \n");
-		queue_delayed_work(ite_chip_data->asusec_wq, &ite_chip_data->ite_firmware_upgrade_work, 10*HZ);
-	#endif
+		#ifdef ENABLE_SELF_FIRMWARE_UPGRADE
+			printk("[ITE]: factory image trigger firmwaer upgrade. \n");
+			queue_delayed_work(ite_chip_data->flash_wq, &ite_chip_data->ite_firmware_upgrade_work, 15*HZ);
+		#endif
 	}
 
 	
@@ -5901,9 +7332,12 @@ probe_err_device_create_file_failed:
 //	if (ite_chip_data->input_dev)
 //       input_free_device(ite_chip_data->input_dev);
 //probe_err_input_dev_alloc_failed:
-probe_err_create_wq_failed:
+//	if (ite_chip_data->flash_wq)
+ //       destroy_workqueue(ite_chip_data->flash_wq);
+probe_err_create_flash_wq_failed:
 //	if (ite_chip_data->asusec_wq)
  //       destroy_workqueue(ite_chip_data->asusec_wq);
+probe_err_create_wq_failed:
 
 	//kfree(ite_chip_data);
 probe_err_alloc_data_failed:
@@ -5942,7 +7376,7 @@ static int ite_resume(struct i2c_client *client)
 	return 0;
 }
 
-static int __devexit ite_remove(struct i2c_client *client)
+static int ite_remove(struct i2c_client *client)
 {
 	
 	disable_irq_wake(ite_chip_data->irq0);
@@ -5975,7 +7409,7 @@ static struct i2c_driver ite_i2c_driver = {
 		.owner  = THIS_MODULE,
 	},
 	.probe		= ite_probe,
-	.remove		= __devexit_p(ite_remove),
+	.remove		= ite_remove,
 	.suspend    = ite_suspend,
 	.resume     = ite_resume,
 	.id_table	= asusec_id,
@@ -5993,8 +7427,10 @@ static void __exit ite_exit(void)
 {
 	i2c_del_driver(&ite_i2c_driver);
 }
-module_init(ite_init);
-module_exit(ite_exit);
+
+module_i2c_driver(ite_i2c_driver);
+//module_init(ite_init);
+//module_exit(ite_exit);
 
 MODULE_AUTHOR("Joe_CH Chen <joe_ch_chen@asus.com>");
 MODULE_DESCRIPTION("ITE EC driver");

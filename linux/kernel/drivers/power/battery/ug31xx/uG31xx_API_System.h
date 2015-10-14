@@ -103,6 +103,15 @@ extern _upi_bool_ UpiCheckICActive(SystemDataType *data);
 extern SYSTEM_RTN_CODE UpiActiveUg31xx(void);
 
 /**
+ * @brief UpiStopUg31xx
+ *
+ *  Stop uG31xx
+ *
+ * @return  SYSTEM_RTN_CODE
+ */
+extern SYSTEM_RTN_CODE UpiStopUg31xx(void);
+
+/**
  * @brief UpiSetupAdc
  *
  *  Setup ADC configurations
@@ -258,4 +267,13 @@ extern void UpiAllocateTableBuf(_sys_u8_ **data, _sys_u8_ *size);
  * @return  NULL
  */
 extern void UpiFreeTableBuf(_sys_u8_ **data);
+
+/**
+ * @brief UpiPrintSystemVersion
+ *
+ *  Print system module version
+ *
+ * @return  NULL
+ */
+extern void UpiPrintSystemVersion(void);
 

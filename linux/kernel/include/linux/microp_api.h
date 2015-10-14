@@ -27,7 +27,8 @@ enum P72_HW_ID{
     P72_ER1_2_HWID=0,
     P72_ER2_HWID=1,
     P72_PR_HWID=2,
-    P72_ER1_1_HWID=3,
+    P72_MP_HWID=3,
+    P72_ER1_1_HWID=98,
     P72_SR_HWID=99,
 };
 
@@ -231,4 +232,5 @@ void AX_setECPowerOff(void);
 int AX_MicroP_setSPK_EN(uint8_t enable);
 int AX_MicroP_setRCV_EN(uint8_t enable);
 bool AX_Is_pad_exist(void);
+void AX_Recheck_EC_interrupt(void);
 #endif

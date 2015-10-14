@@ -16,6 +16,7 @@
 #include <linux/debugfs.h>
 #include <linux/proc_fs.h>
 #include <linux/HWVersion.h>
+#include <linux/version.h>
 #include <linux/switch.h>
 #include <linux/proc_fs.h>
 #include <linux/earlysuspend.h>
@@ -246,6 +247,7 @@ int pad_power_toggle_off_write(struct file *file, const char *buffer,
                     unsigned long count, void *data)
 { return 0; }
 
+#ifndef CONFIG_NEW_PROC_FS
 int init_pad_power_toggle_on(void)
 {
     struct proc_dir_entry *entry=NULL;
@@ -274,6 +276,98 @@ int init_pad_power_toggle_off(void)
 
     return 0;
 }
+#else
+static ssize_t npad_power_toggle_on_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    return count;
+}
+static int npad_power_toggle_on_read(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%s\n", __func__);
+    pr_info("%s:\n", __func__);
+
+    mutex_lock(&ec_info_lock);
+    asus_pad_device->proc_lock_balance_mode = true;
+    mutex_unlock(&ec_info_lock);
+
+    /* recovery pad power supply - detect Pad present */
+    if (!gpio_get_value(get_gpio_by_name("PAD_PLUG_IN_N")))
+        Init_Microp_Vbus(true);
+
+    return 0;
+}
+static ssize_t npad_power_toggle_off_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    return count;
+}
+static int npad_power_toggle_off_read(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%s\n", __func__);
+    pr_info("%s:\n", __func__);
+
+    mutex_lock(&ec_info_lock);
+    asus_pad_device->proc_lock_balance_mode = true;
+    mutex_unlock(&ec_info_lock);
+
+    /* cut off pad power supply */
+    if (pad_pwr_supply())
+        Init_Microp_Vbus(false);
+
+    return 0;
+}
+static int npad_power_toggle_on_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, npad_power_toggle_on_read, NULL);
+}
+static int npad_power_toggle_off_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, npad_power_toggle_off_read, NULL);
+}
+int init_pad_power_toggle_on(void)
+{
+    static const struct file_operations pad_power_toggle_on_fops = {
+        .owner = THIS_MODULE,
+        .open = npad_power_toggle_on_open,
+        .read = seq_read,
+        .write = npad_power_toggle_on_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("recpp", 0666, NULL,
+        &pad_power_toggle_on_fops);
+    if (!entry) {
+        pr_info("Unable to create pad_power_toggle_on\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+int init_pad_power_toggle_off(void)
+{
+    static const struct file_operations pad_power_toggle_off_fops = {
+        .owner = THIS_MODULE,
+        .open = npad_power_toggle_off_open,
+        .read = seq_read,
+        .write = npad_power_toggle_off_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("cutpp", 0666, NULL,
+        &pad_power_toggle_off_fops);
+    if (!entry) {
+        pr_info("Unable to create pad_power_toggle_off\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 #else
 int init_pad_power_toggle_on(void) { return 0; }
 int init_pad_power_toggle_off(void) { return 0; }
@@ -892,6 +986,7 @@ static ssize_t balanceChg_write_proc(struct file *filp, const char __user *buff,
     return len;
 }
 
+#ifndef CONFIG_NEW_PROC_FS
 static int create_balanceChg_proc_file(void)
 {
     struct proc_dir_entry *balanceChg_proc_file =
@@ -907,9 +1002,102 @@ static int create_balanceChg_proc_file(void)
 
     return 0;
 }
+#else
+static int nbalanceChg_read_proc(struct seq_file *m, void *v)
+{
+    int IsBalanceMode;
+
+    mutex_lock(&ec_info_lock);
+    IsBalanceMode = asus_pad_device->IsBalanceMode;
+    mutex_unlock(&ec_info_lock);
+
+    pr_info("PBATT> %s: MODE: %d\n", __func__, IsBalanceMode);
+    seq_printf(m, "%d\n", IsBalanceMode);
+    return 0;
+}
+static ssize_t nbalanceChg_write_proc(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    int val;
+    int IsBalanceMode;
+    int pad_present;
+    int phone_batt_rsoc;
+
+    char messages[256];
+
+    if (count > 256) {
+        count = 256;
+    }
+
+    if (copy_from_user(messages, buf, count))
+        return -EFAULT;
+	
+    val = (int)simple_strtol(messages, NULL, 10);
+    IsBalanceMode = val;
+
+    pr_err("PBATT> %s: ****** MODE: %d ******\n", __func__, val);
+
+    /* valid value verification */
+    if (val!=0 && val!=1 && val!=2)
+        return count;
+
+    mutex_lock(&ec_info_lock);
+    asus_pad_device->IsBalanceMode = IsBalanceMode;
+    pad_present = asus_pad_device->pad_bat_present;
+    phone_batt_rsoc = asus_pad_device->phone_batt_rsoc;
+    mutex_unlock(&ec_info_lock);
+
+    if (!pad_present)
+        return count;
+
+    if (IsBalanceMode == 2) {
+        Init_Microp_Vbus(true);
+        if (phone_batt_rsoc >= 90) {
+            smb345_charging_toggle(BALANCE, false);
+        }
+        else if (phone_batt_rsoc <= 70) {
+            smb345_charging_toggle(BALANCE, true);
+        }
+        DoForcePowerBankMode();
+        request_phone_battery_update();
+        return count;
+    }
+
+    ec_power_changed_all();
+    request_phone_battery_update();
+
+    return count;
+}
+static int nbalanceChg_proc_file_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nbalanceChg_read_proc, NULL);
+}
+static int create_balanceChg_proc_file(void)
+{
+    static const struct file_operations balanceChg_proc_file_fops = {
+        .owner = THIS_MODULE,
+        .open = nbalanceChg_proc_file_open,
+        .read = seq_read,
+        .write = nbalanceChg_write_proc,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("driver/balanceChg", 0644, NULL,
+        &balanceChg_proc_file_fops);
+    if (!entry) {
+        pr_info("PBATT> %s: fail to create /proc/driver/balanceChg",
+            __func__);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 
 #ifdef	ASUS_EC_POWER_PROC_DEV
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 static int read_pad_bat_voltage(char *buf, char **start, off_t off, int count, int *eof, void *data)
 {
     int len = 0;
@@ -969,7 +1157,118 @@ static int create_proc_pad_node(void)
     }
     return (rtn);
 }
+#else   ///< else of LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
+static ssize_t asus_ec_proc_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    pr_info("PBATT> %s:\n", __func__);
+    return count;
+}
+// voltage
+static int asus_ec_read_pad_bat_voltage(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%d\n", asus_pad_device->pad_bat_voltage);
+    return 0;
+}
+static int asus_ec_read_pad_bat_voltage_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, asus_ec_read_pad_bat_voltage, NULL);
+}
+// current
+static int asus_ec_read_pad_bat_current(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%d\n", asus_pad_device->pad_bat_current);
+    return 0;
+}
+static int asus_ec_read_pad_bat_current_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, asus_ec_read_pad_bat_current, NULL);
+}
+// usoc
+static int asus_ec_read_pad_bat_usoc(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%d\n", asus_pad_device->pad_bat_percentage);
+    return 0;
+}
+static int asus_ec_read_pad_bat_usoc_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, asus_ec_read_pad_bat_usoc, NULL);
+}
+// temperature
+static int asus_ec_read_pad_temp(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%d\n", asus_pad_device->pad_bat_temperature);
+    return 0;
+}
+static int asus_ec_read_pad_temp_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, asus_ec_read_pad_temp, NULL);
+}
 
+static int create_proc_pad_node(void)
+{
+    struct proc_dir_entry *ent;
+    int rtn = 0;
+    // voltage
+    static const struct file_operations asus_ec_read_pad_bat_voltage_fops = {
+        .owner = THIS_MODULE,
+        .open = asus_ec_read_pad_bat_voltage_open,
+        .read = seq_read,
+        .write = asus_ec_proc_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    ent = proc_create("Pad_Bat_Voltage", 0744, NULL, &asus_ec_read_pad_bat_voltage_fops);
+    if (!ent) {
+        pr_info("PBATT> %s: failed to create /proc/Pad_Bat_Voltage\n", __func__);
+        rtn = rtn - 1;
+    }
+    // current
+    static const struct file_operations asus_ec_read_pad_bat_current_fops = {
+        .owner = THIS_MODULE,
+        .open = asus_ec_read_pad_bat_current_open,
+        .read = seq_read,
+        .write = asus_ec_proc_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    ent = proc_create("Pad_Bat_Current", 0744, NULL, &asus_ec_read_pad_bat_current_fops);
+    if (!ent) {
+        pr_info("PBATT> %s: failed to create /proc/Pad_Bat_Current\n", __func__);
+        rtn = rtn - 1;
+    }
+    // usoc
+    static const struct file_operations asus_ec_read_pad_bat_usoc_fops = {
+        .owner = THIS_MODULE,
+        .open = asus_ec_read_pad_bat_usoc_open,
+        .read = seq_read,
+        .write = asus_ec_proc_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    ent = proc_create("Pad_Bat_USOC", 0744, NULL, &asus_ec_read_pad_bat_usoc_fops);
+    if (!ent) {
+        pr_info("PBATT> %s: failed to create /proc/Pad_Bat_USOC\n", __func__);
+        rtn = rtn - 1;
+    }
+    // temperature
+    static const struct file_operations asus_ec_read_pad_temp_fops = {
+        .owner = THIS_MODULE,
+        .open = asus_ec_read_pad_temp_open,
+        .read = seq_read,
+        .write = asus_ec_proc_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    ent = proc_create("Pad_Temp", 0744, NULL, &asus_ec_read_pad_temp_fops);
+    if (!ent) {
+        pr_info("PBATT> %s: failed to create /proc/Pad_Temp\n", __func__);
+        rtn = rtn - 1;
+    }
+
+    return (rtn);
+}
+#endif  ///< end of LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
 #else	///< else of ASUS_EC_POWER_PROC_DEV
 
 #define create_proc_pad_node()
@@ -997,7 +1296,7 @@ static void asus_pad_batt_late_resume(struct early_suspend *h)
 #define asus_pad_batt_late_resume NULL
 #endif
 
-static int __devinit asus_ec_power_probe(struct platform_device *pdev)
+static int asus_ec_power_probe(struct platform_device *pdev)
 {
     struct device *dev = &pdev->dev;
     int ret;
@@ -1091,7 +1390,7 @@ pad_dev_alloc_fail:
     return ret;
 }
 
-static int __devexit asus_battery_ec_remove(struct platform_device *pdev)
+static int asus_battery_ec_remove(struct platform_device *pdev)
 {
     struct device *dev = &pdev->dev;
 
@@ -1145,7 +1444,7 @@ static struct platform_driver asus_battery_ec_driver = {
         .pm    = &ec_pm_ops,
 	},
     .probe      = asus_ec_power_probe,
-    .remove     = __devexit_p(asus_battery_ec_remove),
+    .remove     = asus_battery_ec_remove,
     .id_table   = asus_battery_ec_table,
 };
 

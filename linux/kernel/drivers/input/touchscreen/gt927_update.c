@@ -31,7 +31,7 @@
  *                          By Meta, 2013/03/11
  */
 #include <linux/kthread.h>
-
+#include <linux/slab.h>
 #ifdef CONFIG_PF400CG
 #include <linux/i2c/gt927p.h>
 #else

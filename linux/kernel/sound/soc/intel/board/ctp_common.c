@@ -55,6 +55,7 @@
 
 extern int Read_PROJ_ID(void);
 static int PROJ_ID;
+static bool ME175CG_detect_flag = false;
 
 // joe_cheng : ME372CG Switch for uart and headset
 static int HS_PATH_EN_GPIO;
@@ -85,6 +86,7 @@ static ssize_t hs_store(struct device *dev, struct device_attribute *attr,
 	}
 	return 1;
 }
+/*
 #ifdef PF400CG_DOCK_DEBUG
 extern void mid_dock_report(int state);
 static ssize_t dock_state_store(struct device *dev, struct device_attribute *attr,
@@ -103,7 +105,7 @@ static ssize_t dock_state_store(struct device *dev, struct device_attribute *att
 	return 1;
 }
 #endif
-
+*/
 #define HEADSET_BUTTON_KEYCODE 226
 
 extern int rt5640_enable_micbias(int headset_devices);
@@ -188,10 +190,16 @@ static int set_mic_bias(struct snd_soc_jack *jack,
 	return 0;
 }
 
-
+static ssize_t headset_state_show(struct device *dev, struct device_attribute *attr,
+                char *buf);
 static ssize_t headset_state_store(struct device *dev, struct device_attribute *attr,
                         const char *buf, size_t count);
-static DEVICE_ATTR(a12_headset_status, S_IWUSR | S_IRUGO, NULL, headset_state_store);
+static DEVICE_ATTR(a12_headset_status, S_IWUSR | S_IRUGO, headset_state_show, headset_state_store);
+static ssize_t headset_state_show(struct device *dev, struct device_attribute *attr,
+                char *buf)
+{
+	return 0;
+}
 static ssize_t headset_state_store(struct device *dev, struct device_attribute *attr,
 		const char *buf, size_t count)
 {
@@ -200,12 +208,12 @@ static ssize_t headset_state_store(struct device *dev, struct device_attribute *
 	struct snd_soc_jack *jack = gpio->jack;
 	pr_err("%s : %s\n", __func__, buf);
 	if (buf[0] == '0') {
-//		set_mic_bias(jack, "micbias1", false);
+		set_mic_bias(jack, "micbias1", false);
 		snd_soc_jack_report(jack, 0, mask);
 		mid_headset_report(HEADSET_WITHOUT_MIC);
 	}
 	else if (buf[0] == '1') {
-//		set_mic_bias(jack, "micbias1", true);
+		set_mic_bias(jack, "micbias1", true);
 		snd_soc_jack_report(jack, 3, mask);
 		mid_headset_report(HEADSET_WITH_MIC);
 	}
@@ -556,7 +564,9 @@ int ctp_soc_jack_gpio_detect(void)
         msleep(ctx->ops->micsdet_debounce);
 	
 	if (!enable) {
+               set_bp_interrupt(ctx, true);
 		atomic_set(&ctx->hs_det_retry, HS_DET_RETRY);
+                if(PROJ_ID != PROJ_ID_ME175CG || !ME175CG_detect_flag)
                 g_headset_detect_time_start = jiffies;
 		pr_info("h2w : headset/headphone connecting\n");
 		schedule_delayed_work(&ctx->jack_work_insert,
@@ -565,6 +575,8 @@ int ctp_soc_jack_gpio_detect(void)
 		pr_info("h2w : headset/headphone disconnecting\n");
 		schedule_delayed_work(&ctx->jack_work_remove,
 					HPDETECT_POLL_INTERVAL);
+                if(PROJ_ID == PROJ_ID_ME175CG)
+                ME175CG_detect_flag = false;
 	}
 #ifdef CONFIG_HAS_WAKELOCK
 	/*
@@ -604,7 +616,13 @@ void headset_insert_poll(struct work_struct *work)
 
 	set_mic_bias(jack, "micbias1", true);
 	msleep(ctx->ops->micsdet_debounce);
-	status = ctx->ops->hp_detection(codec, jack, enable);
+        if(PROJ_ID != PROJ_ID_ME175CG || !ME175CG_detect_flag){
+          status = ctx->ops->hp_detection(codec, jack, enable);
+          ME175CG_detect_flag = true;
+        }
+        else
+        status = jack->status;
+
         hp_status = check_headset_type();
         pr_debug("h2w %s() : headset status %d, current jack status 0x%x\n", __func__, hp_status, jack->status);
 
@@ -613,7 +631,6 @@ void headset_insert_poll(struct work_struct *work)
             if (hp_status == HEADSET_WITH_MIC)
             {
                gpio->debounce_time = JACK_DEBOUNCE_REMOVE;
-               set_bp_interrupt(ctx, true);
                mid_headset_report(HEADSET_WITH_MIC);
 	       pr_info("h2w : headset connected\n");
             }
@@ -900,7 +917,7 @@ static void snd_ctp_unregister_jack(struct ctp_mc_private *ctx,
 	snd_soc_jack_free_gpios(&ctx->ctp_jack, 2, ctx->hs_gpio_ops);
 }
 
-static int __devexit snd_ctp_mc_remove(struct platform_device *pdev)
+static int snd_ctp_mc_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *soc_card = platform_get_drvdata(pdev);
 	struct ctp_mc_private *ctx = snd_soc_card_get_drvdata(soc_card);
@@ -1127,7 +1144,7 @@ static struct platform_driver snd_ctp_mc_driver = {
 		.pm   = &snd_ctp_mc_pm_ops,
 	},
 	.probe = snd_ctp_mc_probe,
-	.remove = __devexit_p(snd_ctp_mc_remove),
+	.remove = snd_ctp_mc_remove,
 	.id_table = ctp_audio_ids,
 };
 

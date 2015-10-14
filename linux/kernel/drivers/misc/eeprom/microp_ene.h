@@ -7,4 +7,5 @@
 
 void TriggerPadStationPowerOff(void);
 bool pad_exist(void);
+void microp_recheck_interrupt(void);
 #endif

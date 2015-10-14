@@ -182,9 +182,14 @@ static int mt9m114_raw_power_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int mt9m114_raw_csi_configure(struct v4l2_subdev *sd, int flag)
 {
+
+#ifdef CONFIG_ME372CL
+	return camera_sensor_csi(sd, ATOMISP_CAMERA_PORT_SECONDARY, 1,
+                ATOMISP_INPUT_FORMAT_RAW_10, atomisp_bayer_order_gbrg, flag);
+#else
 	return camera_sensor_csi(sd, ATOMISP_CAMERA_PORT_SECONDARY, 1,
 		ATOMISP_INPUT_FORMAT_RAW_10, atomisp_bayer_order_grbg, flag);
-
+#endif
 //	return camera_sensor_csi(sd, ATOMISP_CAMERA_PORT_SECONDARY, 1,
 //		-1, 0, flag);
 

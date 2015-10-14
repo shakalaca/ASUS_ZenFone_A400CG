@@ -108,6 +108,7 @@ int asus_emerg_poll_write(struct file *file, const char *buffer,
     return count;
 }
 
+#ifndef CONFIG_NEW_PROC_FS
 int init_emerg_poll_toggle(void)
 {
     struct proc_dir_entry *entry=NULL;
@@ -122,6 +123,52 @@ int init_emerg_poll_toggle(void)
 
     return 0;
 }
+#else
+static int nasus_emerg_poll_read(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%s\n", __func__);
+    BAT_DBG_E(" %s:\n", __func__);
+
+    mutex_lock(&batt_info_mutex);
+    batt_info.emerg_poll = true;
+    mutex_unlock(&batt_info_mutex);
+
+    asus_queue_update_all();
+
+    return 0;
+}
+static ssize_t nasus_emerg_poll_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    BAT_DBG_E(" %s:\n", __func__);
+    return count;
+}
+static int nasus_emerg_poll_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nasus_emerg_poll_read, NULL);
+}
+int init_emerg_poll_toggle(void)
+{
+    static const struct file_operations emerg_poll_toggle_fops = {
+        .owner = THIS_MODULE,
+        .open = nasus_emerg_poll_open,
+        .read = seq_read,
+        .write = nasus_emerg_poll_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("poll", 0644, NULL,
+        &emerg_poll_toggle_fops);
+    if (!entry) {
+        BAT_DBG_E("Unable to create /proc/poll\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 #else
 int init_emerg_poll_toggle(void) { return 0; }
 #endif
@@ -170,6 +217,7 @@ int asus_charging_toggle_write(struct file *file, const char *buffer,
     return count;
 }
 
+#ifndef CONFIG_NEW_PROC_FS
 int init_asus_charging_toggle(void)
 {
     struct proc_dir_entry *entry=NULL;
@@ -184,6 +232,84 @@ int init_asus_charging_toggle(void)
 
     return 0;
 }
+#else
+static int nasus_charging_toggle_read(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%s\n", __func__);
+    BAT_DBG_E(" %s:\n", __func__);
+
+    return 0;
+}
+static ssize_t nasus_charging_toggle_write(struct file *file,
+    const char __user *buf, size_t count, loff_t * ppos)
+{
+    BAT_DBG_E(" %s:\n", __func__);
+
+    char proc_buf[64];
+    struct battery_info_reply tmp_batt_info;
+    bool eng_charging_limit = true;
+
+    mutex_lock(&batt_info_mutex);
+    tmp_batt_info = batt_info;
+    mutex_unlock(&batt_info_mutex);
+
+    eng_charging_limit = tmp_batt_info.eng_charging_limit;
+
+    if (count > sizeof(proc_buf)) {
+        BAT_DBG("%s: data error\n", __func__);
+        return -EINVAL;
+    }
+
+    if (copy_from_user(proc_buf, buf, count)) {
+        BAT_DBG("%s: read data from user space error\n", __func__);
+        return -EFAULT;
+    }
+
+    if (proc_buf[0] == '1') {
+        /* turn on charging limit in eng mode */
+        eng_charging_limit = true;
+    }
+    else if (proc_buf[0] == '0') {
+        /* turn off charging limit in eng mode */
+        eng_charging_limit = false;
+    }
+
+    tmp_batt_info.eng_charging_limit = eng_charging_limit;
+
+    mutex_lock(&batt_info_mutex);
+    batt_info = tmp_batt_info;
+    mutex_unlock(&batt_info_mutex);
+
+    asus_queue_update_all();
+
+    return count;
+}
+static int nasus_charging_toggle_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nasus_charging_toggle_read, NULL);
+}
+int init_asus_charging_toggle(void)
+{
+    static const struct file_operations asus_charging_toggle_fops = {
+        .owner = THIS_MODULE,
+        .open = nasus_charging_toggle_open,
+        .read = seq_read,
+        .write = nasus_charging_toggle_write,
+        .llseek = seq_lseek,
+        .release = single_release,
+    };
+    struct proc_dir_entry *entry=NULL;
+
+    entry = proc_create("driver/charger_limit_enable", 0666, NULL,
+        &asus_charging_toggle_fops);
+    if (!entry) {
+        BAT_DBG_E("Unable to create asus_charging_toggle\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+#endif
 #else
 int init_asus_charging_toggle(void) { return 0; }
 #endif
@@ -210,8 +336,7 @@ static enum power_supply_property asus_battery_props[] = {
     defined(CONFIG_ME175CG_BATTERY) || \
     defined(CONFIG_ME372CL_BATTERY) || \
     defined(CONFIG_PF400CG_BATTERY) || \
-    defined(CONFIG_FE380CG_BATTERY) || \
-    defined(CONFIG_A400CG_BATTERY)  || \
+    defined(CONFIG_A400CG_BATTERY) || \
     defined(CONFIG_A450CG_BATTERY)
     POWER_SUPPLY_PROP_BATTERY_ID,
     POWER_SUPPLY_PROP_FIRMWARE_VERSION,
@@ -651,6 +776,7 @@ static int asus_battery_update_status_no_mutex(int percentage)
 {
     int status;
     int temperature;
+    int volt;
     struct battery_info_reply tmp_batt_info;
     u32 cable_status;
 
@@ -678,6 +804,7 @@ static int asus_battery_update_status_no_mutex(int percentage)
             battery temperature is too low or too high
         */
         temperature = asus_battery_update_temp_no_mutex();
+        volt = asus_battery_update_voltage_no_mutex();
         if (temperature != ERROR_CODE_I2C_FAILURE) {
 
             if (tmp_batt_info.tbl_chgr &&
@@ -704,6 +831,21 @@ static int asus_battery_update_status_no_mutex(int percentage)
                     temperature);
                 goto final;
             }
+#if defined(CONFIG_ME372CG) || defined(CONFIG_ME372CL)
+            else if (temperature > 500) { /* 50C < tempr <= 55C, Vchg == 101010 */
+                if (tmp_batt_info.tbl_chgr->get_soc_control_float_vol() == 0x2A && volt >= 4100) {
+                    if (tmp_batt_info.tbl_chgr &&
+                        tmp_batt_info.tbl_chgr->charging_toggle)
+                        tmp_batt_info.tbl_chgr->charging_toggle(JEITA, false);
+                    status = POWER_SUPPLY_STATUS_DISCHARGING;
+                    BAT_DBG_E("*Error*: Force stop charging due to that "
+                        "battery temperature(%d) is higher than 500 (0.1C)"
+                        " with battery voltage >= 4.1V",
+                        temperature);
+                    goto final;
+                }
+            }
+#endif
         }
 
         if (status == POWER_SUPPLY_STATUS_CHARGING)
@@ -1126,6 +1268,9 @@ static int asus_battery_get_property(struct power_supply *psy,
         break;
     case POWER_SUPPLY_PROP_CAPACITY:
         val->intval = tmp_batt_info.percentage;
+#ifdef CONFIG_A450CG
+        if (val->intval == 0) val->intval = 1;
+#endif
         break;
     case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
         val->intval = tmp_batt_info.level;
@@ -1328,11 +1473,13 @@ int asus_battery_init(u32 polling_time,
     INIT_DELAYED_WORK(&battery_poll_data_work, asus_polling_data);
     INIT_DELAYED_WORK(&detect_cable_work, USB_cable_status_worker);
 
+#ifndef CONFIG_A450CG
     ret = init_asus_charging_toggle();
     if (ret) {
         BAT_DBG_E("Unable to create proc file\n");
         goto proc_fail;
     }
+#endif
 
     ret = init_emerg_poll_toggle();
     if (ret) {
@@ -1371,19 +1518,6 @@ void asus_battery_exit(void)
     }
     BAT_DBG("Driver unload OK\n");
 }
-
-static int __init asus_battery_fake_init(void)
-{
-    return 0;
-}
-late_initcall(asus_battery_fake_init);
-
-static void __exit asus_battery_fake_exit(void)
-{
-    /* SHOULD NOT REACHE HERE */
-    BAT_DBG("%s exit\n", __func__);
-}
-module_exit(asus_battery_fake_exit);
 
 MODULE_AUTHOR("chris1_chang@asus.com");
 MODULE_DESCRIPTION("battery driver");

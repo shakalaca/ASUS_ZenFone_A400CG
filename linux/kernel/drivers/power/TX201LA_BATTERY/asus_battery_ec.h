@@ -2,6 +2,11 @@
 #define _ASUS_EC_BATTERY_H_
 #include <linux/kernel.h>
 
+#define EC_CHARGER_CTRL_STARTCHARGE          1
+#define EC_CHARGER_CTRL_STOPCHARGE           2
+#define EC_CHARGER_CTRL_CHG_CURRENT_NORMAL   3
+#define EC_CHARGER_CTRL_CHG_CURRENT_2A       4
+
 typedef enum {
     RET_EC_OK = 0,
     RET_EC_FAIL = -1, // i2c fail

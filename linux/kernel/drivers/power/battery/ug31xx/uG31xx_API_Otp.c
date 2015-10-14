@@ -928,6 +928,19 @@ void UpiConvertOtp(OtpDataType *data)
   CheckOtpISEmpty(data);
 }
 
+/**
+ * @brief UpiPrintOtpVersion
+ *
+ *  Print OTP module version
+ *
+ * @return  NULL
+ */
+void UpiPrintOtpVersion(void)
+{
+  UG31_LOGE("[%s]: %s\n", __func__,
+            OTP_VERSION);
+}
+
 
 /**
  * Copyright @ 2013 uPI Semiconductor Corp. All right reserved.

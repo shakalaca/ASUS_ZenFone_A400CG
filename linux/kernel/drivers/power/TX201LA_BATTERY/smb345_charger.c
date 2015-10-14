@@ -9,6 +9,8 @@
 #define TWINS_H_CURRENT_LIMIT 1800
 #define USB_HC_CURRENT_LIMIT  500
 
+extern int ite_read_chargeric_reg(int addr, int reg, int length, unsigned char *return_buf);
+extern int ite_write_chargeric_reg(unsigned char *buf);
 /* Convert current to register value using lookup table */
 static int current_to_hw(const unsigned int *tbl, size_t size, unsigned int val)
 {
@@ -20,9 +22,40 @@ static int current_to_hw(const unsigned int *tbl, size_t size, unsigned int val)
         return i > 0 ? i - 1 : -EINVAL;
 }
 
-static int smb345_set_writable(bool writable) {
+int smb345_write_i2c(u8 reg, u8 value)
+{
+    unsigned char data[5];
+    int length;
     int ret;
-    ret = asus_pad_batt_read_charger_reg(CMD_A);
+
+    memset(data, 0, sizeof(data));
+    data[0] = 1;
+    data[1] = reg;
+    data[2] = value & 0xFF;
+    ret = ite_write_chargeric_reg(data);
+
+    return ret;
+}
+
+int smb345_read_i2c(u8 reg)
+{
+    unsigned char data[2];
+    int length;
+    int err;
+
+    length = 1;
+    err = ite_read_chargeric_reg(0x6A, reg, length, data);
+
+    if (err == RET_EC_OK) {
+        err = data[0];
+    }
+
+    return err;
+}
+
+static int smb345_set_writable(bool writable) {
+    int ret,tmp;
+    ret = smb345_read_i2c(CMD_A);
     if (ret < 0) {
        return ret;
     }
@@ -30,7 +63,7 @@ static int smb345_set_writable(bool writable) {
         ret |= CMD_A_ALLOW_WRITE;
     else
         ret &= ~CMD_A_ALLOW_WRITE;
-    return asus_pad_batt_write_charger_reg(CMD_A,ret);
+    return smb345_write_i2c(CMD_A,ret);
 }
 
 /* enable/disable AICL function */
@@ -38,7 +71,7 @@ static int smb345_OptiCharge_Toggle(bool on)
 {
     int ret;
 
-    ret = asus_pad_batt_read_charger_reg(CFG_VARIOUS_FUNCS);
+    ret = smb345_read_i2c(CFG_VARIOUS_FUNCS);
     if (ret < 0)
         goto fail;
 
@@ -47,7 +80,7 @@ static int smb345_OptiCharge_Toggle(bool on)
     else
         ret &= ~CFG_VARIOUS_FUNCS_OPTICHARGE_TOGGLE;
 
-    ret = asus_pad_batt_write_charger_reg(CFG_VARIOUS_FUNCS, ret);
+    ret = smb345_write_i2c(CFG_VARIOUS_FUNCS, ret);
     if (ret < 0)
         goto fail;
 
@@ -63,7 +96,7 @@ static int smb345_set_current_limits(int usb_state, bool is_twinsheaded)
     if (ret < 0)
         return ret;
 
-    ret = asus_pad_batt_read_charger_reg(CFG_CURRENT_LIMIT);
+    ret = smb345_read_i2c(CFG_CURRENT_LIMIT);
     if (ret < 0)
         return ret;
 
@@ -82,7 +115,7 @@ static int smb345_set_current_limits(int usb_state, bool is_twinsheaded)
     if (index < 0)
         return index;
 
-    return asus_pad_batt_write_charger_reg(CFG_CURRENT_LIMIT, index);
+    return smb345_write_i2c(CFG_CURRENT_LIMIT, index);
 }
 
 /* enable USB5 or USB9 and HC mode function */
@@ -90,7 +123,7 @@ static int smb345_USB9_HC_Toggle(bool on)
 {
     int ret;
 
-    ret = asus_pad_batt_read_charger_reg(CMD_B);
+    ret = smb345_read_i2c(CMD_B);
     if (ret < 0)
         goto fail;
 
@@ -98,7 +131,7 @@ static int smb345_USB9_HC_Toggle(bool on)
         ret |= CMD_B_USB9_AND_HC_MODE;
     else
         ret &= ~CMD_B_USB9_AND_HC_MODE;
-    ret = asus_pad_batt_write_charger_reg(CMD_B, ret);
+    ret = smb345_write_i2c(CMD_B, ret);
 
 fail:
     return ret;
@@ -110,7 +143,7 @@ static int smb345_USB9_HC_PIN_Control(bool on)
     int ret;
     u8 b = BIT(4);
 
-    ret = asus_pad_batt_read_charger_reg(CFG_PIN);
+    ret = smb345_read_i2c(CFG_PIN);
     if (ret < 0)
         goto fail;
 
@@ -118,7 +151,7 @@ static int smb345_USB9_HC_PIN_Control(bool on)
         ret |= b;
     else
         ret &= ~b;
-    ret = asus_pad_batt_write_charger_reg(CFG_PIN, ret);
+    ret = smb345_write_i2c(CFG_PIN, ret);
 
 fail:
     return ret;
@@ -128,7 +161,7 @@ static int smb345_masked_write(int reg,u8 mask, u8 val)
 {
     int ret;
 
-    ret = asus_pad_batt_read_charger_reg(reg);
+    ret = smb345_read_i2c(reg);
     if (ret <0) {
         printk("smb345_read_reg failed: reg=%03X, ret=%d\n", reg, ret);
         return ret;
@@ -136,7 +169,7 @@ static int smb345_masked_write(int reg,u8 mask, u8 val)
 
     ret &= ~mask;
     ret |= val & mask;
-    ret = asus_pad_batt_write_charger_reg(reg, ret);
+    ret = smb345_write_i2c(reg, ret);
     if (ret) {
         pr_err("smb345_write failed: reg=%03X, ret=%d\n", reg, ret);
         return ret;
@@ -180,7 +213,7 @@ int smb345_charger_toggle(bool on) {
     ret = smb345_set_writable(true);
     if (ret <0)
         return ret;
-    ret = asus_pad_batt_read_charger_reg(CFG_PIN);
+    ret = smb345_read_i2c(CFG_PIN);
     if (ret < 0)
         goto out;
     /*
@@ -197,7 +230,7 @@ int smb345_charger_toggle(bool on) {
             . I2C Control - "0" in Command Register disables charger */
     }
 
-    ret = asus_pad_batt_write_charger_reg(CFG_PIN,ret);
+    ret = smb345_write_i2c(CFG_PIN,ret);
     if (ret < 0)
         goto out;
 out:
@@ -206,7 +239,7 @@ out:
 
 void smb345_dump_registers(struct seq_file *s)
 {
-    u8 reg,ret;
+    u8 reg,ret,tmp;
 
     printk(" Control registers:\n");
     printk(" ==================\n");
@@ -218,7 +251,7 @@ void smb345_dump_registers(struct seq_file *s)
     }
 
     for (reg = CFG_CHARGE_CURRENT; reg <= CFG_ADDRESS; reg++) {
-        ret = asus_pad_batt_read_charger_reg(reg);
+        ret = smb345_read_i2c(reg);
         printk(" 0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
         if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
     }
@@ -236,13 +269,13 @@ void smb345_dump_registers(struct seq_file *s)
         seq_printf(s, "#Addr\t#Value\n");
     }
 
-    ret = asus_pad_batt_read_charger_reg(CMD_A);
+    ret = smb345_read_i2c(CMD_A);
     printk("0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_A, BYTETOBINARY(ret));
     if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_A, BYTETOBINARY(ret));
-    ret = asus_pad_batt_read_charger_reg(CMD_B);
+    ret = smb345_read_i2c(CMD_B);
     printk("0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_B, BYTETOBINARY(ret));
     if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_B, BYTETOBINARY(ret));
-    ret = asus_pad_batt_read_charger_reg(CMD_C);
+    ret = smb345_read_i2c(CMD_C);
     printk("0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_C, BYTETOBINARY(ret));
     if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", CMD_C, BYTETOBINARY(ret));
     printk("\n");
@@ -258,7 +291,7 @@ void smb345_dump_registers(struct seq_file *s)
     }
 
     for (reg = IRQSTAT_A; reg <= IRQSTAT_F; reg++) {
-        ret = asus_pad_batt_read_charger_reg(reg);
+        ret = smb345_read_i2c(reg);
         printk("0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
         if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
     }
@@ -274,7 +307,7 @@ void smb345_dump_registers(struct seq_file *s)
         seq_printf(s, "#Addr\t#Value\n");
     }
     for (reg = STAT_A; reg <= STAT_E; reg++) {
-        ret = asus_pad_batt_read_charger_reg(reg);
+        ret = smb345_read_i2c(reg);
         printk("0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
         if (s) seq_printf(s, "0x%02x:\t" BYTETOBINARYPATTERN "\n", reg, BYTETOBINARY(ret));
     }
@@ -312,15 +345,6 @@ void smb345_config_max_current_twinheadeddragon(int inok_gpio)
         return;
     }
 
-#if 0
-        /* Enable AICL - Write 02h[4]="1" */
-        if (smb345_OptiCharge_Toggle(true) < 0) {
-                dev_err(&smb347_dev->client->dev,
-                "%s: fail to enable AICL\n", __func__);
-                return;
-        }
-#endif
-
     smb345_soc_control_jeita();
 
     /* check if ACOK# = 0 */
@@ -329,5 +353,5 @@ void smb345_config_max_current_twinheadeddragon(int inok_gpio)
         return;
     }
 
-    pr_info("%s: charger type: TWINHEADEDDRAGON done.\n", __func__);
+    printk("%s: charger type: TWINHEADEDDRAGON done.\n", __func__);
 }

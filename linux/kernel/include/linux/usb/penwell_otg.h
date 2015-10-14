@@ -125,9 +125,15 @@
 #define MSIC_OTGCTRL		0x39c
 #define MSIC_OTGCTRLSET		0x340
 #define MSIC_OTGCTRLCLR		0x341
+#define	IFC_CTRL    0x07
+#define	IFC_CTRL_SET    0x08
+#define	IFC_CTRL_CLR    0x09
+#	define INDICATORPASSTHRU		BIT(6)
+#	define INDICATORCOMPLEMENT		BIT(5)
 #define	ULPI_OTGCTRL		0x0a
 #define	ULPI_OTGCTRLSET		0x0b
 #define	ULPI_OTGCTRLCLR		0x0c
+#	define USEEXTERNALVBUSINDICATOR		BIT(7)
 #	define DRVVBUS_EXTERNAL		BIT(6)
 #	define DRVVBUS			BIT(5)
 #	define DMPULLDOWN		BIT(2)
@@ -418,7 +424,7 @@ struct adp_status {
 /* OTG Battery Charging capability is used in charger capability detection */
 struct otg_bc_cap {
 	enum usb_charger_type	chrg_type;
-	unsigned int		mA;
+	unsigned int		ma;
 #define CHRG_CURR_UNKNOWN	0
 #define CHRG_CURR_DISCONN	0
 #define CHRG_CURR_SDP_SUSP	2
@@ -465,8 +471,11 @@ struct penwell_otg {
 
 	unsigned			region;
 	unsigned			cfg_region;
-
+#ifdef CONFIG_EEPROM_PADSTATION
 	struct delayed_work	work;
+#else
+	struct work_struct	work;
+#endif
 	struct work_struct		hnp_poll_work;
 	struct work_struct		psc_notify;
 	struct work_struct		uevent_work;

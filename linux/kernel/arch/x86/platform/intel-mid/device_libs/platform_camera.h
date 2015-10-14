@@ -13,6 +13,7 @@
 #define _PLATFORM_CAMERA_H_
 
 #include <linux/atomisp_platform.h>
+#include <asm/intel-mid.h>
 
 //Peter++
 #include <linux/HWVersion.h>
@@ -25,6 +26,9 @@ extern int intel_scu_ipc_msic_vemmc1(int);
 //Peter--
 
 extern const struct intel_v4l2_subdev_id v4l2_ids[] __attribute__((weak));
+
+#define IS_BYT (INTEL_MID_BOARD(1, PHONE, BYT) || \
+	INTEL_MID_BOARD(1, TABLET, BYT))
 
 /* MFLD iCDK camera sensor GPIOs */
 

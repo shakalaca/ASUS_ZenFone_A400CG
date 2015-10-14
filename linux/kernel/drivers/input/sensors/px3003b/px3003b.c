@@ -32,6 +32,8 @@
 
 #define PX3003B_NUM_CACHABLE_REGS	6
 
+extern int build_version;
+
 static struct i2c_client *px3003b_i2c_client = NULL;
 
 // Sensors Interrupt Workqueue
@@ -68,7 +70,7 @@ static int PS_DEBUGMSG	= 1;	// default 0 : for Test and debug
  * Close : adb shell "echo 0 > /proc/als3010_debug" 
  */
 #define	PX3003B_PROC_FILE	"px3003b_debug"
-static struct proc_dir_entry *px3003b_proc_file;
+//static struct proc_dir_entry *px3003b_proc_file;
 static unsigned int debug = 0;
 
 typedef enum{ 
@@ -398,6 +400,7 @@ static ssize_t px3003b_register_write(struct file *filp, const char __user *buff
 	}
 	return len;
 }
+/*
 void px3003b_create_proc_file(void)
 {
 	px3003b_proc_file = create_proc_entry(PX3003B_PROC_FILE, 0666, NULL);
@@ -409,12 +412,14 @@ void px3003b_create_proc_file(void)
 		if(PS_DEBUGMSG) printk( "[%s]	create_proc_entry failed !!\n",__FUNCTION__);
 	}
 }
+
 void px3003b_remove_proc_file(void)
 {
     extern struct proc_dir_entry proc_root;
     if(unlikely(debug))printk( "[%s] remove proc files \n",__FUNCTION__);
     remove_proc_entry(PX3003B_PROC_FILE, &proc_root);
 }
+*/
 /* add by Tom for proc file -- */
 
 static int CharToInt(char CValue[]){
@@ -1812,10 +1817,9 @@ static int px3003b_probe(struct i2c_client *client, const struct i2c_device_id *
 	}
 	
 	mutex_init(&ps_sensor_data->lock);
-
 	/* Initialize Setting */
-	px3003b_create_proc_file();
-	if(PS_MESSAGE) printk("[%s] : px3003b_create_proc_file() : debug = %d \n",__FUNCTION__,debug);
+	//px3003b_create_proc_file();
+	//if(PS_MESSAGE) printk("[%s] : px3003b_create_proc_file() : debug = %d \n",__FUNCTION__,debug);
 
 	// init input subsystem	
 	err = px3003b_input_init();
@@ -1842,7 +1846,7 @@ static int px3003b_probe(struct i2c_client *client, const struct i2c_device_id *
 	ps_sensor_data->irq = gpio_to_irq(ps_sensor_data->int_gpio);
 	if(PS_MESSAGE) printk(KERN_INFO "[%s] : px3003b irq = %d\n",__FUNCTION__,ps_sensor_data->irq);
 	if(ps_sensor_data->irq > 0){
-		err = request_threaded_irq(ps_sensor_data->irq, NULL,ps_interrupt, IRQF_TRIGGER_FALLING,"px3003b_interrupt",NULL);
+		err = request_threaded_irq(ps_sensor_data->irq, NULL,ps_interrupt, IRQF_TRIGGER_FALLING | IRQF_ONESHOT,"px3003b_interrupt",NULL);
 	  	if (err) {
 			dev_err(&client->adapter->dev,"cannot register IRQ %d,err:%d\n",ps_sensor_data->irq,err);
 			printk("[%s] : request_threaded_irq(%d, NULL, ps_interrupt, IRQF_TRIGGER_FALLING ,px3003b_interrupt ,NULL)\n",__FUNCTION__, ps_sensor_data->irq);
@@ -1870,6 +1874,18 @@ static int px3003b_probe(struct i2c_client *client, const struct i2c_device_id *
 			return err;
 	}
 	
+	// add by tom for disable irq for A400CG (SR1 & SR2) ++
+	if((Read_PROJ_ID() == PROJ_ID_A400CG) || (Read_PROJ_ID() == PROJ_ID_A450CG)){
+		if((Read_HW_ID() == HW_ID_SR1) || (Read_HW_ID() == HW_ID_SR2))
+		{
+			if(build_version!=1){	// 1:eng ; 2:user ; 3:userdebug 
+ 				printk("[%s] : Disable irq because HW_ID is SR1 or SR2\n",__FUNCTION__);
+				disable_irq(ps_sensor_data->irq);
+				IsDisableIrq=1;
+			}			
+		}
+	}    
+    // add by tom for disable irq for A400CG (SR1 & SR2) --
 	
 	if(PS_MESSAGE) printk("==================End px3003b_probe ==========================\n");
 
@@ -1884,7 +1900,7 @@ exit_kfree:
 	return err;
 }
 
-static int __devexit px3003b_remove(struct i2c_client *client)
+static int px3003b_remove(struct i2c_client *client)
 {
 	struct px3003b_data *data;
 	u8 reg_val = 0x00;
@@ -1892,7 +1908,7 @@ static int __devexit px3003b_remove(struct i2c_client *client)
 	// power down chip at remove
 	i2c_smbus_write_byte_data(ps_sensor_data->client, ADDR_PX_CONFIG_CONFIG, reg_val);
 	ps_sensor_data->px3003b_reg_status[INDEX_PX_CONFIG_CONFIG] = reg_val;	
-	px3003b_remove_proc_file();
+	//px3003b_remove_proc_file();
 	sysfs_remove_group(&client->dev.kobj, &px3003b_attr_group);
 	data = i2c_get_clientdata(client);
 	px3003b_i2c_client = NULL;
@@ -1929,7 +1945,7 @@ static struct i2c_driver px3003b_i2c_driver = {
 	.suspend	=	px3003b_suspend,
 	.resume	=	px3003b_resume,
 	.probe	=	px3003b_probe,
-	.remove	=	__devexit_p(px3003b_remove),
+	.remove	=	px3003b_remove,
 	.id_table	=	px3003b_i2c_table,	
 };
 

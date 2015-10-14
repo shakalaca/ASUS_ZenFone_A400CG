@@ -54,12 +54,11 @@
 
 unsigned int g_firmwareSize = 16*1024;
 
-extern int wcnss_IsWlanEnabled(void);
-
 extern int hex_to_bin(char ch);//Eric
 
 static int is_first_bootup = 1;
 static int rf_switch_gpio = -1;
+static uint8_t is_microp_init = 0;
 
 struct ioctl_data {
     int time_interval;
@@ -214,6 +213,9 @@ struct workqueue_struct *microp_ins_rev_wq = NULL;
 struct workqueue_struct *microp_intr_wq = NULL;
 struct workqueue_struct *microp_detect_wq = NULL;
 struct wake_lock interrupt_lock_t;
+
+extern uint8_t speaker_en;
+extern uint8_t recevier_en;
 
 int pad_detect_flag = 0;
 char display_ready = false;
@@ -523,85 +525,75 @@ int isMicroPConnected(void){
 #endif
     uint8_t a68_ready=0x96;
     uint8_t poweron = 0xBB;
-       
+    uint8_t resume = 0x69;
+ 
     printk("%s \r\n", __FUNCTION__);
-    uP_i2c_read_reg(MICROP_BATTERY_CONFIG,&fw_data);
-    printk("Eric 0x3a 0~4 byte ==0x%02x%02x%02x%02x\n", fw_data[0], fw_data[1], fw_data[2],fw_data[3]);
-    status=uP_i2c_read_reg(MICROP_OEM_FW_VERSION,&mcirop_ver);
-    memcpy(tmp,mcirop_ver+10,4);
-    printk("Eric: mcirop_ver=%32s,status = %d,ap_version =%s\r\n",mcirop_ver,status,tmp);
-    reg_id = atoh(tmp,4);
-       //status = 1;
-       //reg_id = 1; // Walf FW not support
-    printk("MicroP found! fw ver=0x%x, %d\r\n",reg_id, status);
-    if(status > 0 && reg_id > 0){
-        printk("MicroP found! fw ver=0x%x\r\n",reg_id);
+
+    status = uP_i2c_read_reg(MICROP_BOOT_SELECTION,&g_curr_uP_mode);
+    printk("Current Mode=%s\r\n",(g_curr_uP_mode==0)?"APROM":"LDROM");
+
+    if(status > 0 && is_Mode_APROM()){
+
+        uP_i2c_read_reg(MICROP_BATTERY_CONFIG,&fw_data);
+        printk("Reg:0x3a 0~4 byte ==0x%02x%02x%02x%02x\n", fw_data[0], fw_data[1], fw_data[2],fw_data[3]);
+        status=uP_i2c_read_reg(MICROP_OEM_FW_VERSION,&mcirop_ver);
+        memcpy(tmp,mcirop_ver+10,4);
+        printk("mcirop_ver=%32s,status = %d,ap_version =%s\r\n",mcirop_ver,status,tmp);
+        reg_id = atoh(tmp,4);
+        printk("MicroP found! fw ver=0x%x, %d\r\n",reg_id, status);
         g_microp_ver=reg_id;
-
-        uP_i2c_read_reg(MICROP_BOOT_SELECTION,&g_curr_uP_mode);
-        printk("Current Mode=%s\r\n",(g_curr_uP_mode==0)?"APROM":"LDROM");
-
-        if(is_Mode_APROM())
-            uP_i2c_read_reg(MICROP_LDROM_ID_CODE,&g_ldrom_ver);
-        else
-            g_ldrom_ver=g_microp_ver;
-
+        uP_i2c_read_reg(MICROP_LDROM_ID_CODE,&g_ldrom_ver);
         printk("LDROM ver=0x%x\r\n",g_ldrom_ver);
 
-        if(is_Mode_APROM()){
-            int status;
-            st_jiffies=jiffies;
-            uP_i2c_write_reg(MICROP_POWER_ON,&poweron);
+        st_jiffies=jiffies;
+        uP_i2c_write_reg(MICROP_IND_PHONE_RESUME, &resume);
+        uP_i2c_write_reg(MICROP_POWER_ON,&poweron);
+        status = uP_i2c_read_reg(MICROP_OPERATING_STATE,&op_state);
+        while (st_MICROP_Active!=op_state && status > 0 && retries>0) {
+            // try to wake up EC by i2c cmd
+            if (st_MICROP_Off == op_state)
+                uP_i2c_write_reg(MICROP_POWER_ON,&poweron);
+
+            msleep(30);
+            printk("<try: %d, op_state=%d>\n", 40-retries, op_state);
             status = uP_i2c_read_reg(MICROP_OPERATING_STATE,&op_state);
-            while (st_MICROP_Active!=op_state && status > 0 && retries>0) {
-                // try to wake up EC by i2c cmd
-                if (st_MICROP_Off == op_state)
-                    uP_i2c_write_reg(MICROP_POWER_ON,&poweron);
+            retries--;
+        }
 
-                msleep(30);
-                printk("<try: %d, %d>\n", 40-retries, op_state);
-                status = uP_i2c_read_reg(MICROP_OPERATING_STATE,&op_state);
-                retries--;
-            }
-
-            printk("==> takes %lu jiffies~~\r\n", jiffies - st_jiffies);
-            if(retries == 0 || status <= 0)
-                printk("microp state failed!!\r\n");
-            else {
-                printk("state=> Active\r\n");
+        printk("==> takes %lu jiffies~~\r\n", jiffies - st_jiffies);
+        if(retries == 0 || status <= 0)
+            printk("microp state failed!!\r\n");
+        else {
+            printk("state=> Active\r\n");
 #ifndef ASUS_FACTORY_BUILD
-                status=uP_i2c_read_reg(MICROP_ALWAYS_IGNORE_PHONE_READY,&always_ignore);
-                if(status && 0x96==always_ignore){
-                    always_ignore=0;
-                    printk("%s: clear \"MICROP_ALWAYS_IGNORE_A68READY\" flag \r\n", __FUNCTION__);
-                    uP_i2c_write_reg(MICROP_ALWAYS_IGNORE_PHONE_READY,&always_ignore);
-                }
-                status=uP_i2c_read_reg(MICROP_DISABLE_CHARGING_FOR_FACTORY,&uc_val);
-                if(status && 0xcc==uc_val){
-                    uc_val=0;
-                    printk("%s: clear \"MICROP_DISABLE_CHARGING_FOR_FACTORY\" flag \r\n", __FUNCTION__);
-                    uP_i2c_write_reg(MICROP_DISABLE_CHARGING_FOR_FACTORY,&uc_val);
-                }
-#endif
-                printk("MicroP found! write MICROP_IND_A68_READY\r\n");
-                status=uP_i2c_write_reg(MICROP_IND_PHONE_READY,&a68_ready);
-                if(status > 0)
-                    ret=1;
+            status=uP_i2c_read_reg(MICROP_ALWAYS_IGNORE_PHONE_READY,&always_ignore);
+            if(status && 0x96==always_ignore){
+                always_ignore=0;
+                printk("%s: clear \"MICROP_ALWAYS_IGNORE_A68READY\" flag \r\n", __FUNCTION__);
+                uP_i2c_write_reg(MICROP_ALWAYS_IGNORE_PHONE_READY,&always_ignore);
             }
+            status=uP_i2c_read_reg(MICROP_DISABLE_CHARGING_FOR_FACTORY,&uc_val);
+            if(status && 0xcc==uc_val){
+                uc_val=0;
+                printk("%s: clear \"MICROP_DISABLE_CHARGING_FOR_FACTORY\" flag \r\n", __FUNCTION__);
+                uP_i2c_write_reg(MICROP_DISABLE_CHARGING_FOR_FACTORY,&uc_val);
+            }
+#endif
+            printk("MicroP found! write MICROP_IND_A68_READY\r\n");
+            status=uP_i2c_write_reg(MICROP_IND_PHONE_READY,&a68_ready);
+            if(status > 0)
+                ret=1;
         }
-        else{
-            printk("entering LDROM: %d\r\n", is_Mode_APROM());
-            ret=1;
-        }
-    }else{
+    } else if (status > 0) { //LDROM
+        printk("LDROM,force upgrade firmware\n");
+        micropSendNotify(P01_APROM_CRASH);
+        g_ldrom_ver = 0;
+        ret = 1;
+    } else{
         printk("%s : not connected\r\n", __FUNCTION__);
     }
     return ret;
 }
-
-EXPORT_SYMBOL_GPL(isMicroPConnected);
-
-
 
 /*
 *
@@ -683,6 +675,8 @@ static int updateMicroPFirmware_ENE(unsigned long arg);
 #define IsPadBatStatChange()       (((reg_intr_sta>>INTR_STA_BAT_STAT_CHANGE)& 0x1)?1:0 )
 #define IsPadPwrBtnPressEvt()      (((reg_intr_sta>>INTR_STA_PWR_PRESS)      & 0x1)?1:0 )
 #define IsPadPwrBtnReleaseEvt()    (((reg_intr_sta>>INTR_STA_PWR_RELEASE)    & 0x1)?1:0 )
+#define IsPadPowerOnEvt()          (((reg_intr_sta>>INTR_STA_POWER_ON)       & 0x1)?1:0 )
+#define IsPadLowLowBatt()          (((reg_intr_sta>>INTR_STA_LOWLOW_BAT)     & 0x1)?1:0 )
 #define IsPadNoIntrEvt()           ((reg_intr_sta==0)?1:0)
 
 /*
@@ -809,10 +803,11 @@ void reportPadStationI2CFail(char *devname){
         if(g_i2c_bus_suspended)
             printk("%s: Bus Suspended: Skip\r\n", __FUNCTION__);
         else if( is_Mode_APROM() && ( st_CONNECTED==g_b_isP01Connected ||
-                 (st_PRE_CONNECTED==g_b_isP01Connected && !strncmp(devname, "DISPLAY", strlen(devname))) ) ){
+                 (st_PRE_CONNECTED==g_b_isP01Connected))){
             if(pad_exist()){
                 printk("%s: %s Triggerd Virtual Remove\r\n", __FUNCTION__, devname);
                 g_uPadErrStatus=3; //i2c error
+                AX_MicroP_set_VBusPower(0);
                 notify_microp_remove(1);
             }
             else{
@@ -898,6 +893,7 @@ static void initP01(struct work_struct *work){
 
     if(st_CONNECTED==g_b_isP01Connected){
         uP_i2c_read_reg(MICROP_INTR_STATUS,&reg_intr_sta);
+        is_microp_init = 1;
         uP_i2c_read_reg(MICROP_GPIO_INPUT_LEVEL,&reg_input);
         uP_i2c_read_reg(MICROP_USB_DET, &usb_det);
         uP_i2c_read_reg(MICROP_USB_TYPE,&usb_type);
@@ -919,8 +915,14 @@ static void initP01(struct work_struct *work){
             is_otg_mode = true;
             AX_MicroP_setOTGPower(1);
             micropSendNotify(PAD_USB_OTG_ENABLE);
+        } else if (usb_det==P01_CABLE_NO){
+            micropSendNotify(P01_AC_USB_OUT);
         }
-		
+        if (IsPadProxmEvt()){
+            printk("uP_Init:Proximity interrupt\n");
+            micropSendNotify(P01_PROXM_SENSOR);
+        }
+
 #if 0
 		//work around, dont charge padfone in default
 		printk(KERN_INFO "uP_Init: WorkAround Set Vbus=0 !not to charge PadFone !!\n");
@@ -1002,7 +1004,12 @@ static void microP_work(struct work_struct *work)
         uP_i2c_read_reg(MICROP_GPIO_INPUT_LEVEL,&reg_input);
         return;
     }
-	
+
+    if (is_microp_init == 0) {
+        printk("Microp:not initial,ignore interrupt\n");
+        return;
+    }
+
     if(st_CONNECTED==g_b_isP01Connected){
 	while(0==gpio_get_value(g_microp_irq_gpio)){
             if(g_i2c_bus_suspended){
@@ -1025,6 +1032,29 @@ static void microP_work(struct work_struct *work)
                     uP_i2c_read_reg(MICROP_GPIO_INPUT_LEVEL,&reg_input);
                     if(IsPadRevSleepReminder()){
                         printk("Rev MicroP Sleep Reminder!!\r\n");
+                    }
+                    if (IsPadPowerOnEvt()){
+                        printk("Microp PowerOn event\n");
+                        uint8_t a68_ready=0x96;
+                        int rc;
+                        rc = uP_i2c_write_reg(MICROP_IND_PHONE_READY,&a68_ready);
+                        if( rc <= 0){
+                             printk("%s: set microp to ready failed\n", __func__);
+                             return -1;
+                        }
+                        if (g_b_isP01BtnPressed & PWR_BTN_PRESS) {
+                            micropSendNotify(P01_PWR_KEY_RELEASED);
+                            g_b_isP01BtnPressed &= ~PWR_BTN_PRESS;
+                        }
+                        if (speaker_en)
+                            AX_MicroP_setSPK_EN(speaker_en);
+                        if (recevier_en)
+                            AX_MicroP_setRCV_EN(recevier_en);
+                        micropSendNotify(P01_ADD);
+                    }
+                    if (IsPadLowLowBatt()){
+                        printk("Microp reach low low battery,force remove\n");
+                        notify_microp_remove(0);
                     }
                     if(IsPadHavingBat5Percent()){
                         printk("MicroP HavingBat Reach 5P!!\r\n");
@@ -1161,6 +1191,7 @@ static void microp_paddetect(struct work_struct *work)
     }
     else
     {
+        is_microp_init = 0;
         notify_microp_remove(0);
     }
 
@@ -1178,7 +1209,7 @@ int checkPadExist(int trigger_power_on) {
 
        if(paddetect_gpio_value == 0){
            if(!trigger_power_on) {
-               queue_delayed_work(microp_detect_wq, &g_uP_info->paddetect, msecs_to_jiffies(1000)); //display is ready, do paddetect
+               queue_delayed_work(microp_detect_wq, &g_uP_info->paddetect, msecs_to_jiffies(0)); //display is ready, do paddetect
            }
            else {  //display is not ready, only power on microp
                uint8_t a68_ready=0x96;
@@ -1208,6 +1239,12 @@ int checkPadExist(int trigger_power_on) {
    return 0;
 }
 EXPORT_SYMBOL(checkPadExist);
+
+void microp_recheck_interrupt()
+{
+    printk("enter %s\n",__FUNCTION__);
+    queue_delayed_work(microp_intr_wq, &g_uP_info->work, 0);
+}
 
 static irqreturn_t microP_irq_handler(int irq, void *dev_id)
 {
@@ -2854,13 +2891,13 @@ begin_upfw:
 end_upfw:
 	g_uP_info->i2c_client->addr = g_slave_addr;
 	printk("\nMicroP updateMicroPFirmware: Set addr=%d\n", g_uP_info->i2c_client->addr);
-
+        uP_i2c_read_reg(MICROP_BOOT_SELECTION,&g_curr_uP_mode); //update boot mode
 	enable_irq(gpio_to_irq(g_microp_irq_gpio));
 	if(img_buf)
             kfree(img_buf);
         img_buf=NULL;
         g_fw_updating = 0;
-    micropSendNotify(PAD_UPDATE_FINISH);
+        micropSendNotify(PAD_UPDATE_FINISH);
 	      
 	return ret;
 }
@@ -2970,7 +3007,7 @@ static long asus_microp_ioctl(struct file *flip, unsigned int cmd, unsigned long
 		case ASUS_MICROP_GET_BATTERY_ID://MICROP_GAUGE_ID
 			printk("Eric: ASUS_MICROP_GET_BATTERY_ID+++\r\n");
 			uP_i2c_read_reg(MICROP_GAUGE_ID,&g_config_id);
-			if(isMicroPConnected())
+			if(pad_exist())
 				ret=__put_user(g_config_id,(int __user *)arg);
 			else
 				ret=-EINVAL;
@@ -2979,7 +3016,7 @@ static long asus_microp_ioctl(struct file *flip, unsigned int cmd, unsigned long
 		case ASUS_MICROP_GET_CONFIG_ID:
 			printk("Eric: ASUS_MICROP_GET_CONFIG_ID+++\r\n");
 			//uP_i2c_read_reg(MICROP_BATTERY_CONFIG,&g_battery_cfg_ver);
-			if(isMicroPConnected())
+			if(pad_exist())
 				ret=__put_user(fw_data[2],(int __user *)arg);
 			else
 				ret=-EINVAL;
@@ -2996,13 +3033,13 @@ static long asus_microp_ioctl(struct file *flip, unsigned int cmd, unsigned long
 			else
 				ret=-EINVAL;*/	
 
-			if(isMicroPConnected())
+			if(pad_exist())
 				ret=__put_user(g_microp_ver,(int __user *)arg);
 			else
 				ret=-EINVAL;
 			break;
 		case ASUS_MICROP_GET_LDROM_VERSION:
-			if(isMicroPConnected())
+			if(pad_exist())
 				ret=__put_user(g_ldrom_ver,(int __user *)arg);
 			else
 				ret=-EINVAL;
@@ -3399,7 +3436,7 @@ static ssize_t led_test_store(struct device *dev, struct device_attribute *attr,
     }
 
     hwid = AX_MicroP_getHWID();
-    if ( hwid == P72_PR_HWID ) {
+    if ( hwid == P72_PR_HWID || hwid == P72_MP_HWID) {
         if(buf[1] == '1')
             value = 0;
         else if (buf[1] == '0')
@@ -3910,6 +3947,20 @@ static int microP_remove(struct i2c_client *client)
     return 0;
 }
 
+static int microP_shutdown(struct i2c_client *client)
+{
+    uint32_t state=0 ;
+    uint16_t value=0x0069;
+    int rc;
+    printk("%s ++\r\n",__FUNCTION__);
+    if(AX_MicroP_IsP01Connected() && pad_exist()){
+        uP_i2c_read_reg(MICROP_OPERATING_STATE, &state);
+        printk("MicroP:cur_state:%d\n",state);
+        if(state == st_MICROP_Sleep){
+            rc = uP_i2c_write_reg(MICROP_IND_PHONE_RESUME, &value);
+        }
+    }
+}
 static const struct i2c_device_id microP_id[] = {
     { MICROP_NAME, 0 },
     { }
@@ -3930,6 +3981,7 @@ static struct i2c_driver microp_i2c_driver = {
     .remove     = microP_remove,
     .suspend    = microp_suspend,
     .resume     = microp_resume,
+    .shutdown   = microP_shutdown,
     .id_table   = microP_id,
 };
 

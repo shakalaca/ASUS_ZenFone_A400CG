@@ -11,7 +11,7 @@
  *  uG31xx system control
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 590 $
+ * @revision  $Revision: 630 $
  */
 
 #include "stdafx.h"     //windows need this??
@@ -19,7 +19,7 @@
 
 #if defined(uG31xx_OS_WINDOWS)
 
-#define SYSTEM_VERSION      (_T("System $Rev: 590 $"))
+#define SYSTEM_VERSION      (_T("System $Rev: 630 $"))
 
 _upi_bool_ ReadGGBFileToCellDataAndInitSetting(SystemDataType *obj)
 {
@@ -54,7 +54,7 @@ _upi_bool_ ReadGGBFileToCellDataAndInitSetting(SystemDataType *obj)
 
 #else   ///< else of defined(uG31xx_OS_WINDOWS)
 
-#define SYSTEM_VERSION      ("System $Rev: 590 $")
+#define SYSTEM_VERSION      ("System $Rev: 630 $")
 
 _upi_bool_ ReadGGBXFileToCellDataAndInitSetting(SystemDataType *obj)
 {
@@ -151,6 +151,44 @@ void SetupAdcChopFunction(SystemDataType *data)
 }
 
 /**
+ * @brief CheckAdcChopFunction
+ *
+ *  Check ADC chop function
+ *
+ * @para  data  address of SystemDataType
+ * @return  _UPI_TRUE_ if pass
+ */
+_sys_bool_ CheckAdcChopFunction(SystemDataType *data)
+{
+  _sys_u8_ buf;
+
+  buf = 0;
+  API_I2C_Read(SECURITY,
+               UG31XX_I2C_HIGH_SPEED_MODE,
+               UG31XX_I2C_TEM_BITS_MODE,
+               REG_FW_CTRL,
+               1,
+               &buf);
+  return ((buf == data->ggbParameter->chopCtrl) ? _UPI_TRUE_ : _UPI_FALSE_);
+}
+
+static _sys_u8_ adc1QueueInit[] = 
+{
+  SET_A_CURRENT | SET_B_CURRENT | SET_C_CURRENT | SET_D_ET,
+  SET_E_ET | SET_F_ET | SET_G_IT | SET_H_IT,
+  SET_I_IT | SET_J_CURRENT | SET_K_CURRENT | SET_L_CURRENT,
+  SET_M_CURRENT | SET_N_CURRENT | SET_O_CURRENT | SET_P_CURRENT,
+};
+
+static _sys_u8_ adc1QueueNormal[] =
+{
+  SET_A_IT | SET_B_IT | SET_C_ET | SET_D_ET,
+  SET_E_CURRENT | SET_F_CURRENT | SET_G_CURRENT | SET_H_CURRENT,
+  SET_I_CURRENT | SET_J_CURRENT | SET_K_CURRENT | SET_L_CURRENT,
+  SET_M_CURRENT | SET_N_CURRENT | SET_O_CURRENT | SET_P_CURRENT,
+};
+
+/**
  * @brief SetupAdc1Queue
  *
  *  Setup ADC1 conversion queue
@@ -160,20 +198,76 @@ void SetupAdcChopFunction(SystemDataType *data)
  */
 void SetupAdc1Queue(SystemDataType *data)
 {
-  _sys_u8_ adcQueue[4];
-
-  adcQueue[0] = SET_A_CURRENT | SET_B_CURRENT | SET_C_CURRENT | SET_D_ET;
-  adcQueue[1] = SET_E_ET | SET_F_ET | SET_G_IT | SET_H_IT;
-  adcQueue[2] = SET_I_IT | SET_J_CURRENT | SET_K_CURRENT | SET_L_CURRENT;
-  adcQueue[3] = SET_M_CURRENT | SET_N_CURRENT | SET_O_CURRENT | SET_P_CURRENT;
-
  	API_I2C_Write(SECURITY, 
                 UG31XX_I2C_HIGH_SPEED_MODE, 
                 UG31XX_I2C_TEM_BITS_MODE, 
                 REG_ADC_CTR_A, 
                 4, 
-                &adcQueue[0]);
+                &adc1QueueInit[0]);
 }
+
+/**
+ * @brief CheckAdc1Queue
+ *
+ *  Check ADC1 conversion queue
+ *
+ * @para  data  address of SystemDataType
+ * @return  _UPI_TRUE_ if pass
+ */
+_sys_bool_ CheckAdc1Queue(SystemDataType *data)
+{
+  _sys_u8_ adcQueue[4];
+
+  adcQueue[0] = 0;
+  adcQueue[1] = 0;
+  adcQueue[2] = 0;
+  adcQueue[3] = 0;
+  API_I2C_Read(SECURITY, 
+               UG31XX_I2C_HIGH_SPEED_MODE, 
+               UG31XX_I2C_TEM_BITS_MODE, 
+               REG_ADC_CTR_A, 
+               4, 
+               &adcQueue[0]);
+
+  if(adcQueue[0] != adc1QueueNormal[0])
+  {
+    return (_UPI_FALSE_);
+  }
+  if(adcQueue[1] != adc1QueueNormal[1])
+  {
+    return (_UPI_FALSE_);
+  }
+  if(adcQueue[2] != adc1QueueNormal[2])
+  {
+    return (_UPI_FALSE_);
+  }
+  if(adcQueue[3] != adc1QueueNormal[3])
+  {
+    return (_UPI_FALSE_);
+  }
+  return (_UPI_TRUE_);
+}
+
+static _sys_u8_ adc2Queue1[] =  ///< [AT-PM] : 1 cell application ; 03/07/2014
+{
+  SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT1 | SET_V4_VBAT1,
+  SET_V5_VBAT1 | SET_V6_VBAT1 | SET_V7_VBAT1 | SET_V8_VBAT1,
+  SET_V9_VBAT1 | SET_V10_VBAT1 | SET_V11_VBAT1 | SET_V12_VBAT1,
+};
+
+static _sys_u8_ adc2Queue2[] =  ///< [AT-PM] : 2 cell application ; 03/07/2014
+{
+  SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT2 | SET_V4_VBAT2,
+  SET_V5_VBAT1 | SET_V6_VBAT1 | SET_V7_VBAT2 | SET_V8_VBAT2,
+  SET_V9_VBAT1 | SET_V10_VBAT1 | SET_V11_VBAT2 | SET_V12_VBAT2,
+};
+
+static _sys_u8_ adc2Queue3[] =  ///< [AT-PM] : 3 cell application ; 03/07/2014
+{
+  SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT2 | SET_V4_VBAT2,
+  SET_V5_VBAT3 | SET_V6_VBAT3 | SET_V7_VBAT1 | SET_V8_VBAT1,
+  SET_V9_VBAT2 | SET_V10_VBAT2 | SET_V11_VBAT3 | SET_V12_VBAT3,
+};
 
 /**
  * @brief SetupAdc2Queue
@@ -185,35 +279,86 @@ void SetupAdc1Queue(SystemDataType *data)
  */
 void SetupAdc2Quene(SystemDataType *data)
 {
-  _sys_u8_ adc2Queue[3];
+  _sys_u8_ *adc2Queue;
   
-  /// [AT-PM] : Set sell type ; 01/31/2013
+  /// [AT-PM] : Set cell type ; 01/31/2013
   if(data->cellNum == 1)
   {
-    adc2Queue[0] = SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT1 | SET_V4_VBAT1;
-    adc2Queue[1] = SET_V5_VBAT1 | SET_V6_VBAT1 | SET_V7_VBAT1 | SET_V8_VBAT1;
-    adc2Queue[2] = SET_V9_VBAT1 | SET_V10_VBAT1 | SET_V11_VBAT1 | SET_V12_VBAT1;
+    adc2Queue = &adc2Queue1[0];
   }
   else if(data->cellNum == 2)
   {
-    adc2Queue[0] = SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT2 | SET_V4_VBAT2;
-    adc2Queue[1] = SET_V5_VBAT1 | SET_V6_VBAT1 | SET_V7_VBAT2 | SET_V8_VBAT2;
-    adc2Queue[2] = SET_V9_VBAT1 | SET_V10_VBAT1 | SET_V11_VBAT2 | SET_V12_VBAT2;
+    adc2Queue = &adc2Queue2[0];
   }
   else if(data->cellNum == 3)
   {
-    adc2Queue[0] = SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT2 | SET_V4_VBAT2;
-    adc2Queue[1] = SET_V5_VBAT3 | SET_V6_VBAT3 | SET_V7_VBAT1 | SET_V8_VBAT1;
-    adc2Queue[2] = SET_V9_VBAT2 | SET_V10_VBAT2 | SET_V11_VBAT3 | SET_V12_VBAT3;
+    adc2Queue = &adc2Queue3[0];
   }
   else
   {
-    /// [AT-PM] : 1-cell ; 01/31/2013
-    adc2Queue[0] = SET_V1_VBAT1 | SET_V2_VBAT1 | SET_V3_VBAT1 | SET_V4_VBAT1;
-    adc2Queue[1] = SET_V5_VBAT1 | SET_V6_VBAT1 | SET_V7_VBAT1 | SET_V8_VBAT1;
-    adc2Queue[2] = SET_V9_VBAT1 | SET_V10_VBAT1 | SET_V11_VBAT1 | SET_V12_VBAT1;
+    adc2Queue = &adc2Queue1[0];
   }
-  API_I2C_Write(SECURITY, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_ADC_V1, 3, &adc2Queue[0]);
+
+  API_I2C_Write(SECURITY, 
+                UG31XX_I2C_HIGH_SPEED_MODE, 
+                UG31XX_I2C_TEM_BITS_MODE, REG_ADC_V1, 
+                3, 
+                adc2Queue);
+}
+
+/**
+ * @brief CheckAdc2Queue
+ *
+ *  Check ADC2 conversion queue
+ *
+ * @para  data  address of SystemDataType
+ * @return  _UPI_TRUE_ if pass
+ */
+_sys_bool_ CheckAdc2Queue(SystemDataType *data)
+{
+  _sys_u8_ adc2Queue[3];
+  _sys_u8_ *adc2QueuePtr;
+
+  adc2Queue[0] = 0;
+  adc2Queue[1] = 0;
+  adc2Queue[2] = 0;
+  /// [AT-PM] : Set cell type ; 01/31/2013
+  if(data->cellNum == 1)
+  {
+    adc2QueuePtr = &adc2Queue1[0];
+  }
+  else if(data->cellNum == 2)
+  {
+    adc2QueuePtr = &adc2Queue2[0];
+  }
+  else if(data->cellNum == 3)
+  {
+    adc2QueuePtr = &adc2Queue3[0];
+  }
+  else
+  {
+    adc2QueuePtr = &adc2Queue1[0];
+  }
+
+  API_I2C_Read(SECURITY, 
+               UG31XX_I2C_HIGH_SPEED_MODE, 
+               UG31XX_I2C_TEM_BITS_MODE, REG_ADC_V1, 
+               3, 
+               &adc2Queue[0]);
+
+  if(adc2QueuePtr[0] != adc2Queue[0])
+  {
+    return (_UPI_FALSE_);
+  }
+  if(adc2QueuePtr[0] != adc2Queue[0])
+  {
+    return (_UPI_FALSE_);
+  }
+  if(adc2QueuePtr[0] != adc2Queue[0])
+  {
+    return (_UPI_FALSE_);
+  }
+  return (_UPI_TRUE_);
 }
 
 /**
@@ -306,6 +451,7 @@ _sys_u8_ ConfigGpioFunction(_sys_u8_ setting)
 	{
 		gpioSelData = 4;
 	}
+  UG31_LOGE("[%s]: gpioSelData = %d\n", __func__, gpioSelData);
 	return (gpioSelData);
 }
 
@@ -336,6 +482,7 @@ void ConfigureGpio(SystemDataType *data)
                 REG_INTR_CTRL_A,
                 1,
                 &tmp8);
+  UG31_LOGE("[%s]: REG_INTR_CTRL_A = %x\n", __func__, tmp8);
   API_I2C_Write(SECURITY,
                 UG31XX_I2C_HIGH_SPEED_MODE,
                 UG31XX_I2C_TEM_BITS_MODE,
@@ -773,6 +920,7 @@ SYSTEM_RTN_CODE UpiInitSystemData(SystemDataType *data)
 _upi_bool_ UpiCheckICActive(SystemDataType *data)
 {
   _upi_u8_ tmp = 0;
+  _upi_bool_ rtn;
 
   if(!API_I2C_Read(NORMAL, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_MODE, 1, &tmp))
   {
@@ -783,6 +931,27 @@ _upi_bool_ UpiCheckICActive(SystemDataType *data)
   if(((tmp & MODE_GG_RUN) == GG_RUN_OPERATION_MODE) && (tmp != 0xFF))
   {
     UG31_LOGN("[%s]: uG31xx is actived.\n", __func__);
+
+    rtn = CheckAdcChopFunction(data);
+    if(rtn == _UPI_FALSE_)
+    {
+      UG31_LOGE("[%s]: CheckAdcChopFunction fail\n", __func__);
+      return (_UPI_TRUE_);
+    }
+    
+    rtn = CheckAdc1Queue(data);
+    if(rtn == _UPI_FALSE_)
+    {
+      UG31_LOGE("[%s]: CheckAdc1Queue fail\n", __func__);
+      return (_UPI_TRUE_);
+    }
+    
+    rtn = CheckAdc2Queue(data);
+    if(rtn == _UPI_FALSE_)
+    {
+      UG31_LOGE("[%s]: CheckAdc2Queue fail\n", __func__);
+      return (_UPI_TRUE_);
+    }
     return (_UPI_FALSE_);
   }
   UG31_LOGE("[%s]: uG31xx is NOT actived.\n", __func__);
@@ -828,6 +997,45 @@ SYSTEM_RTN_CODE UpiActiveUg31xx(void)
     /// [AT-PM] : Delay 255mS for system stable ; 01/31/2013  
     SleepMiniSecond(255);     //2012/08/29/Jacky, need wait 255 ms 
   #endif	///< end of uG31xx_BOOT_LOADER
+  return (SYSTEM_RTN_PASS);
+}
+
+/**
+ * @brief UpiStopUg31xx
+ *
+ *  Stop uG31xx
+ *
+ * @return  SYSTEM_RTN_CODE
+ */
+SYSTEM_RTN_CODE UpiStopUg31xx(void)
+{
+  _sys_u8_ tmp8;
+
+  UG31_LOGN("[%s]: Stop uG31xx\n", __func__);
+  
+  /// [AT-PM] : Reset uG31xx ; 01/31/2013
+  tmp8 = PORDET_W_SOFTRESET | IO1DATA_W_HIGH;
+	if(!API_I2C_Write(NORMAL, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_CTRL1, 1, &tmp8))
+  { 
+		return (SYSTEM_RTN_I2C_FAIL);
+  }
+  tmp8 = IO1DATA_W_HIGH;
+	if(!API_I2C_Write(NORMAL, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_CTRL1, 1, &tmp8))
+  { 
+		return (SYSTEM_RTN_I2C_FAIL);
+  }  
+
+  /// [AT-PM] : Stop uG31xx ; 01/31/2013
+  tmp8 = CTRL1_GG_RST | IO1DATA_W_HIGH;
+	if(!API_I2C_Write(NORMAL, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_CTRL1, 1, &tmp8))
+  { 
+		return (SYSTEM_RTN_I2C_FAIL);
+  }
+  tmp8 = 0;
+	if(!API_I2C_Write(NORMAL, UG31XX_I2C_HIGH_SPEED_MODE, UG31XX_I2C_TEM_BITS_MODE, REG_MODE, 1, &tmp8))
+  { 
+		return (SYSTEM_RTN_I2C_FAIL);
+  }
   return (SYSTEM_RTN_PASS);
 }
 
@@ -1021,17 +1229,17 @@ void UpiAdcStatus(SystemDataType *data)
 
 #define BACKUP_TIME_BYTE3           (REG_COC_LOW)
 #define BACKUP_TIME_BYTE2           (REG_COC_HIGH)
-#define BACKUP_NAC_HIGH             (REG_CBC21_LOW)
-#define BACKUP_NAC_LOW              (REG_CBC21_HIGH)
-#define BACKUP_LMD_HIGH             (REG_CBC32_LOW)
-#define BACKUP_LMD_LOW              (REG_CBC32_HIGH)
-#define BACKUP_TABLE_UPDATE_IDX     (REG_UV3_HIGH)
+#define BACKUP_NAC_HIGH             (REG_RAM0)
+#define BACKUP_NAC_LOW              (REG_RAM1)
+#define BACKUP_LMD_HIGH             (REG_RAM2)
+#define BACKUP_LMD_LOW              (REG_RAM3)
+#define BACKUP_TABLE_UPDATE_IDX     (REG_UVP_HIGH)
 #define BACKUP_DELTA_CAP_HIGH       (REG_DOC_LOW)
 #define BACKUP_DELTA_CAP_LOW        (REG_DOC_HIGH)
-#define BACKUP_ADC1_CONV_TIME_HIGH  (REG_OVP_HIGH)
-#define BACKUP_ADC1_CONV_TIME_LOW   (REG_OVP_LOW)
-#define BACKUP_CYCLE_COUNT_LOW      (REG_UVP_LOW)
-#define BACKUP_CYCLE_COUNT_HIGH     (REG_UVP_HIGH)
+#define BACKUP_ADC1_CONV_TIME_HIGH  (REG_CBC21_LOW)
+#define BACKUP_ADC1_CONV_TIME_LOW   (REG_CBC21_HIGH)
+#define BACKUP_CYCLE_COUNT_LOW      (REG_CBC32_LOW)
+#define BACKUP_CYCLE_COUNT_HIGH     (REG_CBC32_HIGH)
 #define BACKUP_CC_OFFSET            (REG_INTR_OVER_TEMP_LOW)
 #define BACKUP_STANDBY_RATIO        (REG_INTR_OVER_TEMP_HIGH)
 
@@ -1603,8 +1811,8 @@ typedef struct TableStorageST {
 } ALIGNED_ATTRIBUTE TableStorageType;
 
 TableStorageType TableStorage[] = {
-  { REG_RAM0,     32, },
-  { REG_OV2_LOW,  7,  },
+  { REG_RAM4,     28, },
+  { REG_OV2_LOW,  11,  },
   { 0,            0,  },
 };
 
@@ -1696,7 +1904,6 @@ void UpiSaveTableToIC(_sys_u8_ *data, _sys_u8_ *buf, _sys_u8_ size)
  */
 void UpiSetupAdc1Queue(SystemDataType *data)
 {
-  _sys_u8_ adcQueue[4];
   _sys_u8_ tmp8;
 
   tmp8 = 0;
@@ -1716,17 +1923,12 @@ void UpiSetupAdc1Queue(SystemDataType *data)
                 &tmp8);
 
   /// [AT-PM] : Set ADC1 queue ; 06/04/2013
-  adcQueue[0] = SET_A_IT | SET_B_IT | SET_C_ET | SET_D_ET;
-  adcQueue[1] = SET_E_CURRENT | SET_F_CURRENT | SET_G_CURRENT | SET_H_CURRENT;
-  adcQueue[2] = SET_I_CURRENT | SET_J_CURRENT | SET_K_CURRENT | SET_L_CURRENT;
-  adcQueue[3] = SET_M_CURRENT | SET_N_CURRENT | SET_O_CURRENT | SET_P_CURRENT;
-
  	API_I2C_Write(SECURITY, 
                 UG31XX_I2C_HIGH_SPEED_MODE, 
                 UG31XX_I2C_TEM_BITS_MODE, 
                 REG_ADC_CTR_A, 
                 4, 
-                &adcQueue[0]);
+                &adc1QueueNormal[0]);
 
   /// [AT-PM] : Enable ADC ; 01/31/2013
   API_I2C_Read(SECURITY,
@@ -1783,6 +1985,19 @@ void UpiAllocateTableBuf(_sys_u8_ **data, _sys_u8_ *size)
 void UpiFreeTableBuf(_sys_u8_ **data)
 {
   UG31_LOGD("[%s]: Free address 0x%02x\n", __func__, (unsigned int)(*data));
+}
+
+/**
+ * @brief UpiPrintSystemVersion
+ *
+ *  Print system module version
+ *
+ * @return  NULL
+ */
+void UpiPrintSystemVersion(void)
+{
+  UG31_LOGE("[%s]: %s\n", __func__,
+            SYSTEM_VERSION);
 }
 
 

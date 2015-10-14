@@ -14,3 +14,6 @@
 #define PROJ_ID_PF400CG                 0x00000005
 #define PROJ_ID_ME372CG_CD              0x00000007
 #define PROJ_ID_A400CG                  0x00000003
+#define PROJ_ID_FE380CG                 0x00000038
+#define PROJ_ID_A450CG                  0x00000039
+#define PROJ_ID_TX201LAF                0x0000003A

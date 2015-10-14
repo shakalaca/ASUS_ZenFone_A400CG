@@ -54,28 +54,25 @@ static LIST_HEAD(wakeup_sources);
 static DECLARE_WAIT_QUEUE_HEAD(wakeup_count_wait_queue);
 
 void wakeup_source_monitor(void){
-        struct wakeup_source *ws;
-        int active = 0;
-        struct wakeup_source *last_activity_ws = NULL;
+	struct wakeup_source *ws;
+	int active = 0;
+	struct wakeup_source *last_activity_ws = NULL;
 
-        rcu_read_lock();
-        list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
-                if (ws->active) {
-                        pr_info("active wakeup source: %s\n", ws->name);
-                        active = 1;
-                } else if (!active &&
-                           (!last_activity_ws ||
-                            ktime_to_ns(ws->last_time) >
-                            ktime_to_ns(last_activity_ws->last_time))) {
-                        last_activity_ws = ws;
-                }
-        }
+	rcu_read_lock();
+	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
+		if (ws->active) {
+			pr_info("active wakeup source: %s\n", ws->name);
+			active = 1;
+		} else if (!active && (!last_activity_ws || ktime_to_ns(ws->last_time) > ktime_to_ns(last_activity_ws->last_time))) {
+			last_activity_ws = ws;
+		}
+	}
 
-        if (!active && last_activity_ws)
-                pr_info("last active wakeup source: %s\n",
-                        last_activity_ws->name);
-        rcu_read_unlock();
+	if (!active && last_activity_ws)
+		pr_info("last active wakeup source: %s\n", last_activity_ws->name);
+	rcu_read_unlock();
 }
+
 
 /**
  * wakeup_source_prepare - Prepare a new wakeup source for initialization.
@@ -406,6 +403,12 @@ static void wakeup_source_activate(struct wakeup_source *ws)
 {
 	unsigned int cec;
 
+	/*
+	 * active wakeup source should bring the system
+	 * out of PM_SUSPEND_FREEZE state
+	 */
+	freeze_wake();
+
 	ws->active = true;
 	ws->active_count++;
 	ws->last_time = ktime_get();
@@ -682,11 +685,11 @@ static void print_active_wakeup_sources(void)
 	struct wakeup_source *ws;
 	int active = 0;
 	struct wakeup_source *last_activity_ws = NULL;
-
+	pr_info("[Wakelock]combined_event_count = %#x\n", atomic_read(&combined_event_count));
 	rcu_read_lock();
 	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
 		if (ws->active) {
-			pr_info("active wakeup source: %s\n", ws->name);
+			pr_info("[Wakelock]active wakeup source: %s\n", ws->name);
 			active = 1;
 		} else if (!active &&
 			   (!last_activity_ws ||
@@ -697,7 +700,7 @@ static void print_active_wakeup_sources(void)
 	}
 
 	if (!active && last_activity_ws)
-		pr_info("last active wakeup source: %s\n",
+		pr_info("[Wakelock]last active wakeup source: %s\n",
 			last_activity_ws->name);
 	rcu_read_unlock();
 }
@@ -756,7 +759,7 @@ bool pm_get_wakeup_count(unsigned int *count, bool block)
 			split_counters(&cnt, &inpr);
 			if (inpr == 0 || signal_pending(current))
 				break;
-
+			pr_info("[Wakelock] %d wakelocks exist. Try to suspend failed, waiting to unlock.\n",inpr);
 			schedule();
 		}
 		finish_wait(&wakeup_count_wait_queue, &wait);
@@ -788,6 +791,7 @@ bool pm_save_wakeup_count(unsigned int count)
 	if (cnt == count && inpr == 0) {
 		saved_count = count;
 		events_check_enabled = true;
+		pr_info("[Wakelock]Go to suspend, and start to detect wakeup events.\n");
 	}
 	spin_unlock_irqrestore(&events_lock, flags);
 	return events_check_enabled;

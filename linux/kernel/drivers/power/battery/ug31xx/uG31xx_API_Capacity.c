@@ -11,7 +11,7 @@
  *  Capacity algorithm
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 84 $
+ * @revision  $Revision: 103 $
  */
 
 #include "stdafx.h"     //windows need this??
@@ -19,7 +19,7 @@
 
 #ifdef  uG31xx_OS_ANDROID
 
-  #define CAPACITY_VERSION      ("Capacity $Rev: 84 $")
+  #define CAPACITY_VERSION      ("Capacity $Rev: 103 $")
   //#define CAP_LOG_UPDATE_TABLE                              ///< [AT-PM] : Log updated table to a file ; 03/25/2013
 
   #ifdef  CAP_LOG_UPDATE_TABLE
@@ -32,11 +32,11 @@
 
   #if defined(BUILD_UG31XX_LIB)
 
-    #define CAPACITY_VERSION      ("Capacity $Rev: 84 $")
+    #define CAPACITY_VERSION      ("Capacity $Rev: 103 $")
     
   #else   ///< else of defined(BUILD_UG31XX_LIB)
   
-    #define CAPACITY_VERSION      (_T("Capacity $Rev: 84 $"))
+    #define CAPACITY_VERSION      (_T("Capacity $Rev: 103 $"))
     
   #endif  ///< end of defined(BUILD_UG31XX_LIB)
   
@@ -119,7 +119,8 @@ typedef void (*VerFuncArguObjS16RtnNull)(CapacityInternalDataType *obj, _cap_s16
 
 #endif  ///< end of MEAS_STATUS_REFER_ET
 
-#define LIMIT_FCC_WITH_ILMD_RANGE     (20)
+#define LIMIT_FCC_WITH_ILMD_RANGE       (15)
+#define LIMIT_FCC_WITH_ILMD_UPPER_RATIO (3)
 
 /**
  * @brief LimitValue
@@ -155,6 +156,8 @@ _cap_s32_ LimitValue(_cap_s32_ input, _cap_s32_ reference, _cap_u8_ percent)
   }
 
   /// [AT-PM] : Check upper bound ; 04/02/2014
+  percent = percent/LIMIT_FCC_WITH_ILMD_UPPER_RATIO;
+  percent = (percent == 0) ? 1 : percent;
   reference = reference + reference*percent/CONST_PERCENTAGE;
   if(input <= reference)
   {
@@ -682,7 +685,14 @@ void FindOcvRM(CapacityInternalDataType *obj, _cap_u8_ tableIdx, _cap_u16_ volta
     tmp32 = tmp32*
             (OcvSocTable[obj->idxOcvVoltage[INDEX_BOUNDARY_HIGH]] - 
              OcvSocTable[obj->idxOcvVoltage[INDEX_BOUNDARY_LOW]]);
-    tmp32 = tmp32/(voltHigh - voltLow);
+		if(voltHigh != voltLow)
+		{
+			tmp32 = tmp32/(voltHigh - voltLow);
+		}
+		else
+		{
+			tmp32 = 0;
+		}
     tmp32 = tmp32 + OcvSocTable[obj->idxOcvVoltage[INDEX_BOUNDARY_LOW]];
   }
   UG31_LOGD("[%s] RSOC = %d (%d)\n", __func__, 
@@ -694,7 +704,7 @@ void FindOcvRM(CapacityInternalDataType *obj, _cap_u8_ tableIdx, _cap_u16_ volta
   obj->rm = (_cap_u16_)tmp32;
 }
 
-#define IS_SUSPEND_OPERATION_DELAT_TIME     (5*TIME_SEC_TO_MIN*TIME_MSEC_TO_SEC)
+#define IS_SUSPEND_OPERATION_DELAT_TIME     (1*TIME_SEC_TO_MIN*TIME_MSEC_TO_SEC)
 
 /**
  * @brief IsSuspendOperation
@@ -814,6 +824,7 @@ void CapStatusFCStep100Set(CapacityDataType *data)
   data->status = data->status | CAP_STS_FORCE_STEP_TO_100;
   data->fcStep100 = CAP_TRUE;
 }
+
 
 /**
  * @brief FindIdxTemperatureVer0
@@ -2461,7 +2472,7 @@ void UpiInitCapacity(CapacityDataType *data)
   UG31_LOGI("[%s]: %s\n", __func__, CAPACITY_VERSION);
   
   /// [AT-PM] : Initialize variables ; 01/25/2013
-  data->status = CAP_STS_LAST_STANDBY | CAP_STS_CURR_STANDBY | CAP_STS_INIT_PROCEDURE;
+  data->status = CAP_STS_LAST_STANDBY | CAP_STS_CURR_STANDBY | CAP_STS_INIT_PROCEDURE | CAP_STS_RELEASE_100;
   data->status = data->status & (~(CAP_STS_INIT_TIMER_PASS));
   data->tableUpdateIdx = SOV_NUMS;
   data->dsgChargeStart = (_cap_s32_)data->ggbParameter->ILMD*2;
@@ -2469,7 +2480,7 @@ void UpiInitCapacity(CapacityDataType *data)
   data->standbyDsgRatio = 0;
   data->standbyMilliSec = 0;
   data->standbyHour = 0;
-  data->ccForRelease100 = (_cap_s32_)data->ggbParameter->ILMD;
+  data->inSuspendMilliSec = 0;
 
   #ifdef  UG31XX_SHELL_ALGORITHM
     obj = (CapacityInternalDataType *)upi_malloc(sizeof(CapacityInternalDataType));

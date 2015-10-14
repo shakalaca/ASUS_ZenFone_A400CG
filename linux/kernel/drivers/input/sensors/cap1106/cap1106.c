@@ -25,6 +25,10 @@
 
 #include <linux/proc_fs.h>//add by leo for proc file ++
 #include <linux/i2c/cap1106.h>// add by leo for cap1106_platfor_data 
+// add by alp for proc file ++
+#include <linux/seq_file.h>
+// add by alp for proc file --
+
 
 //add by leo for read hw id ++
 #include <linux/HWVersion.h>
@@ -273,11 +277,12 @@ exit:
 }
 
 // add by leo for proc file ++
-static ssize_t cap1106_register_read(char *page, char **start, off_t off, int count, int *eof, void *data)
+static ssize_t cap1106_register_read(struct seq_file *buf, void *v )
 {
 	ssize_t sprintf_count = 0;
 	debug = debug?0:1; //switch debug message
-	sprintf_count += sprintf(page + sprintf_count, "debug meaasge (%s)\n", ((debug==1)?"on":"off"));
+	seq_printf(buf,"cap1106 debug = %d \n",debug);
+	sprintf_count += sprintf("debug meaasge \n", ((debug==1)?"on":"off"));
 	return sprintf_count;
 }
 static ssize_t cap1106_register_write(struct file *filp, const char __user *buff, unsigned long len, void *data)
@@ -366,6 +371,29 @@ static ssize_t cap1106_register_write(struct file *filp, const char __user *buff
 	return len;
 }
 
+// add by alp for proc file ++
+static int cap1106_register_open(struct inode *inode, struct file *file)
+{
+	return single_open(file,cap1106_register_read,NULL);
+}
+
+static const struct file_operations cap1106_register_fops = {
+	.owner = THIS_MODULE,
+	.open = cap1106_register_open,
+	.read = seq_read,
+	.write = cap1106_register_write,
+};
+
+void cap1106_create_proc_file(void)
+{
+    cap1106_proc_file = proc_create(CAP1106_PROC_FILE, 0666, NULL,&cap1106_register_fops);
+    if(!cap1106_proc_file)
+    {
+        printk( "[%s]	create_proc_entry failed!!! \n",__FUNCTION__);
+    }
+}
+// add by alp for proc file --
+/*
 void cap1106_create_proc_file(void)
 {
 	cap1106_proc_file = create_proc_entry(CAP1106_PROC_FILE, 0666, NULL);
@@ -377,6 +405,7 @@ void cap1106_create_proc_file(void)
 		if(CS_STATUSMSG) printk( "[%s]	create_proc_entry failed\n",__FUNCTION__);
 	}
 }
+*/
 void cap1106_remove_proc_file(void)
 {
     extern struct proc_dir_entry proc_root;
@@ -1654,7 +1683,7 @@ static int cap1106_recalibration_check(void){
 	
 	cs1_data = i2c_smbus_read_byte_data(cap1106_i2c_client, SENSOR_INPUT1_DELTA);
 	cs6_data = i2c_smbus_read_byte_data(cap1106_i2c_client, SENSOR_INPUT6_DELTA);
-
+	if((debug)) printk( "[%s] cs1_data: 0x%02X, cs6_data: 0x%02X\n",__FUNCTION__,cs1_data,cs6_data);
 	//if ((cs1_data >= 0x0f && cs1_data <= C_data->cs1_thd_2)
 	//||(cs6_data >= 0x0f && cs6_data <= C_data->cs6_thd_2)){
 	//if((cs1_data>0x06)||(cs6_data>0x06)){
@@ -1665,13 +1694,23 @@ static int cap1106_recalibration_check(void){
 	return 0;
 }
 
-static int cap1106_check_hands_or_table(void){
+static int cap1106_check_hands_or_table(int n){
 
 	int ret=0, ac=0, recal=1, retries_times=10, debounce_delay=300;
 	int status=0, cs1_data=0, cs6_data=0, regvalue=0;
 	u8 CS_Sensitivity=0;
 
 	if((debug)) printk( "[%s] ++++++\n",__FUNCTION__);
+
+	// Retry time out
+	if(n==0) 
+	{
+		if(CS_STATUSMSG) printk( "[%s]		Time Out , n = %d \n",__FUNCTION__,n);
+		if(CS_STATUSMSG) printk( "[%s]		Change to High Sensitivity \n",__FUNCTION__);
+		cap1106_change_sensitivity(HIGH_SENSITIVITY);
+		SensitivityMode = HIGH_SENSITIVITY;
+		return 0;
+	}
 	
 	if (SensitivityMode == LOW_SENSITIVITY) {
 
@@ -1681,14 +1720,14 @@ static int cap1106_check_hands_or_table(void){
 		status = i2c_smbus_read_byte_data(cap1106_i2c_client, SENSOR_INPUT_STATUS);
 			
 		if((debug)) printk( "[%s] cs1_data: 0x%02X, cs6_data: 0x%02X, status = 0x%02x, CS_Sensitivity: 0x%02x\n",__FUNCTION__,cs1_data,cs6_data,status,CS_Sensitivity);
-		if((debug)) printk( "[%s] SensitivityMode: %s\n",__FUNCTION__,SensitivityMode==HIGH_SENSITIVITY?"HIGH_SENSITIVITY":"LOW_SENSITIVITY");
+		if((debug)) printk( "[%s] SensitivityMode: %s , n: %d\n",__FUNCTION__,SensitivityMode==HIGH_SENSITIVITY?"HIGH_SENSITIVITY":"LOW_SENSITIVITY",n);
 			
 		if ((cs1_data == 0x00 && cs6_data == 0x00)
 		|| (cs1_data == 0xFF && cs6_data == 0xFF)
 		|| (cs1_data == 0x00 && cs6_data == 0xFF)
 		|| (cs1_data == 0xFF && cs6_data == 0x00)
-		|| (C_data->overflow_status == 0x01 && (cs1_data > C_data->cs1_thd_2) && (cs1_data <= 0x7F))
-		|| (C_data->overflow_status == 0x20 && (cs6_data > C_data->cs6_thd_2) && (cs6_data <= 0x7F))
+		|| ((cs1_data > C_data->cs1_thd_2) && (cs1_data <= 0x7F))
+		|| ((cs6_data > C_data->cs6_thd_2) && (cs6_data <= 0x7F))
 		|| (C_data->overflow_status == 0x21 && (((cs1_data > C_data->cs1_thd_2) && (cs1_data <= 0x7F)) || ((cs6_data > C_data->cs6_thd_2) && (cs6_data <= 0x7F))))) {
 			if((debug)) printk( "[%s] change back to high sensitivity\n",__FUNCTION__);
 
@@ -1728,7 +1767,7 @@ static int cap1106_check_hands_or_table(void){
 				if((debug)) printk("[%s] re-calibration cap sensor !!!!\n",__FUNCTION__);
 			}
 			ac=0;
-			cap1106_check_hands_or_table();
+			cap1106_check_hands_or_table(n-1);
 		}
 	}	
 	if((debug)) printk( "[%s] ------\n",__FUNCTION__);
@@ -1852,7 +1891,7 @@ static void cap1106_work_function(struct work_struct *work)
 				SensitivityMode = LOW_SENSITIVITY;
 				work_count = 0;
 				status_stable_count++;
-				cap1106_check_hands_or_table();
+				cap1106_check_hands_or_table(10);
 			}else{
 				work_count = 6; // add by leo for test
 			}
@@ -2010,14 +2049,23 @@ static int cap1106_i2c_probe(struct i2c_client *client, const struct i2c_device_
 	}
 	memset(config_data, 0, sizeof(struct cap1106_config_data));
 	
+#ifdef CONFIG_ME372CG
 	config_data->cs_sensitivity_1 = 0x1f; // add by leo for test
+#else
+	config_data->cs_sensitivity_1 = 0x0f; // add by tom for ME372CL one cap-sensor 
+#endif
 	config_data->cs_gain_1 = 0x03;
 	config_data->cs1_thd_1 = 0x0a;
 	config_data->cs6_thd_1 = 0x0a;
 	config_data->cs_sensitivity_2 = 0x3f;
 	config_data->cs_gain_2 = config_data->cs_gain_1;
-	config_data->cs1_thd_2 = 0x45; //0x45
-	config_data->cs6_thd_2 = 0x6a; //0x45
+#ifdef CONFIG_ME372CG
+	config_data->cs1_thd_2 = 0x45; 
+	config_data->cs6_thd_2 = 0x6a; 
+#else
+	config_data->cs1_thd_2 = 0x2d; // modify by tom for fine tune threshold
+	config_data->cs6_thd_2 = 0x4d; // modify by tom for fine tune threshold
+#endif
 	config_data->overflow_status = 0x0;
 	C_data = config_data;
 	
@@ -2045,7 +2093,7 @@ static int cap1106_i2c_probe(struct i2c_client *client, const struct i2c_device_
 		err = -ENOMEM;
 		if(build_version!=1)goto create_singlethread_workqueue_err;
 	}
-	INIT_DELAYED_WORK_DEFERRABLE(&cap1106_work, cap1106_work_function);
+	INIT_DEFERRABLE_WORK(&cap1106_work, cap1106_work_function);
 #ifdef RF_NOISE_DETECT
 	//INIT_DELAYED_WORK(&rf_noise_detect_work, rf_noise_detect_function); //add by leo for rf noise
 #endif
@@ -2126,7 +2174,7 @@ static int cap1106_resume(struct i2c_client *client)
 	return 0;
 }
 
-static int __devexit cap1106_i2c_remove(struct i2c_client *client)
+static int __exit cap1106_i2c_remove(struct i2c_client *client)
 {
 	if(CS_STATUSMSG) printk( "[%s] \n", __FUNCTION__);
 	cap1106_remove_proc_file(); // add by leo for proc file ++
@@ -2152,7 +2200,7 @@ static struct i2c_driver cap1106_i2c_driver = {
 	.probe = 		cap1106_i2c_probe,
 	.suspend	=	cap1106_suspend,
 	.resume	=	cap1106_resume,
-	.remove	=	__devexit_p(cap1106_i2c_remove),
+	.remove	=	cap1106_i2c_remove,
 	.id_table = 	cap1106_i2c_idtable,	
 };
 

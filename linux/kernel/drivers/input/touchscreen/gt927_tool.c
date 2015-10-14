@@ -25,7 +25,7 @@
 #else
 #include <linux/i2c/gt927.h>
 #endif
-
+#include <linux/slab.h>
 //#define IC_TYPE_NAME        "GT813" //Default
 #define DATA_LENGTH_UINT    512
 #define CMD_HEAD_LENGTH     (sizeof(st_cmd_head) - sizeof(u8*))
@@ -217,6 +217,7 @@ s32 init_wr_node(struct i2c_client *client)
 
     register_i2c_func();
 
+#if 0
     goodix_proc_entry = create_proc_entry(GOODIX_ENTRY_NAME, 0666, NULL);
     if (goodix_proc_entry == NULL)
     {
@@ -229,7 +230,7 @@ s32 init_wr_node(struct i2c_client *client)
         goodix_proc_entry->write_proc = goodix_tool_write;
         goodix_proc_entry->read_proc = goodix_tool_read;
     }
-
+#endif
     return SUCCESS;
 }
 

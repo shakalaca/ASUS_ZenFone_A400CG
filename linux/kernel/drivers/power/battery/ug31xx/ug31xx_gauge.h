@@ -60,6 +60,7 @@ typedef enum {
 #define LKM_OPTIONS_ENABLE_REVERSE_CURRENT  (1<<4)
 #define LKM_OPTIONS_ADJUST_DESIGN_CAPACITY  (1<<5)
 #define LKM_OPTIONS_DISABLE_BACHUP_FILE     (1<<6)
+#define LKM_OPTIONS_FORCE_RESET_TOTALLY     (1<<7)
 
 #endif  ///< end of _LKM_OPTIONS_
 
@@ -70,7 +71,7 @@ struct ug31xx_module_interface {
 	int (*resume)(char user_space_response);
 	int (*shutdown)(void);
 	int (*update)(char user_space_response);
-	int (*reset)(char *ggb);
+	int (*reset)(char *ggb, char keep_rsoc);
 
 	int (*shell_update)(void);
 	unsigned char * (*shell_memory)(int *mem_size);
@@ -118,6 +119,7 @@ struct ug31xx_module_interface {
 	int (*get_ggb_board_gain)(void);
 	unsigned int (*get_ggb_config)(void);
 	unsigned char (*get_decimate_rst_sts)(void);
+  int (*get_delta_time)(void);
 
 	int (*set_backup_file)(char enable);
 	int (*set_charger_full)(char is_full);

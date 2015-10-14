@@ -4,7 +4,7 @@
  *  Header of uG31xx capacity algorithm
  *
  * @author  AllenTeng <allen_teng@upi-semi.com>
- * @revision  $Revision: 604 $
+ * @revision  $Revision: 95 $
  */
 
 typedef char            _cap_bool_;
@@ -104,12 +104,12 @@ typedef struct CapacityDataST {
 
   _cap_u8_ rsocFilterActiveCnt;
 
+  _cap_u32_ inSuspendMilliSec;
+
   _cap_s32_ qFromCurr;
   _cap_s32_ qFromCC;
   _cap_s32_ qFromCurrBuf;
 
-  _cap_s32_ ccForRelease100;
-  
   _cap_s16_ tableNac[SOV_NUMS];
   _cap_s16_ tableNacUpdate[SOV_NUMS];
 } ALIGNED_ATTRIBUTE CapacityDataType;
@@ -218,6 +218,15 @@ extern _cap_u16_ CalculateRsoc(_cap_u32_ rm, _cap_u16_ fcc);
 extern void UpiSetBoardOffsetKed(CapacityDataType *data);
 
 /**
+ * @brief UpiGetCapacityMemorySize
+ *
+ *  Get memory size for capacity module
+ *
+ * @return  memory size
+ */
+extern _cap_u32_ UpiGetCapacityMemorySize(void);
+
+/**
  * @brief UpiSetFactoryBoardOffset
  *
  *  Set board offset is loaded from factory
@@ -227,6 +236,14 @@ extern void UpiSetBoardOffsetKed(CapacityDataType *data);
  */
 extern void UpiSetFactoryBoardOffset(CapacityDataType *data);
 
+/**
+ * @brief UpiPrintCapacityVersion
+ *
+ *  Print capacity module version
+ *
+ * @return  NULL
+ */
+extern void UpiPrintCapacityVersion(void);
 /**
  * @brief UpiGetOcvSoc
  *

@@ -10,9 +10,7 @@
 #include <linux/param.h>
 #include <linux/i2c.h>
 
-#define FW_CELL_TYPE_LG                 0x0335
-#define FW_CELL_TYPE_COS_LIGHT          0x133
-#define LATEST_FW_CFG_VERSION           0x0004
+#define LATEST_FW_CFG_VERSION           0x0002
 
 typedef enum _cell_type {
     TYPE_COS_LIGHT=0,

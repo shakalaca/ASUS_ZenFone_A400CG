@@ -5,7 +5,7 @@
 
 #ifndef BUILD_UG31XX_LIB
 
-#ifndef	BUILD_UG31XX_LINUX_KERNEL
+#ifndef	uG31xx_OS_ANDROID
 
 #ifndef CONFIG_ASUS_UG31XX_BATTERY
 
@@ -43,7 +43,7 @@
 
 #endif  ///< end of CONFIG_ASUS_UG31XX_BATTERY
 
-#endif	///< end of BUILD_UG31XX_LINUX_KERNEL
+#endif	///< end of uG31xx_OS_ANDROID
 
 #endif  ///< end of BUILD_UG31XX_LIB
 

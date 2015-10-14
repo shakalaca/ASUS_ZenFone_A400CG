@@ -21,11 +21,7 @@
 #elif defined(CONFIG_ME372CL)
     #define FW_CELL_TYPE_LG                 0x0368
     #define FW_CELL_TYPE_COS_LIGHT          0x0335
-    #define LATEST_FW_CFG_VERSION           0x3131
-#elif defined(CONFIG_FE380CG)
-    #define FW_CELL_TYPE_LG                 0x0
-    #define FW_CELL_TYPE_COS_LIGHT          0x0
-    #define LATEST_FW_CFG_VERSION           0x0
+    #define LATEST_FW_CFG_VERSION           0x3132
 #elif defined(CONFIG_A450CG)
     #define FW_CELL_TYPE_LG                 0x0
     #define FW_CELL_TYPE_COS_LIGHT          0x0

@@ -22,7 +22,7 @@
 
 //#include "gt9xx_openshort.h" // mark by leo
 #include <linux/i2c/gt927_openshort.h>	// add by leo
-
+#include <linux/slab.h>
 extern s32 gtp_i2c_read(struct i2c_client *, u8 *, s32);
 extern s32 gtp_i2c_write(struct i2c_client *, u8 *, s32);
 extern s8 gtp_i2c_test(struct i2c_client *client);
