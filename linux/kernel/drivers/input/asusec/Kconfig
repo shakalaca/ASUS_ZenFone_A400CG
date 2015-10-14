@@ -1,0 +1,7 @@
+#
+# ASUS EC driver configuration
+#
+
+config HID_ASUS_PAD_EC
+        bool "ASUS PAD EC driver"
+        depends on I2C

@@ -1,0 +1,17 @@
+
+menuconfig TX201LA_BATTERY
+	bool "TX201LA Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+if TX201LA_BATTERY
+
+config TX201LA_BATTERY_EC
+	depends on HID_ASUS_PAD_EC
+	tristate "ASUS EC battery driver"
+	help
+	  Say Y here to enable support for batteries.
+
+endif
+

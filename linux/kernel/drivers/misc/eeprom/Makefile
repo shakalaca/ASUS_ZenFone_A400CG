@@ -1,0 +1,17 @@
+ifeq ($(TARGET_BUILD_VARIANT),eng)
+        KBUILD_CFLAGS += -DASUS_FACTORY_BUILD
+else ifeq ($(TARGET_BUILD_VARIANT),user)
+    KBUILD_CFLAGS += -DASUS_USER_BUILD
+endif
+
+
+obj-$(CONFIG_EEPROM_AT24)	+= at24.o
+obj-$(CONFIG_EEPROM_AT25)	+= at25.o
+obj-$(CONFIG_EEPROM_LEGACY)	+= eeprom.o
+obj-$(CONFIG_EEPROM_MAX6875)	+= max6875.o
+obj-$(CONFIG_EEPROM_93CX6)	+= eeprom_93cx6.o
+obj-$(CONFIG_EEPROM_93XX46)	+= eeprom_93xx46.o
+obj-$(CONFIG_EEPROM_DIGSY_MTC_CFG) += digsy_mtc_eeprom.o
+obj-$(CONFIG_EEPROM_PADSTATION)	+= microp_ene.o
+obj-$(CONFIG_EEPROM_PADSTATION)    += AX_microp_api.o
+obj-$(CONFIG_EEPROM_PADSTATION)    += microp_notify.o

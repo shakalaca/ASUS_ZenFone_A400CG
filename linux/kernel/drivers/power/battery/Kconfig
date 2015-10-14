@@ -1,0 +1,90 @@
+#
+#  Copyright (c) 2013, ASUSTek, Inc. All Rights Reserved.
+#  Written by chris chang chris1_chang@asus.com
+#
+#  Battery driver configuration
+#
+menuconfig ME302C_BATTERY
+	bool "ME302C Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig ME372CG_BATTERY
+	bool "ME372CG Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig ME372CL_BATTERY
+	bool "ME372CL Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig ME175CG_BATTERY
+	bool "ME175CG Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig PF400CG_BATTERY
+	bool "PF400CG Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig A400CG_BATTERY
+	bool "A400CG Battery support"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+menuconfig ASUS_ENGINEER_MODE
+	bool "ME372xx Battery Engineer Mode"
+	help
+	  Say Y here. This option doesn't affect the kernel.
+	  If unsure, say Y.
+
+if ME302C_BATTERY || ME372CG_BATTERY || ME372CL_BATTERY || ME175CG_BATTERY || PF400CG_BATTERY || A400CG_BATTERY || FE380CG_BATTERY || A450CG_BATTERY
+
+config ME372CG_BATTERY_SMB345
+	tristate "SMB345 battery charger driver"
+	depends on I2C
+	help
+	  Say Y to enable support for the SMB345 switching mode based charger
+	  and sysfs. The driver supports controlling charger-enable and
+	  current limiting capabilities.
+
+config ME372CG_PMIC_SNB5072C1
+	bool "PMIC SNB5072C1"
+	depends on ME372CG_BATTERY_SMB345
+	help
+	  Say Y to enable PMIC SNB5072C1 function
+
+config UPI_BATTERY
+	bool "UPI gauge driver"
+	depends on I2C
+	help
+	  Say Y to enable it
+
+config SN280X_CHARGER
+	bool "charger driver"
+	depends on I2C
+	help
+	  Say Y to enable it
+
+config EC_POWER
+	bool "asus ec power information driver"
+	depends on EEPROM_PADSTATION
+	help
+	  Say Y to enable it
+
+config ME372CG_BATTERY_BQ27520
+	tristate "BQ27520 battery driver"
+	depends on I2C
+	help
+	  Say Y here to enable support for batteries with BQ27520(I2C) chips.
+
+endif
+

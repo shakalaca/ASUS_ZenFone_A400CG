@@ -1,0 +1,3 @@
+obj-$(CONFIG_SENSORS_AKM8963)	+= akm8963.o
+
+
