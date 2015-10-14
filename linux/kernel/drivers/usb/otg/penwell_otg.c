@@ -5400,10 +5400,10 @@ static int penwell_otg_probe(struct pci_dev *pdev,
 
 	reset_otg();
 	init_hsm();
-
+#if 0  //control OTG function turn on/off
 	if (Read_PROJ_ID()==PROJ_ID_A400CG)
 		pnw->otg_state = false;  //disable otg function
-
+#endif
 #ifdef CONFIG_HID_ASUS_PAD_EC
 	register_dock_atow_early_notifier(&early_dock_notifier);
 	register_dock_wtoa_late_notifier(&late_dock_notifier);
